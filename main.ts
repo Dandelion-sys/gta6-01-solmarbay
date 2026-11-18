@@ -1,5 +1,8 @@
 // Solmar Bay — an original open-world crime game by Dandelion-sys.
-// A sun-soaked coastal city: Rico Vane, fixer Marisol, car theft, police chases,
+// V2: radio, weapons, vehicles, air/sea, airports, big Florida-shaped map,
+// characters Ryan + Ian (a couple), vest, voice, day/night, rain, river, bounty,
+// races, fishing, animals, phone, gamepad — see README.md "V2 additions".
+// A sun-soaked coastal city: Ian and Ryan, fixer Marisol, car theft, police chases,
 // missions, combat and a living city, built on three.js with procedural art.
 // Entry: "Solmar Bay" for the make.fun bounty gta6-01 ("Make GTA 6").
 // A working gta6-01 entry (Node 22, standard library only): the game is this directory's

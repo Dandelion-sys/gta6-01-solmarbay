@@ -83,6 +83,34 @@
 </style>
   #diveOverlay.hidden { display: none; }
   #diveLine { font-size: 13px; color: #2ee6ff; margin-top: 2px; }
+  #r5Line { font-size: 12px; color: #ffd23f; margin-top: 4px; line-height: 1.4; }
+  .r5panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 340px; max-height: 78vh; overflow-y: auto; background: rgba(10,22,34,0.97); border: 2px solid #e86a1e; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  .r5panel.hidden { display: none; }
+  .r5panel h3 { margin: 0 0 8px; color: #ffd23f; font-size: 17px; }
+  #r5CasinoPanel { border-color: #ff2a7a; }
+  #r5CasinoPanel h3 { color: #ff9ad5; }
+  #r5StocksPanel { border-color: #7ac74f; width: 380px; }
+  #r5StocksPanel h3 { color: #7dff9a; }
+  #r5GymPanel { border-color: #7ac74f; }
+  #r5GymPanel h3 { color: #7dff9a; }
+  #r5EmpirePanel { border-color: #f5c518; }
+  #r5EmpirePanel h3 { color: #f5c518; }
+  #r5BondPanel { border-color: #ff2a7a; }
+  #r5BondPanel h3 { color: #ff9ad5; }
+  #r5StuntPanel { border-color: #e8b820; }
+  #r5StuntPanel h3 { color: #e8b820; }
+  #r5TourneyPanel { border-color: #2ee6ff; }
+  #r5TourneyPanel h3 { color: #2ee6ff; }
+  #r5HomePanel { border-color: #d8a06a; }
+  #r5HomePanel h3 { color: #ffd9a8; }
+  #r5AchievePanel { border-color: #ffd23f; }
+  #r5AchievePanel h3 { color: #ffd23f; }
+  .r5btn { display: inline-block; margin: 4px 4px 4px 0; padding: 9px 14px; font-size: 14px; font-weight: bold; color: #08222f; background: #ffd23f; border: 0; border-radius: 8px; cursor: pointer; }
+  .r5btn:hover { background: #ffe27a; }
+  .r5btn:disabled { opacity: 0.45; cursor: default; }
+  .r5btn.alt { background: #7fb2e8; }
+  .r5btn.alt:hover { background: #a8ccf0; }
+</style>
 </style>
 </head>
 <body>
@@ -104,6 +132,7 @@
     <div id="leagueLine">League S1 R1/5</div>
     <div id="isleLine">🏝 Coral Cay shells 0/6</div>
     <div id="diveLine"></div>
+    <div id="r5Line">🌿 Summer day 1/4 · 👑 Harbour 10/100 · 💝 Bond 50/100</div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="objective" class="panel"><b id="objTitle">Solmar Bay</b><div class="sub" id="objText">Welcome to the bay.</div></div>
@@ -139,6 +168,73 @@
     <div id="marketItems" style="display:flex;flex-direction:column;gap:6px"></div>
     <button class="phoneBtn" id="marketClose" style="margin-top:10px">Close (E)</button>
   </div>
+  <div id="r5GaragePanel" class="r5panel hidden">
+    <h3>🔧 Solmar Customs — garage</h3>
+    <div id="r5GarageCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5GarageItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5GarageClose" style="margin-top:10px">Close (Y)</button>
+  </div>
+  <div id="r5CasinoPanel" class="r5panel hidden">
+    <h3>🎰 Solmar Sands Casino</h3>
+    <div id="r5CasinoReels" style="font-size:28px;text-align:center;margin:6px 0">🍒 🍋 🔔</div>
+    <div id="r5CasinoInfo" style="font-size:13px;color:#ffd7ec;line-height:1.5"></div>
+    <div style="margin-top:10px">
+      <button class="r5btn" id="r5CasinoSpin">🎰 Spin slots — $20</button>
+      <button class="r5btn alt" id="r5CasinoDeal">🃏 Deal blackjack — $50</button>
+      <button class="r5btn alt" id="r5CasinoHit">Hit</button>
+      <button class="r5btn alt" id="r5CasinoStand">Stand</button>
+    </div>
+    <button class="phoneBtn" id="r5CasinoClose" style="margin-top:10px">Close (I)</button>
+  </div>
+  <div id="r5TourneyPanel" class="r5panel hidden">
+    <h3>🎣 Bay Fishing Tournaments — tackle shop</h3>
+    <div id="r5TourneyCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div style="font-size:13px;color:#cfe8ff;margin-bottom:8px">A two-minute tournament starts every few minutes. Fish during it and every catch scores points — 200+ points pays $400. Better rods raise every catch value.</div>
+    <div id="r5TourneyItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5TourneyClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5EmpirePanel" class="r5panel hidden">
+    <h3>🚕 Taxi &amp; Delivery Empire — depot</h3>
+    <div id="r5EmpireCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5EmpireItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5EmpireClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5StuntPanel" class="r5panel hidden">
+    <h3>🤸 Stunt Jumps — leaderboard</h3>
+    <div id="r5StuntCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5StuntItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5StuntClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5GymPanel" class="r5panel hidden">
+    <h3>💪 Bay Iron Gym — coach Dara</h3>
+    <div id="r5GymCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5GymItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5GymClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5StocksPanel" class="r5panel hidden">
+    <h3>📈 Solmar Stock Market</h3>
+    <div id="r5StocksCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5StocksItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5StocksClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5BondPanel" class="r5panel hidden">
+    <h3>💝 Ryan &amp; Ian — gifts &amp; date nights</h3>
+    <div id="r5BondCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5BondItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5BondClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5HomePanel" class="r5panel hidden">
+    <h3>🛋️ Harbour Safehouse — decorate &amp; travel</h3>
+    <div id="r5HomeCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5HomeItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5HomeClose" style="margin-top:10px">Close</button>
+  </div>
+  <div id="r5AchievePanel" class="r5panel hidden">
+    <h3>🏅 Bay Achievements</h3>
+    <div id="r5AchieveCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="r5AchieveItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="r5AchieveClose" style="margin-top:10px">Close</button>
+  </div>
   <div id="boardPanel" class="hidden">
     <h3>📌 Job Board — pick a job</h3>
     <div id="boardStatus" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
@@ -151,10 +247,15 @@
     <button class="phoneBtn" id="phoneBtnMarisol">📞 Call Marisol (hint)</button>
     <button class="phoneBtn" id="phoneBtnTaxi">🚕 Call a Taxi</button>
     <button class="phoneBtn" id="phoneBtnStats">📊 Stats</button>
+    <button class="phoneBtn" id="phoneBtnStocks">📈 Stocks</button>
+    <button class="phoneBtn" id="phoneBtnBond">💝 Gifts &amp; dates</button>
+    <button class="phoneBtn" id="phoneBtnTourney">🎣 Tackle shop</button>
+    <button class="phoneBtn" id="phoneBtnStunts">🤸 Stunt leaderboard</button>
+    <button class="phoneBtn" id="phoneBtnAchieve">🏅 Achievements</button>
     <div id="phoneStats"></div>
     <div style="font-size:11px;color:#9fc3e8;margin-top:6px">Press U to close. Game keeps running.</div>
   </div>
-  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car / jack traffic / shop &nbsp;·&nbsp; F punch / fish &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; 1–8 weapons &nbsp;·&nbsp; V scope &nbsp;·&nbsp; R radio &nbsp;·&nbsp; C switch character &nbsp;·&nbsp; N character mission &nbsp;·&nbsp; B driver job &nbsp;·&nbsp; T race &nbsp;·&nbsp; U phone &nbsp;·&nbsp; G golf &nbsp;·&nbsp; O photo mode &nbsp;·&nbsp; J bail out &nbsp;·&nbsp; L Marisol chain &nbsp;·&nbsp; X photo / dive &nbsp;·&nbsp; K darts &nbsp;·&nbsp; Z job board &nbsp;·&nbsp; Shift fly up (heli) &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car / jack traffic / shop &nbsp;·&nbsp; F punch / fish &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; 1–8 weapons &nbsp;·&nbsp; V scope &nbsp;·&nbsp; R radio &nbsp;·&nbsp; C switch character &nbsp;·&nbsp; N character mission &nbsp;·&nbsp; B driver job &nbsp;·&nbsp; T race &nbsp;·&nbsp; U phone &nbsp;·&nbsp; G golf &nbsp;·&nbsp; O photo mode &nbsp;·&nbsp; J bail out &nbsp;·&nbsp; L Marisol chain &nbsp;·&nbsp; X photo / dive &nbsp;·&nbsp; K darts &nbsp;·&nbsp; Z job board &nbsp;·&nbsp; Y garage &nbsp;·&nbsp; I casino &nbsp;·&nbsp; E near postcards, gym, depot, school, safehouse, marina flag &nbsp;·&nbsp; Shift fly up (heli) &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
 </div>
 <div id="diveOverlay" class="hidden"></div>
 <div id="photoBar" class="hidden">📷 PHOTO MODE — WASD move camera · Q/E up/down · drag to look · <b>Enter</b> take photo · O to exit</div>

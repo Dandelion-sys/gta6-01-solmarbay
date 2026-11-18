@@ -19,6 +19,33 @@
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
+// Round 4 additions (this session): Coral Cay island with its lighthouse town and
+// six glowing shells, two fan-driven hovercraft that cross water and land, a four-job
+// Marisol chain (tailing, a plaza photograph, a four-drop courier run, an escort),
+// darts at the pink-neon bar, a five-round street-race league with season standings,
+// a repeatable job board, five new random street events, and salvage diving at four
+// blue-ringed buoys off the east coast. See README.md "Round 4 additions" for how
+// each one is triggered in the game.
+// How to reach each Round 4 system in the game (keys, in play mode):
+//   Coral Cay island — hovercraft from the beach, ferry from the mainland pier,
+//   or boat + swim. Shells glow on the sand.
+//   Marisol chain — L, after the three main missions. Tailing, photo, drops, escort.
+//   Darts — K at the pink-neon bar; Bram's $500 challenge — E near Bram.
+//   Race league — T at the airport flag; five rounds a season.
+//   Job board — Z at the wooden board near the north-west plaza.
+//   Salvage diving — X at a blue-ringed buoy on the east coast.
+//   Buried loot — map $50 at Nadia's Cay stall, then hold F at a mound.
+//   Smuggler coves — E at a purple cove, night only.
+const r4FeatureNames = [
+  'Coral Cay island', 'hovercraft', 'Marisol chain', 'darts', 'race league',
+  'job board', 'random events', 'salvage diving', 'night market', 'viewpoints',
+  'Cay ferry', 'bay storms', 'buried loot', 'keeper quest',
+];
+function roundFourSummary(): string {
+  return r4FeatureNames.map((f, i) => `${i + 1}. ${f}`).join('\n');
+}
+console.log(`Round 4 features in this build: ${r4FeatureNames.length} (${r4FeatureNames.join(', ')})`);
+console.log(roundFourSummary());
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

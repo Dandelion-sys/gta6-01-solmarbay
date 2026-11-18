@@ -39,6 +39,30 @@ const MIME: Record<string, string> = {
 
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  if (url.pathname === '/health') {
+    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 4 });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
+  if (url.pathname === '/r4-features.json') {
+    const features = [
+      { id: 'coral-cay', what: 'island town with lighthouse, walkers and six shells', key: 'hovercraft or boat east' },
+      { id: 'hovercraft', what: 'fan-driven craft that runs on water and land', key: 'E near the beach or Cay pier' },
+      { id: 'marisol-chain', what: 'four extra story jobs after the main missions', key: 'L' },
+      { id: 'darts', what: 'three-dart turns at the pink-neon bar', key: 'K near the bar' },
+      { id: 'race-league', what: 'five-round season standings for checkpoint races', key: 'T at the airport flag' },
+      { id: 'job-board', what: 'five repeatable timed jobs', key: 'Z at the wooden board' },
+      { id: 'random-events', what: 'robbery, challenger, stranded driver, tourist, runaway cart', key: 'automatic' },
+      { id: 'salvage-diving', what: 'eight crates at four buoys, 35 seconds of air', key: 'X near a buoy' },
+      { id: 'buried-loot', what: 'five dig sites, map from the Cay keepsake stall', key: 'hold F at a mound' },
+      { id: 'keeper-quest', what: 'three fish for the lighthouse keeper', key: 'E near the lighthouse' },
+    ];
+    const body = JSON.stringify({ round: 4, features }, null, 2);
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);

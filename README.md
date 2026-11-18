@@ -268,6 +268,144 @@ Then open http://localhost:8080 in a desktop browser. Keyboard + mouse.
 | P / Esc | Pause |
 | M | Mute |
 
+## Round 4 additions
+
+This round adds a second wave of things to do in the bay, all wired into the
+same HUD, minimap, pause flow and save file as the rest of the game.
+
+- **Coral Cay** — a small island off the east coast with a striped lighthouse
+  whose beam sweeps at night, eight cottages, market stalls, a pier and five
+  locals who walk the ring road and greet you. Six glowing shells hide around
+  the island; each pays $150, and the full set pays a $900 bonus.
+- **Hovercraft** — two fan-driven craft (one on the beach, one at the Cay pier)
+  that skim across the sea and climb straight onto land and the island. They
+  steer like a boat on water and grip like a car on land.
+- **Marisol's chain** — four extra story jobs that open once the main missions
+  are done. Press L: tail a courier without being spotted, photograph a
+  handshake at the plaza (X, from the right distance), run four drops against
+  the clock, then walk a witness home while staying close. Rewards run
+  $700–$1500, plus a $1000 loyalty bonus for finishing all four.
+- **Darts** — the bar with the pink neon sign east of downtown. Press K, aim
+  with the arrow keys while your hand sways, Enter throws. Three darts a turn;
+  60+ points pays $120, 100+ pays $250, 140+ pays $400.
+- **Race league** — every checkpoint race now counts toward a five-round
+  season against rivals Vex, Nova and Rook. Win the season for a $2000
+  champion bonus; standings show under the cash panel.
+- **Job board** — a wooden board near the north-west plaza. Press Z for five
+  repeatable timed jobs: parcel dash, bay tour, street sweep, night patrol
+  and a ferry run out to the Cay.
+- **Random events** — five new ones arrive on their own: stop a masked
+  robbery, beat a challenger supercar to a beacon, fix a stranded driver's
+  smoking car by standing with it, walk a lost tourist to the plaza, and
+  catch a runaway fruit cart.
+- **Salvage diving** — four buoys with blue rings mark dive sites on the east
+  coast. Swim to one, press X, and search the seabed for eight glowing
+  crates at $200 each. You get 35 seconds of air per dive; surfacing early
+  with X is free, running out costs 15 health.
+- **The Cay ferry** — a blue-and-white ferry loops between the mainland pier
+  and the Cay pier all day, free to ride. Press E near it to board, E again
+  to step off. It is the slow, scenic way across if you do not fancy the
+  hovercraft.
+- **Bay storms** — every few minutes a storm rolls in for 45 seconds: rain,
+  lightning flashes and a darker sky. It is only weather, but it makes the
+  night drives feel properly dramatic.
+- **Scenic viewpoints** — five gold-ringed photo spots (beach, dunes, peaks,
+  lighthouse, runway). Stand in one and press X for an $80 photo; all five
+  pays a $300 magazine bonus.
+- **Buried loot** — buy the $50 treasure map at Nadia's keepsake stall on the
+  Cay and five X-marked mounds appear around the bay. Hold F at a mound to
+  dig it up ($150–$390 a stash, $400 bonus for all five).
+- **Keeper Ansel** — the lighthouse keeper on Coral Cay wants three fish for
+  his supper. Talk to him (E), catch three fish anywhere, come back for
+  $600.
+- **Smuggler coves** — three purple-lit coves around the coast only open at
+  night. Press E at one to take a package to a buyer in 100 seconds for
+  $350 — but the drop is seen, so you pick up a star of heat. One run a
+  night; five runs pays a $500 loyalty cut.
+- **Cay ring bus** — a free bus loops the island ring road and stops at the
+  lighthouse, market, pier and north stop. Press E to ride, E to hop off.
+  Three rides earns a $100 tip from the driver.
+
+### Getting to Coral Cay
+
+Three ways across, fastest first: take a hovercraft from the beach (orange,
+south of the marina) or the Cay pier (blue, already on the island side);
+ride the ferry from the mainland pier east of the beach; or drive a boat
+out and swim the last stretch. On the island, the market, the darts bar
+back on the mainland, and the job board are all marked on the minimap.
+
+| Key | Round 4 action |
+| L | Start the next Marisol chain job (after M1–M3) |
+| X | Photograph a meeting / a viewpoint / dive at a buoy |
+| K | Darts at the pink-neon bar |
+| Z | Job board near the north-west plaza |
+| E | Board the ferry / open a market stall (near one) |
+
+### Round 4 quick reference
+
+| System | Where | Trigger | Best payout |
+| Coral Cay shells | Island, six glowing shells | Walk into one | $150 each, $900 set bonus |
+| Hovercraft | Beach (orange), Cay pier (blue) | E to board | — |
+| Marisol chain | Anywhere, after M1–M3 | L | $700–$1500 a job, $1000 chain bonus |
+| Darts | Pink-neon bar, east downtown | K, arrows aim, Enter throws | $400 a turn |
+| Bram's challenge | Same bar, gold-vested Bram | E near Bram | $500 (90+ in one turn) |
+| Race league | Airport flag | T, win races | $2000 a season |
+| Job board | Wooden board, north-west plaza | Z | $180–$300 a job |
+| Random events | Anywhere | Automatic, every minute or so | $100–$400 |
+| Salvage diving | Blue-ringed buoys, east coast | X near a buoy | $200 a crate, $500 set bonus |
+| Night market | Coral Cay plaza | E near a stall | Charms set $250 |
+| Viewpoints | Five gold rings | X in a ring | $80 each, $300 set bonus |
+| Ferry | Mainland pier ↔ Cay pier | E to board | Free |
+| Bay storms | Everywhere | Automatic | — |
+| Buried loot | Five mounds, map $50 at Nadia's stall | Hold F at a mound | $150–$390, $400 set bonus |
+| Keeper Ansel | Cay lighthouse | E, then catch 3 fish | $600 |
+| Smuggler coves | Three purple coves, night only | E at a cove | $350 a run, $500 for five |
+| Cay ring bus | Island ring road | E to ride | $100 after three rides |
+
+### Round 4 design notes
+
+A few choices made while building this round, for anyone picking the game
+up later:
+
+- **The island is reachable three ways on purpose.** A fast player takes
+  the hovercraft, a patient one takes the ferry, and a broke one can still
+  swim from a boat. No new content should ever sit behind a paywall or a
+  single expensive vehicle.
+- **Every new system pays in small amounts.** The biggest single new payout
+  is the $2000 league title; most jobs pay $100–$400. Nothing here touches
+  the finale heist payout or any existing price or reward.
+- **Night matters.** The smuggler coves only open after dark, the lighthouse
+  beam only reads at night, and the storm rolls in on its own clock. The
+  day/night cycle was already there; this round just gives it things to do.
+- **Progress survives reloads.** Shells, crates, viewpoints, loot, keeper
+  progress, league standings, chain progress and bus rides are all saved in
+  the browser's local storage alongside the main save, so a player never
+  loses a half-finished collection to a refresh.
+- **Nothing here needs a new key the player must learn twice.** L, X, K and
+  Z are the new ones; E does the context-sensitive work (ferry, bus, cove,
+  keeper, Bram, market) depending on what is nearest, and the hint bar at
+  the bottom of the screen lists them all.
+- **Performance on slow machines.** The frame-time clamp in the main loop
+  was widened from 0.05 to 0.1 seconds so the game does not crawl in
+  software rendering; at normal frame rates nothing changes. The lighthouse
+  uses an emissive lamp room rather than an extra scene light, and the
+  island palms were kept to seven, for the same reason.
+
+### Known limits (Round 4)
+
+- The ferry and the ring bus carry you as a passenger; while aboard you
+  cannot walk, shoot or enter a vehicle until you step off with E.
+- Diving uses the seabed as its floor, so the water is shallow in places
+  and the dive feels more like wading in the shallows than deep water.
+  Oxygen is the real limit, not depth.
+- The smuggler coves open only at night and only once per game night; if
+  you start a run and the sun comes up, the run still counts, but the next
+  one waits for the next night.
+- The darts champion Bram only takes one challenge a day. If you lose, the
+  next try is tomorrow.
+- Buried-loot digging holds F, which is also the punch key — do not dig
+  next to a pedestrian you like.
+
 ## Screenshots
 
 Deterministic scenes rendered with `?shot=start|drive|chase|mission&seed=1`

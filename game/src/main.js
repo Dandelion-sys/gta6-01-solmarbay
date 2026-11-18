@@ -1351,6 +1351,11 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyG') startGolf();
   if (e.code === 'KeyN') startCharMission();
   if (e.code === 'KeyB') startDriverJob();
+  if (e.code === 'KeyL') chainStart();
+  if (e.code === 'KeyX') { if (chain.active) chainSnapPhoto(); else if (!snapViewpoint()) diveToggle(); }
+  if (e.code === 'KeyK') { if (darts.open) dartsClose(); else dartsOpen(); }
+  if (e.code === 'KeyZ') { if (boardJob.panelOpen) boardClosePanel(); else boardOpenPanel(); }
+  if (e.code === 'Enter' && darts.open) throwDart();
   if (e.code === 'KeyV') toggleScope();
   if (e.code === 'KeyO') togglePhotoMode();
   if (e.code === 'Enter' && photoMode) takePhoto();
@@ -1358,7 +1363,14 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyU') togglePhone();
   if (e.code === 'KeyC') switchCharacter();
   if (e.code === 'Digit1' || e.code === 'Digit2' || e.code === 'Digit3' || e.code === 'Digit4' || e.code === 'Digit5' || e.code === 'Digit6' || e.code === 'Digit7' || e.code === 'Digit8') cycleWeapon(e.code.slice(-1));
+  if (e.code === 'Escape' && darts.open) { dartsClose(); return; }
   if (e.code === 'KeyP' || e.code === 'Escape') { if (shopOpen) closeShop(); else togglePause(); }
+  if (e.code === 'KeyE' && ferryToggleBoard()) return;
+  if (e.code === 'KeyE' && cayBusToggle()) return;
+  if (e.code === 'KeyE' && coveNear() >= 0) { coveStart(coveNear()); return; }
+  if (e.code === 'KeyE' && keeperNear()) { keeperTalk(); return; }
+  if (e.code === 'KeyE' && dartChampNear()) { dartChampChallenge(); return; }
+  if (e.code === 'KeyE' && marketNear() >= 0) { marketKey(); return; }
   if (e.code === 'KeyE') tryEnterExitVehicle();
   if (e.code === 'KeyF') punch();
   if (e.code === 'Space') e.preventDefault();
@@ -1465,6 +1477,8 @@ function updateTaxi(dt) {
   taxiCall.mesh.position.z += Math.cos(h) * 16 * dt;
 }
 document.getElementById('phoneBtnMarisol').addEventListener('click', callMarisol);
+document.getElementById('boardClose').addEventListener('click', boardClosePanel);
+document.getElementById('marketClose').addEventListener('click', marketClosePanel);
 document.getElementById('phoneBtnTaxi').addEventListener('click', callTaxi);
 document.getElementById('phoneBtnStats').addEventListener('click', showStats);
 // ---------- Feature 21: gamepad support ----------
@@ -2160,6 +2174,8 @@ function updateHUD() {
   if (weaponEl) weaponEl.textContent = WEAPONS[state.weapon].name + ' · ' + (state.ammo[state.weapon] === Infinity ? '∞' : state.ammo[state.weapon]);
   const pkgEl = document.getElementById('packages');
   if (pkgEl) pkgEl.textContent = '📦 ' + packagesFound + '/50';
+  const isleEl = document.getElementById('isleLine');
+  if (isleEl) isleEl.textContent = '🏝 Coral Cay shells ' + isleShellsFound + '/6' + (chain.active ? ' · ' + CHAIN_JOBS[chain.job].title : '') + (coveIsNight() ? ' · ' + coveStatusLine() : '');
   const charEl = document.getElementById('charName');
   if (charEl) charEl.textContent = CHARS[state.activeChar].name + '  ·  C to switch';
   const raceEl = document.getElementById('raceInfo');
@@ -2194,6 +2210,16 @@ function drawMinimap() {
     mm.beginPath(); mm.arc((x + 310) * scale, (z + 310) * scale, r, 0, Math.PI * 2); mm.fill();
   };
   if (beacon.visible) dot(beaconPos.x, beaconPos.z, '#ffd23f', 6);
+  dot(ISLE_CX, ISLE_CZ, '#2ee6ff', 5);
+  for (const hv of hovercrafts) dot(hv.mesh.position.x, hv.mesh.position.z, '#ff8c1a', 3);
+  if (chain.active && chain.target) dot(chain.target.mesh.position.x, chain.target.mesh.position.z, '#ff2a7a', 5);
+  if (chain.active && chain.escort) dot(chain.escort.mesh.position.x, chain.escort.mesh.position.z, '#e8b820', 5);
+  for (const db of DIVE_BUOYS) dot(db.x, db.z, '#2ee6ff', 4);
+  for (const vm of viewMarkers) dot(vm.x, vm.z, vm.done ? '#2ecc71' : '#ffd23f', 3);
+  for (let li = 0; li < LOOT_SPOTS.length; li++) if (!lootState.found.includes(li)) dot(LOOT_SPOTS[li].x, LOOT_SPOTS[li].z, lootState.mapBought ? '#e8b820' : '#8a7a68', 3);
+  for (const cs of COVE_SPOTS) dot(cs.x, cs.z, '#b45ae8', 4);
+  if (cayBus.mesh) dot(cayBus.mesh.position.x, cayBus.mesh.position.z, '#2ee6ff', 4);
+  if (ferry.mesh) dot(ferry.mesh.position.x, ferry.mesh.position.z, '#f0ead8', 4);
   for (const po of police) dot(po.mesh.position.x, po.mesh.position.z, '#ff4444', 3.5);
   for (const c of parkedCars) dot(c.mesh.position.x, c.mesh.position.z, '#9fb6c9', 2);
   for (const v of extraVehicles) dot(v.mesh.position.x, v.mesh.position.z, '#ffd23f', 2);
@@ -2241,6 +2267,9 @@ function drawMinimap() {
 
 // ---------- per-frame updates ----------
 function updatePlayer(dt) {
+  if (dive.active) return;
+  if (ferry.aboard) return;
+  if (cayBus.aboard) return;
   const run = keys['ShiftLeft'] || keys['ShiftRight'];
   const speed = (run ? 9 : 5) * (1 + skillLevel('stamina') * 0.02);
   if (run && (keys['KeyW'] || keys['KeyA'] || keys['KeyS'] || keys['KeyD'])) addSkill('stamina', dt * 3);
@@ -2319,6 +2348,7 @@ function updateCar(dt) {
   if (c.kind === 'plane') { updatePlane(dt, c); return; }
   if (c.kind === 'horse') { updateHorse(dt, c); return; }
   if (c.kind === 'boat') { updateBoat(dt, c); return; }
+  if (c.kind === 'hover') { updateHover(dt, c); return; }
   if (c.kind && c.kind !== 'car') { updateGroundVehicle(dt, c); return; }
   const accel = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.6 : 0;
   const steerIn = (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) - (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
@@ -3062,6 +3092,7 @@ function endRace(msg, prize) {
   for (const a of raceAI) scene.remove(a.mesh);
   raceAI = [];
   if (prize > 0) { state.cash += prize; race.won++; }
+  leagueRecord(prize);
   toast(msg + (prize > 0 ? ' +$' + prize : ''));
   updateHUD(); updateObjective(); saveGame();
 }
@@ -4213,6 +4244,1889 @@ function toggleScope() {
 }
 
 // ---------- deterministic shot scenes ----------
+// ---------- Round 4, part one: Coral Cay island + hovercraft ----------
+const ISLE_CX = 212, ISLE_CZ = 28, ISLE_R = 44, ISLE_TOP = 2.1;
+const ISLE_STORE_KEY = 'solmar-bay-r4-shells';
+let isleShellsFound = 0;
+try { isleShellsFound = Number(JSON.parse(localStorage.getItem(ISLE_STORE_KEY) || '0')) || 0; } catch (e) { isleShellsFound = 0; }
+function isleDist(x, z) { return Math.hypot(x - ISLE_CX, z - ISLE_CZ); }
+function isleOnLand(x, z) { return isleDist(x, z) < ISLE_R - 1.5; }
+const isleGroup = new THREE.Group();
+scene.add(isleGroup);
+{
+  const sandM = new THREE.MeshStandardMaterial({ color: 0xe8d5a0, roughness: 1 });
+  const grassM = new THREE.MeshStandardMaterial({ color: 0x7fae62, roughness: 1 });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(ISLE_R, ISLE_R + 6, 3.4, 28), sandM);
+  base.position.set(ISLE_CX, ISLE_TOP - 1.7, ISLE_CZ); base.receiveShadow = true; isleGroup.add(base);
+  const lawn = new THREE.Mesh(new THREE.CylinderGeometry(ISLE_R - 5, ISLE_R - 5, 0.5, 28), grassM);
+  lawn.position.set(ISLE_CX, ISLE_TOP + 0.2, ISLE_CZ); lawn.receiveShadow = true; isleGroup.add(lawn);
+  const plazaM = new THREE.MeshStandardMaterial({ color: 0xb9b3a4, roughness: 1 });
+  const plaza = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 0.6, 20), plazaM);
+  plaza.position.set(ISLE_CX, ISLE_TOP + 0.25, ISLE_CZ); isleGroup.add(plaza);
+  const roadM = new THREE.MeshStandardMaterial({ color: 0x3a4a55, roughness: 1 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 1.6, 6, 32), roadM);
+  ring.rotation.x = Math.PI / 2; ring.position.set(ISLE_CX, ISLE_TOP + 0.35, ISLE_CZ); isleGroup.add(ring);
+  const cross1 = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.3, 52), roadM);
+  cross1.position.set(ISLE_CX, ISLE_TOP + 0.35, ISLE_CZ); isleGroup.add(cross1);
+  const cross2 = new THREE.Mesh(new THREE.BoxGeometry(52, 0.3, 2.6), roadM);
+  cross2.position.set(ISLE_CX, ISLE_TOP + 0.35, ISLE_CZ); isleGroup.add(cross2);
+  const pierM = new THREE.MeshStandardMaterial({ color: 0xb98d5f, roughness: 1 });
+  for (let i = 0; i < 9; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.35, 4.6), pierM);
+    plank.position.set(ISLE_CX - ISLE_R - 4 - i * 4.4, 1.1, ISLE_CZ + 14); isleGroup.add(plank);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 2.4, 6), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+    post.position.set(ISLE_CX - ISLE_R - 4 - i * 4.4, 0.6, ISLE_CZ + 16.2); isleGroup.add(post);
+  }
+  const causeM = new THREE.MeshStandardMaterial({ color: 0x9a8a6a, roughness: 1 });
+  const cause = new THREE.Mesh(new THREE.BoxGeometry(46, 0.5, 4), causeM);
+  cause.position.set(ISLE_CX - ISLE_R - 22, 0.7, ISLE_CZ + 14); isleGroup.add(cause);
+}
+const isleBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 2.2, 22, 12, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }));
+let isleLight = null;
+{
+  const towerM = new THREE.MeshStandardMaterial({ color: 0xf0ead8, roughness: 0.8 });
+  const redM = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.8 });
+  const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.1, 15, 12), towerM);
+  tower.position.set(ISLE_CX + 26, ISLE_TOP + 7.5, ISLE_CZ - 26); tower.castShadow = true; isleGroup.add(tower);
+  for (let i = 0; i < 3; i++) {
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(2.55 - i * 0.18, 2.7 - i * 0.18, 1.6, 12), redM);
+    band.position.set(ISLE_CX + 26, ISLE_TOP + 4 + i * 4.4, ISLE_CZ - 26); isleGroup.add(band);
+  }
+  const lampRoom = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 2.2, 10), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1.4, transparent: true, opacity: 0.9 }));
+  lampRoom.position.set(ISLE_CX + 26, ISLE_TOP + 16, ISLE_CZ - 26); isleGroup.add(lampRoom);
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(2.1, 2, 10), redM);
+  cap.position.set(ISLE_CX + 26, ISLE_TOP + 18, ISLE_CZ - 26); isleGroup.add(cap);
+  isleBeam.position.set(ISLE_CX + 26, ISLE_TOP + 16, ISLE_CZ - 26);
+  isleBeam.rotation.z = Math.PI / 2; isleBeam.position.x = ISLE_CX + 26 + 11; isleGroup.add(isleBeam);
+  // The lamp room glows on its own; no extra scene light, to keep the frame cost down.
+}
+const isleHouses = [];
+{
+  const palette = [0xd8a06a, 0x7fa8c9, 0xe8c98f, 0x9fb27a, 0xb98a7a, 0xd9b8c4, 0x8fb8a8, 0xe8b820];
+  const spots = [[-16, -12], [-14, 10], [10, -14], [14, 12], [-28, 2], [28, -2], [2, -28], [-2, 26]];
+  for (let i = 0; i < spots.length; i++) {
+    const hx = ISLE_CX + spots[i][0], hz = ISLE_CZ + spots[i][1];
+    const w = 6 + (i % 3), d = 5 + ((i + 1) % 3), h = 4 + (i % 2) * 2;
+    const mat = new THREE.MeshStandardMaterial({ color: palette[i % palette.length], roughness: 0.9 });
+    const house = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    house.position.set(hx, ISLE_TOP + h / 2, hz); house.castShadow = true; isleGroup.add(house);
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(Math.max(w, d) * 0.75, 2.4, 4), new THREE.MeshStandardMaterial({ color: 0x8a4a2a, roughness: 1 }));
+    roof.position.set(hx, ISLE_TOP + h + 1.2, hz); roof.rotation.y = Math.PI / 4; isleGroup.add(roof);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2, 0.2), new THREE.MeshStandardMaterial({ color: 0x3a2a1a }));
+    door.position.set(hx, ISLE_TOP + 1, hz + d / 2 + 0.1); isleGroup.add(door);
+    const win = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1, 0.15), new THREE.MeshStandardMaterial({ color: 0xffe9a8, emissive: 0xffdf80, emissiveIntensity: 0.5 }));
+    win.position.set(hx + w / 4, ISLE_TOP + h * 0.6, hz + d / 2 + 0.1); isleGroup.add(win);
+    isleHouses.push({ x: hx, z: hz, w, d });
+  }
+  const stallCols = [0xff5b5b, 0x2ecc71, 0x2ee6ff, 0xff9a5a];
+  for (let i = 0; i < 4; i++) {
+    const sx = ISLE_CX - 6 + i * 4, sz = ISLE_CZ + 8;
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1, 1.4), new THREE.MeshStandardMaterial({ color: 0x8a6a42 }));
+    counter.position.set(sx, ISLE_TOP + 0.5, sz); isleGroup.add(counter);
+    const awn = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.15, 2), new THREE.MeshStandardMaterial({ color: stallCols[i] }));
+    awn.position.set(sx, ISLE_TOP + 2.4, sz); awn.rotation.x = 0.25; isleGroup.add(awn);
+    for (let p = 0; p < 2; p++) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.4, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+      pole.position.set(sx - 1.4 + p * 2.8, ISLE_TOP + 1.2, sz + 0.8); isleGroup.add(pole);
+    }
+    const goods = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshStandardMaterial({ color: [0xff8c1a, 0xe84a7a, 0x7dff9a, 0xffd23f][i] }));
+    goods.position.set(sx, ISLE_TOP + 1.3, sz); isleGroup.add(goods);
+  }
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(7, 1.6, 0.3), new THREE.MeshStandardMaterial({ color: 0x0b2c44 }));
+  sign.position.set(ISLE_CX, ISLE_TOP + 3.4, ISLE_CZ + 18); isleGroup.add(sign);
+  const signPole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.4, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  signPole.position.set(ISLE_CX - 3, ISLE_TOP + 1.7, ISLE_CZ + 18); isleGroup.add(signPole);
+  const signPole2 = signPole.clone(); signPole2.position.x = ISLE_CX + 3; isleGroup.add(signPole2);
+}
+const islePalms = [];
+for (let i = 0; i < 7; i++) {
+  const a = (i / 7) * Math.PI * 2 + 0.3;
+  const px = ISLE_CX + Math.cos(a) * (ISLE_R - 8), pz = ISLE_CZ + Math.sin(a) * (ISLE_R - 8);
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.36, 5, 6), new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 1 }));
+  trunk.position.y = 2.5; g.add(trunk);
+  for (let l = 0; l < 6; l++) {
+    const leaf = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 0.9), new THREE.MeshStandardMaterial({ color: 0x3f9e4d, roughness: 0.9 }));
+    const la = (l / 6) * Math.PI * 2;
+    leaf.position.set(Math.cos(la) * 1.4, 5.1, Math.sin(la) * 1.4); leaf.rotation.y = -la; leaf.rotation.z = 0.25; g.add(leaf);
+  }
+  const nut = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  nut.position.y = 4.9; g.add(nut);
+  g.position.set(px, ISLE_TOP, pz); isleGroup.add(g); islePalms.push(g);
+}
+const isleWalkers = [];
+{
+  const shirts = [0xe84a7a, 0x2ee6ff, 0xffd23f, 0x2ecc71, 0xff9a5a];
+  const names = ['Mara', 'Tomas', 'Nadia', 'Kiko', 'Sari'];
+  for (let i = 0; i < 5; i++) {
+    const person = makePerson(shirts[i], 0x2a3a4a, 0xd9a066);
+    const a = (i / 5) * Math.PI * 2;
+    person.position.set(ISLE_CX + Math.cos(a) * 18, ISLE_TOP, ISLE_CZ + Math.sin(a) * 18);
+    scene.add(person);
+    isleWalkers.push({ mesh: person, name: names[i], wp: 0, pause: 0, phase: i * 1.7, path: [
+      { x: ISLE_CX + Math.cos(a) * 18, z: ISLE_CZ + Math.sin(a) * 18 },
+      { x: ISLE_CX + Math.cos(a + 1.2) * 24, z: ISLE_CZ + Math.sin(a + 1.2) * 24 },
+      { x: ISLE_CX, z: ISLE_CZ },
+      { x: ISLE_CX + Math.cos(a + 2.6) * 20, z: ISLE_CZ + Math.sin(a + 2.6) * 20 },
+    ] });
+  }
+}
+const isleShellSpots = [
+  { x: ISLE_CX - 30, z: ISLE_CZ + 22 }, { x: ISLE_CX + 32, z: ISLE_CZ - 18 }, { x: ISLE_CX + 8, z: ISLE_CZ + 34 },
+  { x: ISLE_CX - 12, z: ISLE_CZ - 34 }, { x: ISLE_CX + 26, z: ISLE_CZ + 26 }, { x: ISLE_CX - 34, z: ISLE_CZ - 6 },
+];
+const isleShells = [];
+for (let i = 0; i < isleShellSpots.length; i++) {
+  const s = isleShellSpots[i];
+  const g = new THREE.Group();
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: [0xff9ad5, 0x7dff9a, 0x2ee6ff, 0xffd23f, 0xff8c1a, 0xe8b820][i], roughness: 0.4, metalness: 0.3, emissive: 0x332200, emissiveIntensity: 0.4 }));
+  shell.scale.set(1, 0.7, 1); g.add(shell);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.9, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.25 }));
+  g.add(glow);
+  g.position.set(s.x, ISLE_TOP + 0.5, s.z); scene.add(g);
+  isleShells.push({ mesh: g, x: s.x, z: s.z, taken: i < isleShellsFound, bob: i * 0.9 });
+  if (i < isleShellsFound) g.visible = false;
+}
+function islePersistShells() { try { localStorage.setItem(ISLE_STORE_KEY, JSON.stringify(isleShellsFound)); } catch (e) {} }
+function makeHoverMesh(color) {
+  const g = new THREE.Group();
+  const hullM = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.35 });
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.7, 4.6), hullM);
+  hull.position.y = 0.9; hull.castShadow = true; g.add(hull);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(1.3, 1.4, 4), hullM);
+  nose.rotation.x = Math.PI / 2; nose.rotation.y = Math.PI / 4; nose.position.set(0, 0.9, 2.9); g.add(nose);
+  const skirtM = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 1 });
+  const skirt = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.55, 4.9), skirtM);
+  skirt.position.y = 0.35; g.add(skirt);
+  const skirtF = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.3, 0.5), skirtM);
+  skirtF.position.set(0, 0.3, 2.5); g.add(skirtF);
+  const skirtB = skirtF.clone(); skirtB.position.z = -2.5; g.add(skirtB);
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 3.2), new THREE.MeshStandardMaterial({ color: 0xf0ead8 }));
+  deck.position.set(0, 1.32, -0.3); g.add(deck);
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 0.9), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  seat.position.set(0, 1.7, -0.6); g.add(seat);
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.09, 8, 14), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  wheel.position.set(0, 1.9, 0.7); g.add(wheel);
+  const fanRing = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.14, 8, 18), new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.5 }));
+  fanRing.position.set(0, 1.9, -1.9); fanRing.rotation.x = 0.3; g.add(fanRing);
+  const fan = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.5, 0.1), new THREE.MeshStandardMaterial({ color: 0xdddddd }));
+  fan.position.set(0, 1.9, -1.9); g.add(fan);
+  const fan2 = fan.clone(); fan2.rotation.z = Math.PI / 2; g.add(fan2);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1 }));
+  lamp.position.set(0.9, 1.3, 2.2); g.add(lamp);
+  const lamp2 = lamp.clone(); lamp2.position.x = -0.9; g.add(lamp2);
+  g.userData.fan = fan; g.userData.fan2 = fan2; g.userData.skirt = skirt; g.userData.wheels = [];
+  return g;
+}
+const hovercrafts = [];
+hovercrafts.push(addExtraVehicle('hover', makeHoverMesh(0xff8c1a), { type: 'hover', color: 0xff8c1a, len: 4.6, w: 2.6, h: 1.2, topSpeed: 27, accel: 19, steerRate: 1.05, label: 'hovercraft' }, HALF + 16, -20, 0.6));
+hovercrafts.push(addExtraVehicle('hover', makeHoverMesh(0x2ee6ff), { type: 'hover', color: 0x2ee6ff, len: 4.6, w: 2.6, h: 1.2, topSpeed: 27, accel: 19, steerRate: 1.05, label: 'hovercraft' }, ISLE_CX - ISLE_R - 8, ISLE_CZ + 14, -Math.PI / 2));
+let hoverSpray = 0;
+function updateHover(dt, c) {
+  const fwd = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.6 : 0;
+  const turn = (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) - (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
+  const top = c.spec.topSpeed * (1 + skillLevel('driving') * 0.02);
+  const px = c.mesh.position.x, pz = c.mesh.position.z;
+  const overWater = (px >= HALF + 8 && px <= 300) || onRiver(px, pz);
+  const onIsle = isleOnLand(px, pz);
+  c.speed += fwd * (overWater ? 13 : 17) * dt;
+  c.speed -= c.speed * (overWater ? 0.25 : 0.55) * dt;
+  if (!fwd) c.speed -= Math.sign(c.speed) * 3 * dt;
+  if (Math.abs(c.speed) < 0.2 && !fwd) c.speed = 0;
+  c.speed = clamp(c.speed, -top * 0.45, top);
+  c.mesh.rotation.y += turn * dt * c.spec.steerRate * (0.5 + Math.min(1, Math.abs(c.speed) / 12));
+  const h = c.mesh.rotation.y;
+  let nx = px + Math.sin(h) * c.speed * dt;
+  let nz = pz + Math.cos(h) * c.speed * dt;
+  nx = clamp(nx, -280, 300); nz = clamp(nz, -280, 280);
+  const blocked = collideCircle(nx, nz, 1.4);
+  if (!blocked || onIsle) { c.mesh.position.x = nx; c.mesh.position.z = nz; }
+  else { c.speed *= 0.4; thud(); }
+  hoverSpray += dt;
+  const bob = Math.sin(state.time * 6) * 0.09;
+  if (onIsle) c.mesh.position.y = ISLE_TOP + 0.45 + bob;
+  else if (overWater) c.mesh.position.y = 0.55 + Math.sin(state.time * 2.4) * 0.14;
+  else c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z) + 0.45 + bob;
+  c.mesh.rotation.z = Math.sin(state.time * 3) * 0.02 - turn * 0.05;
+  c.mesh.rotation.x = clamp(-fwd * 0.03, -0.05, 0.05);
+  if (c.mesh.userData.fan) { c.mesh.userData.fan.rotation.z += dt * (8 + Math.abs(c.speed)); c.mesh.userData.fan2.rotation.z += dt * (8 + Math.abs(c.speed)); }
+  if (c.mesh.userData.skirt) c.mesh.userData.skirt.scale.y = 1 + Math.sin(state.time * 9) * 0.06;
+  if (overWater && Math.abs(c.speed) > 8 && hoverSpray > 0.4) { hoverSpray = 0; }
+  state.speed = c.speed;
+  if (fwd) addSkill('driving', dt * 2);
+  checkMissionSpot();
+}
+function isleNearDock() {
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  return Math.hypot(px - (ISLE_CX - ISLE_R - 26), pz - (ISLE_CZ + 14)) < 10;
+}
+function updateIsle(dt) {
+  if (isleBeam) { isleBeam.rotation.y = state.time * 0.7; }
+  if (isleLight) isleLight.intensity = 0.9 + Math.sin(state.time * 2) * 0.35;
+  for (let i = 0; i < isleWalkers.length; i++) {
+    const w = isleWalkers[i];
+    if (w.pause > 0) { w.pause -= dt; continue; }
+    const target = w.path[w.wp];
+    const dx = target.x - w.mesh.position.x, dz = target.z - w.mesh.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1.2) { w.wp = (w.wp + 1) % w.path.length; w.pause = 1 + (i % 3); continue; }
+    const sp = 1.6;
+    w.mesh.position.x += (dx / d) * sp * dt;
+    w.mesh.position.z += (dz / d) * sp * dt;
+    w.mesh.position.y = ISLE_TOP;
+    w.mesh.rotation.y = Math.atan2(dx, dz);
+    w.phase += dt * 6;
+    const legSwing = Math.sin(w.phase) * 0.25;
+    if (w.mesh.children[3]) w.mesh.children[3].rotation.x = legSwing;
+    if (w.mesh.children[4]) w.mesh.children[4].rotation.x = -legSwing;
+    const pd = Math.hypot(playerState.x - w.mesh.position.x, playerState.z - w.mesh.position.z);
+    if (pd < 4 && !w.greeted) { w.greeted = true; toast(w.name + ': Welcome to Coral Cay! Find the six glowing shells.'); setTimeout(() => { w.greeted = false; }, 30000); }
+  }
+  for (let i = 0; i < isleShells.length; i++) {
+    const s = isleShells[i];
+    if (s.taken) continue;
+    s.mesh.rotation.y += dt * 1.4;
+    s.mesh.position.y = ISLE_TOP + 0.5 + Math.sin(state.time * 2 + s.bob) * 0.18;
+    const d = Math.hypot(playerState.x - s.x, playerState.z - s.z);
+    const inVeh = state.inCar && Math.hypot(state.inCar.mesh.position.x - s.x, state.inCar.mesh.position.z - s.z) < 3;
+    if (d < 2.6 || inVeh) {
+      s.taken = true; s.mesh.visible = false;
+      isleShellsFound++; islePersistShells();
+      state.cash += 150; chime();
+      toast('Coral Cay shell found! +$150 (' + isleShellsFound + '/6)');
+      speakLine('One of the Cay shells — beautiful. That is ' + isleShellsFound + ' of six.');
+      if (isleShellsFound >= 6) { state.cash += 900; toast('All six Cay shells! Marisol pays a $900 set bonus.'); speakLine('All six shells. Marisol adds nine hundred for the full set.'); }
+      saveGame(); updateHUD();
+    }
+  }
+  if (!state.inCar && isleOnLand(playerState.x, playerState.z)) {
+    if (playerState.onGround) playerState.y = ISLE_TOP;
+    player.position.y = ISLE_TOP + (playerState.y > ISLE_TOP ? playerState.y - ISLE_TOP : 0);
+    if (playerState.y < ISLE_TOP && playerState.vy <= 0) { playerState.y = ISLE_TOP; playerState.onGround = true; playerState.vy = 0; }
+  }
+  if (state.inCar && state.inCar.kind === 'hover' && isleOnLand(state.inCar.mesh.position.x, state.inCar.mesh.position.z)) {
+    state.inCar.mesh.position.y = ISLE_TOP + 0.45;
+  }
+}
+// ---------- Round 4, part two: Marisol's second story chain (four jobs) ----------
+const CHAIN_JOBS = [
+  { id: 0, title: 'Shadow Run', giver: 'Marisol', reward: 700, brief: 'Tail the courier car across town. Stay close enough to see it, far enough not to be made.' },
+  { id: 1, title: 'The Meeting', giver: 'Marisol', reward: 900, brief: 'Two fixers meet at the plaza. Get close, stay out of sight, and photograph the handshake.' },
+  { id: 2, title: 'Four Corners', giver: 'Marisol', reward: 1100, brief: 'Four drops, one clock. Hit every corner of the bay before time runs out.' },
+  { id: 3, title: 'Walk Her Home', giver: 'Marisol', reward: 1500, brief: 'Escort the witness to the safehouse. Stay near her — if you lose her, the job is blown.' },
+];
+const CHAIN_STORE_KEY = 'solmar-bay-r4-chain';
+let chainDone = 0;
+try { chainDone = Number(JSON.parse(localStorage.getItem(CHAIN_STORE_KEY) || '0')) || 0; } catch (e) { chainDone = 0; }
+const chain = { active: false, job: 0, stage: 0, timer: 0, suspicion: 0, loseTimer: 0, drop: 0, escortTimer: 0, photoReady: false, target: null, meetA: null, meetB: null, escort: null, tailPath: [], tailWp: 0, drops: [], lastObj: '' };
+const CHAIN_TAIL_PATH = [
+  { x: -60, z: 60 }, { x: 60, z: 60 }, { x: 84, z: -12 }, { x: 60, z: -84 }, { x: -36, z: -84 }, { x: -84, z: -12 }, { x: -60, z: 60 },
+];
+const CHAIN_DROPS = [
+  { x: -84, z: 84, label: 'north docks' }, { x: 84, z: 84, label: 'east beach' }, { x: 84, z: -84, label: 'south keys' }, { x: -84, z: -84, label: 'west farms' },
+];
+const CHAIN_ESCORT_DEST = { x: -HALF + BLOCK / 2, z: 20 };
+function chainPersist() { try { localStorage.setItem(CHAIN_STORE_KEY, JSON.stringify(chainDone)); } catch (e) {} }
+function chainPlayerPos() { return state.inCar ? { x: state.inCar.mesh.position.x, z: state.inCar.mesh.position.z } : { x: playerState.x, z: playerState.z }; }
+function chainSetObjective() {
+  if (!chain.active) return;
+  const job = CHAIN_JOBS[chain.job];
+  let line = '';
+  if (chain.job === 0) line = 'Tail the courier — suspicion ' + Math.round(chain.suspicion) + '% · keep 10–50m';
+  else if (chain.job === 1) line = chain.photoReady ? 'Meeting in progress — press X to photograph it!' : 'Get to the plaza and wait for the meeting';
+  else if (chain.job === 2) line = 'Drop ' + (chain.drop + 1) + '/4 at ' + CHAIN_DROPS[chain.drop].label + ' · ' + Math.max(0, Math.ceil(chain.timer)) + 's left';
+  else line = 'Escort the witness to the safehouse · stay within 20m · ' + Math.max(0, Math.ceil(chain.escortTimer)) + 's';
+  const full = job.title + '  ·  $' + job.reward + '|' + 'Marisol: ' + job.brief + ' — ' + line;
+  if (full === chain.lastObj) return;
+  chain.lastObj = full;
+  const t = document.getElementById('objTitle'), s = document.getElementById('objText');
+  if (t) t.textContent = job.title + '  ·  $' + job.reward;
+  if (s) s.textContent = 'Marisol: ' + job.brief + ' — ' + line;
+}
+function chainCleanup() {
+  if (chain.target) { scene.remove(chain.target.mesh); chain.target = null; }
+  if (chain.meetA) { scene.remove(chain.meetA.mesh); chain.meetA = null; }
+  if (chain.meetB) { scene.remove(chain.meetB.mesh); chain.meetB = null; }
+  if (chain.escort) { scene.remove(chain.escort.mesh); chain.escort = null; }
+  beacon.visible = false;
+  chain.lastObj = '';
+}
+function chainFail(reason) {
+  toast('Job failed — ' + reason + ' Marisol will call again. Press L to retry.');
+  speakLine('Blown. ' + reason + ' Take a breath and try again, ' + activeName() + '.');
+  chainCleanup();
+  chain.active = false; chain.suspicion = 0; chain.loseTimer = 0;
+  updateObjective(); updateHUD();
+}
+function chainCompleteJob() {
+  const job = CHAIN_JOBS[chain.job];
+  state.cash += job.reward;
+  chime();
+  toast(job.title + ' complete! +$' + job.reward);
+  speakLine('Beautiful work, ' + activeName() + '. ' + job.reward + ' dollars. Marisol pays on time, always.');
+  showStory('Marisol: ' + job.title + ' — done. ' + (chain.job === 3 ? 'You two are the best crew in the bay.' : 'One more job where that came from.'));
+  chainCleanup();
+  chain.active = false;
+  chainDone = Math.max(chainDone, chain.job + 1);
+  chainPersist();
+  if (chain.job === 3) {
+    state.cash += 1000;
+    toast('Chain complete! Marisol pays a $1000 loyalty bonus.');
+    speakLine('Four jobs, four clean finishes. A thousand extra, on the house.');
+    chain.job = 0;
+  } else {
+    chain.job++;
+  }
+  saveGame(); updateObjective(); updateHUD();
+  if (chainDone < 4) toast('Next chain job ready — press L when you are ready.');
+}
+function chainStartJob(idx) {
+  if (chain.active) { toast('A chain job is already running — follow the beacon.'); return; }
+  if (state.mode !== 'play') return;
+  if (state.mission < MISSIONS.length) { toast('Finish Marisol\'s main jobs first — then the extra chain opens.'); return; }
+  if (idx >= CHAIN_JOBS.length) idx = 0;
+  chain.job = idx; chain.active = true; chain.stage = 0; chain.suspicion = 0; chain.loseTimer = 0; chain.drop = 0; chain.photoReady = false;
+  const job = CHAIN_JOBS[idx];
+  phoneMsgText = 'Marisol: ' + job.title + ' — ' + job.brief;
+  if (idx === 0) {
+    const spec = CAR_TYPES.find((c) => c.type === 'muscle');
+    const mesh = makeCarMesh(spec);
+    mesh.position.set(-60, 0, 36); mesh.rotation.y = 0.4; scene.add(mesh);
+    chain.target = { mesh, wp: 0, speed: 0 };
+    chain.tailPath = CHAIN_TAIL_PATH;
+    setBeacon(-60, 60);
+    toast('Shadow Run: tail the black muscle car. Do not get spotted.');
+    speakLine('Follow that courier, but stay invisible. Too close and he makes you.');
+  } else if (idx === 1) {
+    const a = makePerson(0x2a3a4a, 0x1a1a1a, 0xc98a5a);
+    a.position.set(-96, groundHeight(-96, -84), -84); scene.add(a);
+    const b = makePerson(0x8a2a2a, 0x2a2a2a, 0xd9a066);
+    b.position.set(96, groundHeight(96, 84), 84); scene.add(b);
+    chain.meetA = { mesh: a, x: -96, z: -84, arrived: false };
+    chain.meetB = { mesh: b, x: 96, z: 84, arrived: false };
+    setBeacon(-12, -12);
+    toast('The Meeting: go to the plaza. The fixers arrive soon.');
+    speakLine('Two fixers, one plaza, one handshake. Get the picture and get out.');
+  } else if (idx === 2) {
+    chain.timer = 170; chain.drops = CHAIN_DROPS;
+    setBeacon(CHAIN_DROPS[0].x, CHAIN_DROPS[0].z);
+    toast('Four Corners: 4 drops, 170 seconds. Move!');
+    speakLine('Four drops, one clock. Do not stop for anyone.');
+  } else {
+    const w = makePerson(0xe8b820, 0x3a2a4a, 0xe8b898);
+    const px = playerState.x, pz = playerState.z;
+    w.position.set(px + 3, groundHeight(px + 3, pz + 3), pz + 3); scene.add(w);
+    chain.escort = { mesh: w, followTimer: 0, lost: 0 };
+    chain.escortTimer = 150;
+    setBeacon(CHAIN_ESCORT_DEST.x, CHAIN_ESCORT_DEST.z);
+    toast('Walk Her Home: stay close to the witness in yellow.');
+    speakLine('She is scared, so stay close and walk her home. I will watch the streets.');
+  }
+  chainSetObjective();
+}
+function chainStart() {
+  if (chain.active) { toast('Chain job already running.'); return; }
+  chainStartJob(chainDone >= 4 ? 0 : chainDone);
+}
+function chainSnapPhoto() {
+  if (!chain.active || chain.job !== 1) return;
+  if (!chain.photoReady) { toast('No meeting yet — wait for both fixers to reach the plaza.'); return; }
+  const p = chainPlayerPos();
+  const d = Math.hypot(p.x - (-12), p.z - (-12));
+  if (d < 6) { toast('Too close! They spotted the camera — back off and wait.'); chain.suspicion += 30; return; }
+  if (d > 28) { toast('Too far — move closer for a clear shot.'); return; }
+  toast('📸 Photo taken! The handshake is on film.');
+  beep(1200, 0.1, 'square', 0.2); setTimeout(() => beep(900, 0.12, 'square', 0.15), 120);
+  chainCompleteJob();
+}
+function chainUpdateTail(dt) {
+  const t = chain.target;
+  if (!t) return;
+  const dest = chain.tailPath[t.wp];
+  const dx = dest.x - t.mesh.position.x, dz = dest.z - t.mesh.position.z;
+  const d = Math.hypot(dx, dz);
+  if (d < 4) { t.wp = (t.wp + 1) % chain.tailPath.length; }
+  else {
+    const h = Math.atan2(dx, dz);
+    t.mesh.rotation.y = h;
+    const sp = 8.5;
+    t.mesh.position.x += Math.sin(h) * sp * dt;
+    t.mesh.position.z += Math.cos(h) * sp * dt;
+    t.mesh.position.y = groundHeight(t.mesh.position.x, t.mesh.position.z);
+  }
+  const p = chainPlayerPos();
+  const pd = Math.hypot(p.x - t.mesh.position.x, p.z - t.mesh.position.z);
+  if (pd < 9) chain.suspicion += dt * 34;
+  else if (pd < 16) chain.suspicion += dt * 8;
+  else chain.suspicion -= dt * 14;
+  chain.suspicion = clamp(chain.suspicion, 0, 100);
+  if (pd > 55) {
+    chain.loseTimer += dt;
+    if (chain.loseTimer > 6) { chainFail('You lost the courier.'); return; }
+  } else chain.loseTimer = 0;
+  if (chain.suspicion >= 100) { chainFail('You were spotted tailing him.'); return; }
+  setBeacon(t.mesh.position.x, t.mesh.position.z);
+  if (t.wp >= chain.tailPath.length - 1 && d < 6) chainCompleteJob();
+  chainSetObjective();
+}
+function chainUpdateMeet(dt) {
+  const plaza = { x: -12, z: -12 };
+  let both = true;
+  for (const m of [chain.meetA, chain.meetB]) {
+    if (!m) continue;
+    const dx = plaza.x - m.mesh.position.x, dz = plaza.z - m.mesh.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 1.5) {
+      both = false;
+      const h = Math.atan2(dx, dz);
+      m.mesh.rotation.y = h;
+      m.mesh.position.x += Math.sin(h) * 2.2 * dt;
+      m.mesh.position.z += Math.cos(h) * 2.2 * dt;
+      m.mesh.position.y = groundHeight(m.mesh.position.x, m.mesh.position.z);
+    } else m.arrived = true;
+  }
+  chain.photoReady = !!(chain.meetA && chain.meetA.arrived && chain.meetB && chain.meetB.arrived);
+  if (chain.photoReady) {
+    const p = chainPlayerPos();
+    const d = Math.hypot(p.x - plaza.x, p.z - plaza.z);
+    if (d < 5) { chain.suspicion += dt * 25; if (chain.suspicion >= 100) { chainFail('They spotted you at the meeting.'); return; } }
+    else chain.suspicion = Math.max(0, chain.suspicion - dt * 10);
+  }
+  chainSetObjective();
+}
+function chainUpdateDrops(dt) {
+  chain.timer -= dt;
+  if (chain.timer <= 0) { chainFail('The clock ran out on the drops.'); return; }
+  const p = chainPlayerPos();
+  const drop = CHAIN_DROPS[chain.drop];
+  const d = Math.hypot(p.x - drop.x, p.z - drop.z);
+  if (d < 5) {
+    chain.drop++;
+    state.cash += 50;
+    toast('Drop ' + chain.drop + '/4 delivered (+$50 courier tip).');
+    beep(990, 0.12, 'sine', 0.2);
+    if (chain.drop >= CHAIN_DROPS.length) { chainCompleteJob(); return; }
+    setBeacon(CHAIN_DROPS[chain.drop].x, CHAIN_DROPS[chain.drop].z);
+  }
+  chainSetObjective();
+}
+function chainUpdateEscort(dt) {
+  chain.escortTimer -= dt;
+  if (chain.escortTimer <= 0) { chainFail('The witness gave up waiting.'); return; }
+  const e = chain.escort;
+  if (!e) return;
+  const dx = playerState.x - e.mesh.position.x, dz = playerState.z - e.mesh.position.z;
+  const d = Math.hypot(dx, dz);
+  if (d > 20) {
+    e.lost += dt;
+    if (e.lost > 8) { chainFail('You lost the witness.'); return; }
+  } else e.lost = 0;
+  if (d > 2.5) {
+    const sp = d > 12 ? 7 : 4.5;
+    e.mesh.position.x += (dx / d) * sp * dt;
+    e.mesh.position.z += (dz / d) * sp * dt;
+    e.mesh.rotation.y = Math.atan2(dx, dz);
+  }
+  e.mesh.position.y = isleOnLand(e.mesh.position.x, e.mesh.position.z) ? ISLE_TOP : groundHeight(e.mesh.position.x, e.mesh.position.z);
+  const destD = Math.hypot(e.mesh.position.x - CHAIN_ESCORT_DEST.x, e.mesh.position.z - CHAIN_ESCORT_DEST.z);
+  if (destD < 5 && d < 12) { chainCompleteJob(); return; }
+  if (Math.random() < dt * 0.02 && state.wanted < 2) { state.wanted = 2; }
+  chainSetObjective();
+}
+function updateChain(dt) {
+  if (!chain.active || state.mode !== 'play') return;
+  if (chain.job === 0) chainUpdateTail(dt);
+  else if (chain.job === 1) chainUpdateMeet(dt);
+  else if (chain.job === 2) chainUpdateDrops(dt);
+  else if (chain.job === 3) chainUpdateEscort(dt);
+}
+// ---------- Round 4, part three: darts at the bar, race league, job board ----------
+const DART_BAR = { x: 48, z: 48 };
+const DART_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5];
+const darts = { open: false, aimX: 0, aimY: 0, sway: 0, thrown: 0, turnScore: 0, total: 0, dartsLeft: 3, lastScore: 0, best: 0, marker: null, board: null };
+{
+  const shackM = new THREE.MeshStandardMaterial({ color: 0x8a5a2a, roughness: 1 });
+  const shack = new THREE.Mesh(new THREE.BoxGeometry(12, 5, 8), shackM);
+  shack.position.set(DART_BAR.x + 8, 2.5, DART_BAR.z); shack.castShadow = true; scene.add(shack);
+  const roofM = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 1 });
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(13, 0.6, 9), roofM);
+  roof.position.set(DART_BAR.x + 8, 5.3, DART_BAR.z); scene.add(roof);
+  const neon = new THREE.Mesh(new THREE.BoxGeometry(5, 1, 0.3), new THREE.MeshStandardMaterial({ color: 0xff2a7a, emissive: 0xff2a7a, emissiveIntensity: 1.2 }));
+  neon.position.set(DART_BAR.x + 8, 4.2, DART_BAR.z + 4.1); scene.add(neon);
+  const counter = new THREE.Mesh(new THREE.BoxGeometry(7, 1.1, 1.6), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  counter.position.set(DART_BAR.x + 8, 0.55, DART_BAR.z + 1.5); scene.add(counter);
+  for (let i = 0; i < 4; i++) {
+    const stool = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.6, 10), new THREE.MeshStandardMaterial({ color: 0xc0392b }));
+    stool.position.set(DART_BAR.x + 5 + i * 2, 0.3, DART_BAR.z + 2.6); scene.add(stool);
+  }
+  const boardG = new THREE.Group();
+  const back = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 0.25, 24), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  back.rotation.x = Math.PI / 2; boardG.add(back);
+  for (let r = 0; r < 5; r++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.25 - r * 0.24, 0.12, 6, 28), new THREE.MeshStandardMaterial({ color: r % 2 === 0 ? 0xf0ead8 : 0x222222 }));
+    ring.position.z = 0.14; boardG.add(ring);
+  }
+  const bull = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0xc0392b, emissive: 0x881111, emissiveIntensity: 0.6 }));
+  bull.rotation.x = Math.PI / 2; bull.position.z = 0.16; boardG.add(bull);
+  for (let s = 0; s < 20; s++) {
+    const a = (s / 20) * Math.PI * 2;
+    const wedge = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.9, 0.05), new THREE.MeshStandardMaterial({ color: s % 2 === 0 ? 0xffe27a : 0x111111 }));
+    wedge.position.set(Math.sin(a) * 0.95, Math.cos(a) * 0.95, 0.15); wedge.rotation.z = -a; boardG.add(wedge);
+  }
+  boardG.position.set(DART_BAR.x + 8, 2.4, DART_BAR.z + 3.9);
+  boardG.rotation.y = Math.PI;
+  scene.add(boardG);
+  darts.board = boardG;
+  const aim = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+  aim.position.set(DART_BAR.x + 8, 2.4, DART_BAR.z + 3.6); scene.add(aim);
+  darts.marker = aim;
+  const line = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.06, 3), new THREE.MeshStandardMaterial({ color: 0xffe27a }));
+  line.position.set(DART_BAR.x + 8, 0.05, DART_BAR.z - 1); scene.add(line);
+}
+function dartsNear() { return Math.hypot(playerState.x - DART_BAR.x, playerState.z - DART_BAR.z) < 9 && !state.inCar; }
+function dartsOpen() {
+  if (darts.open) return;
+  if (!dartsNear()) { toast('Go to the bar with the pink neon sign (east downtown) and press K to play darts.'); return; }
+  darts.open = true; darts.aimX = 0; darts.aimY = 0; darts.thrown = 0; darts.turnScore = 0; darts.dartsLeft = 3;
+  const el = document.getElementById('dartsPanel');
+  if (el) el.classList.remove('hidden');
+  toast('Darts! Arrow keys aim, Enter throws. 3 darts per turn.');
+  dartsRender();
+}
+function dartsClose() {
+  darts.open = false;
+  const el = document.getElementById('dartsPanel');
+  if (el) el.classList.add('hidden');
+}
+function dartsRender() {
+  const el = document.getElementById('dartsInfo');
+  if (el) el.textContent = 'Darts left: ' + darts.dartsLeft + ' · Turn: ' + darts.turnScore + ' · Total: ' + darts.total + ' · Best: ' + darts.best + (darts.lastScore ? ' · Last throw: ' + darts.lastScore : '');
+  const aimEl = document.getElementById('dartsAim');
+  if (aimEl) aimEl.textContent = 'Aim: ' + (darts.aimX >= 0 ? '+' : '') + darts.aimX.toFixed(1) + ', ' + (darts.aimY >= 0 ? '+' : '') + darts.aimY.toFixed(1);
+}
+function throwDart() {
+  if (!darts.open || darts.dartsLeft <= 0) return;
+  const swayX = Math.sin(state.time * 2.3) * 0.35 + Math.sin(state.time * 4.1) * 0.15;
+  const swayY = Math.cos(state.time * 1.9) * 0.3 + Math.sin(state.time * 3.3) * 0.15;
+  const hx = darts.aimX + swayX, hy = darts.aimY + swayY;
+  const r = Math.hypot(hx, hy);
+  let score = 0;
+  if (r < 0.18) score = 50;
+  else if (r < 0.42) score = 25;
+  else if (r > 1.35) score = 0;
+  else {
+    let ang = Math.atan2(hx, hy);
+    if (ang < 0) ang += Math.PI * 2;
+    const seg = Math.floor(((ang + Math.PI / 20) % (Math.PI * 2)) / (Math.PI / 10)) % 20;
+    const base = DART_ORDER[seg];
+    score = base;
+    if (r > 1.05 && r <= 1.25) score = base * 2;
+    else if (r > 0.75 && r <= 0.85) score = base * 3;
+    if (r > 1.25 && r <= 1.35) score = base * 2;
+  }
+  darts.lastScore = score; darts.turnScore += score; darts.total += score;
+  darts.dartsLeft--; darts.thrown++;
+  beep(score >= 50 ? 1320 : score >= 20 ? 990 : 440, 0.14, 'square', 0.18);
+  if (darts.marker) {
+    darts.marker.position.set(DART_BAR.x + 8 + hx, 2.4 + hy, DART_BAR.z + 3.6);
+    setTimeout(() => { if (darts.marker) darts.marker.position.set(DART_BAR.x + 8 + darts.aimX, 2.4 + darts.aimY, DART_BAR.z + 3.6); }, 500);
+  }
+  if (darts.dartsLeft <= 0) {
+    const t = darts.turnScore;
+    let payout = 0;
+    if (t >= 140) payout = 400; else if (t >= 100) payout = 250; else if (t >= 60) payout = 120;
+    if (payout > 0) { state.cash += payout; toast('Darts turn: ' + t + ' points — you win $' + payout + '!'); chime(); }
+    else toast('Darts turn: ' + t + ' points — no payout this time. K to play again.');
+    dartChampTurnEnd(t);
+    if (t > darts.best) darts.best = t;
+    darts.turnScore = 0; darts.dartsLeft = 3;
+    saveGame(); updateHUD();
+  }
+  dartsRender();
+}
+function updateDarts(dt) {
+  if (!darts.open) return;
+  const step = 1.6 * dt;
+  if (keys['ArrowLeft']) darts.aimX -= step;
+  if (keys['ArrowRight']) darts.aimX += step;
+  if (keys['ArrowUp']) darts.aimY += step;
+  if (keys['ArrowDown']) darts.aimY -= step;
+  darts.aimX = clamp(darts.aimX, -1.4, 1.4); darts.aimY = clamp(darts.aimY, -1.4, 1.4);
+  if (darts.marker) {
+    const sx = Math.sin(state.time * 2.3) * 0.35, sy = Math.cos(state.time * 1.9) * 0.3;
+    darts.marker.position.set(DART_BAR.x + 8 + darts.aimX + sx * 0.4, 2.4 + darts.aimY + sy * 0.4, DART_BAR.z + 3.6);
+  }
+  dartsRender();
+}
+const LEAGUE_RIVALS = [
+  { name: 'Vex', pts: 0, color: '#ff5b5b' },
+  { name: 'Nova', pts: 0, color: '#2ee6ff' },
+  { name: 'Rook', pts: 0, color: '#7dff9a' },
+];
+const league = { season: 1, round: 0, myPts: 0, finished: 0, store: 'solmar-bay-r4-league' };
+try {
+  const savedLeague = JSON.parse(localStorage.getItem(league.store) || 'null');
+  if (savedLeague) { league.season = savedLeague.season || 1; league.round = savedLeague.round || 0; league.myPts = savedLeague.myPts || 0; if (savedLeague.rivals) for (let i = 0; i < 3; i++) LEAGUE_RIVALS[i].pts = savedLeague.rivals[i] || 0; }
+} catch (e) {}
+function leaguePersist() { try { localStorage.setItem(league.store, JSON.stringify({ season: league.season, round: league.round, myPts: league.myPts, rivals: LEAGUE_RIVALS.map((r) => r.pts) })); } catch (e) {} }
+function leagueStandings() {
+  const rows = [{ name: activeName() + ' (you)', pts: league.myPts, you: true }].concat(LEAGUE_RIVALS.map((r) => ({ name: r.name, pts: r.pts })));
+  rows.sort((a, b) => b.pts - a.pts);
+  return rows;
+}
+function leagueRender() {
+  const el = document.getElementById('leagueLine');
+  if (!el) return;
+  const rows = leagueStandings();
+  el.textContent = 'League S' + league.season + ' R' + (league.round + 1) + '/5 · ' + rows.map((r, i) => (i + 1) + '. ' + r.name + ' ' + r.pts).join(' · ');
+}
+function leagueRecord(prize) {
+  league.round++;
+  let myGain = 0;
+  if (prize >= 1500) myGain = 12; else if (prize >= 1000) myGain = 9; else if (prize > 0) myGain = 6; else myGain = 3;
+  league.myPts += myGain;
+  for (const r of LEAGUE_RIVALS) r.pts += 3 + Math.floor(Math.random() * 9);
+  leaguePersist();
+  leagueRender();
+  const rows = leagueStandings();
+  const myPos = rows.findIndex((r) => r.you) + 1;
+  toast('League round ' + league.round + '/5 done — you are P' + myPos + ' with ' + league.myPts + ' pts.');
+  if (league.round >= 5) {
+    league.finished++;
+    if (myPos === 1) { state.cash += 2000; toast('🏆 LEAGUE CHAMPION! Season ' + league.season + ' is yours — $2000 champion bonus!'); speakLine('Champion of the bay league. Two thousand dollars, and every rival knows your name.'); chime(); }
+    else toast('Season ' + league.season + ' over — ' + rows[0].name + ' takes the title. Season ' + (league.season + 1) + ' starts now.');
+    league.season++; league.round = 0; league.myPts = 0;
+    for (const r of LEAGUE_RIVALS) r.pts = 0;
+    leaguePersist(); leagueRender(); saveGame(); updateHUD();
+  }
+}
+const BOARD_SPOT = { x: -36, z: 84 };
+const BOARD_JOBS = [
+  { kind: 'dash', label: 'Parcel Dash', desc: 'Deliver a parcel across town fast', time: 75, reward: 180 },
+  { kind: 'tour', label: 'Bay Tour', desc: 'Visit 3 viewpoints in order', time: 150, reward: 260 },
+  { kind: 'sweep', label: 'Street Sweep', desc: 'Collect 3 dumped crates', time: 120, reward: 220 },
+  { kind: 'patrol', label: 'Night Patrol', desc: 'Check 3 corners of downtown', time: 140, reward: 240 },
+  { kind: 'ferry', label: 'Cay Ferry Run', desc: 'Reach the Coral Cay pier', time: 110, reward: 300 },
+];
+const boardJob = { active: false, idx: -1, stage: 0, timer: 0, targets: [], markers: [], panelOpen: false };
+{
+  const boardM = new THREE.MeshStandardMaterial({ color: 0x6a4a22, roughness: 1 });
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(5, 3.4, 0.3), boardM);
+  frame.position.set(BOARD_SPOT.x, 2.2, BOARD_SPOT.z); scene.add(frame);
+  const paper = new THREE.Mesh(new THREE.BoxGeometry(4.4, 2.8, 0.1), new THREE.MeshStandardMaterial({ color: 0xf0ead8 }));
+  paper.position.set(BOARD_SPOT.x, 2.2, BOARD_SPOT.z + 0.2); scene.add(paper);
+  for (let i = 0; i < 2; i++) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.4, 6), boardM);
+    leg.position.set(BOARD_SPOT.x - 2 + i * 4, 0.6, BOARD_SPOT.z); scene.add(leg);
+  }
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 0.8 }));
+  lamp.position.set(BOARD_SPOT.x, 4.1, BOARD_SPOT.z); scene.add(lamp);
+}
+function boardNear() { return Math.hypot(playerState.x - BOARD_SPOT.x, playerState.z - BOARD_SPOT.z) < 8 && !state.inCar; }
+function boardOpenPanel() {
+  if (!boardNear()) { toast('Find the wooden job board near the north-west plaza and press Z there.'); return; }
+  boardJob.panelOpen = true;
+  const el = document.getElementById('boardPanel');
+  if (el) { el.classList.remove('hidden'); boardRenderList(); }
+  beep(880, 0.08, 'sine', 0.12);
+}
+function boardClosePanel() {
+  boardJob.panelOpen = false;
+  const el = document.getElementById('boardPanel');
+  if (el) el.classList.add('hidden');
+}
+function boardRenderList() {
+  const el = document.getElementById('boardItems');
+  if (!el) return;
+  el.innerHTML = '';
+  for (let i = 0; i < BOARD_JOBS.length; i++) {
+    const j = BOARD_JOBS[i];
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = j.label + ' — $' + j.reward + ' · ' + j.time + 's';
+    b.disabled = boardJob.active;
+    b.addEventListener('click', () => acceptBoardJob(i));
+    el.appendChild(b);
+    const d = document.createElement('div');
+    d.style.cssText = 'font-size:12px;color:#cfe8ff;margin:-2px 0 6px';
+    d.textContent = j.desc;
+    el.appendChild(d);
+  }
+  const status = document.getElementById('boardStatus');
+  if (status) status.textContent = boardJob.active ? 'Job running: ' + BOARD_JOBS[boardJob.idx].label + ' — ' + Math.max(0, Math.ceil(boardJob.timer)) + 's left' : 'Pick a job. Repeatable, any time.';
+}
+function boardClearMarkers() {
+  for (const m of boardJob.markers) scene.remove(m);
+  boardJob.markers = [];
+}
+function boardMakeTarget(x, z, color) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.3, 18), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.6, transparent: true, opacity: 0.85 }));
+  m.position.set(x, isleOnLand(x, z) ? ISLE_TOP + 0.3 : groundHeight(x, z) + 0.3, z); scene.add(m);
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1, 26, 10, 1, true), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+  beam.position.set(x, (isleOnLand(x, z) ? ISLE_TOP : groundHeight(x, z)) + 13, z); scene.add(beam);
+  boardJob.markers.push(m); boardJob.markers.push(beam);
+  return { x, z };
+}
+function acceptBoardJob(i) {
+  if (boardJob.active) { toast('Finish your current board job first.'); return; }
+  const j = BOARD_JOBS[i];
+  boardJob.active = true; boardJob.idx = i; boardJob.stage = 0; boardJob.timer = j.time; boardJob.targets = [];
+  boardClearMarkers();
+  if (j.kind === 'dash') {
+    const p = roadPoint();
+    boardJob.targets = [boardMakeTarget(p.x, p.z, 0x2ee6ff)];
+    setBeacon(p.x, p.z);
+  } else if (j.kind === 'tour') {
+    boardJob.targets = [
+      boardMakeTarget(120, -60, 0x2ee6ff), boardMakeTarget(-180, 180, 0x2ee6ff), boardMakeTarget(150, 200, 0x2ee6ff),
+    ];
+    setBeacon(120, -60);
+  } else if (j.kind === 'sweep') {
+    boardJob.targets = [];
+    for (let k = 0; k < 3; k++) { const p = roadPoint(); boardJob.targets.push(boardMakeTarget(p.x, p.z, 0xff9a5a)); }
+    setBeacon(boardJob.targets[0].x, boardJob.targets[0].z);
+  } else if (j.kind === 'patrol') {
+    boardJob.targets = [
+      boardMakeTarget(-60, -60, 0xff9a5a), boardMakeTarget(60, -60, 0xff9a5a), boardMakeTarget(0, 60, 0xff9a5a),
+    ];
+    setBeacon(-60, -60);
+  } else {
+    boardJob.targets = [boardMakeTarget(ISLE_CX - ISLE_R - 26, ISLE_CZ + 14, 0x2ee6ff)];
+    setBeacon(ISLE_CX - ISLE_R - 26, ISLE_CZ + 14);
+  }
+  boardClosePanel();
+  toast(j.label + ' started — ' + j.time + 's on the clock. Follow the beacon.');
+  speakLine(j.label + '. ' + j.desc + '. The clock is running, ' + activeName() + '.');
+  boardRenderList();
+}
+function updateBoardJob(dt) {
+  if (!boardJob.active) return;
+  boardJob.timer -= dt;
+  if (boardJob.timer <= 0) {
+    boardJob.active = false; boardClearMarkers(); beacon.visible = false;
+    toast('Board job expired — the client hired someone else.');
+    updateObjective(); return;
+  }
+  const p = chainPlayerPos();
+  const t = boardJob.targets[boardJob.stage];
+  if (!t) return;
+  const d = Math.hypot(p.x - t.x, p.z - t.z);
+  if (d < 4.5) {
+    boardJob.stage++;
+    beep(990, 0.12, 'sine', 0.2);
+    if (boardJob.stage >= boardJob.targets.length) {
+      const j = BOARD_JOBS[boardJob.idx];
+      state.cash += j.reward;
+      boardJob.active = false; boardClearMarkers(); beacon.visible = false;
+      toast(j.label + ' done! +$' + j.reward);
+      chime(); saveGame(); updateHUD(); updateObjective();
+      return;
+    }
+    const next = boardJob.targets[boardJob.stage];
+    setBeacon(next.x, next.z);
+    toast('Checkpoint ' + boardJob.stage + '/' + boardJob.targets.length + ' — next one marked.');
+  }
+  const status = document.getElementById('boardStatus');
+  if (status && boardJob.panelOpen) status.textContent = 'Job running: ' + BOARD_JOBS[boardJob.idx].label + ' — ' + Math.max(0, Math.ceil(boardJob.timer)) + 's left';
+}
+// ---------- Round 4, part four: a busier bay — five new random events ----------
+const R4_EVENT_KINDS = ['robbery', 'challenger', 'stranded', 'tourist', 'runaway'];
+const r4event = { active: null, timer: 70, channel: 0, ai: null, cart: null, smoke: [], ped: null, car: null, target: null, spawnX: 0, spawnZ: 0 };
+function r4eventSpot() {
+  const a = Math.random() * Math.PI * 2;
+  const d = 22 + Math.random() * 14;
+  return { x: clamp(playerState.x + Math.cos(a) * d, -HALF + 6, HALF - 6), z: clamp(playerState.z + Math.sin(a) * d, -HALF + 6, HALF - 6) };
+}
+function r4eventClearMeshes() {
+  if (r4event.ped) { scene.remove(r4event.ped.mesh); const i = peds.indexOf(r4event.ped); if (i >= 0) peds.splice(i, 1); r4event.ped = null; }
+  if (r4event.car) { scene.remove(r4event.car); r4event.car = null; }
+  if (r4event.cart) { scene.remove(r4event.cart); r4event.cart = null; }
+  if (r4event.ai) { scene.remove(r4event.ai.mesh); r4event.ai = null; }
+  for (const s of r4event.smoke) scene.remove(s);
+  r4event.smoke = [];
+}
+function r4eventEnd(win, msg) {
+  if (win) { chime(); }
+  toast(msg);
+  r4eventClearMeshes();
+  beacon.visible = false;
+  r4event.active = null; r4event.timer = 65 + Math.random() * 55; r4event.channel = 0;
+  updateHUD();
+}
+function r4eventSpawn(kind) {
+  if (r4event.active || streetEvent || chain.active || boardJob.active || state.mode !== 'play') return;
+  const spot = r4eventSpot();
+  r4event.spawnX = spot.x; r4event.spawnZ = spot.z;
+  if (kind === 'robbery') {
+    const mesh = makePerson(0x1a1a1a, 0x1a1a1a, 0x8a5a33);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.1), new THREE.MeshStandardMaterial({ color: 0xc0392b }));
+    band.position.set(0, 1.62, 0.2); mesh.add(band);
+    mesh.position.set(spot.x, groundHeight(spot.x, spot.z), spot.z); scene.add(mesh);
+    const p = { mesh, x: spot.x, z: spot.z, heading: 0, speed: 0, target: null, down: false, downTimer: 0, phase: 0, flee: false, mood: 'calm', isBounty: false };
+    peds.push(p); r4event.ped = p;
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.4), new THREE.MeshStandardMaterial({ color: 0x2ecc71 }));
+    bag.position.set(spot.x + 1.2, groundHeight(spot.x, spot.z) + 0.3, spot.z); scene.add(bag);
+    r4event.car = bag;
+    r4event.active = { kind, timer: 55, state: 'confront' };
+    setBeacon(spot.x, spot.z);
+    toast('🚨 Robbery in progress! Stop the masked thief before he gets away.');
+    speakLine('A robbery, right here. Stop him and the shopkeeper pays you.');
+    beep(220, 0.25, 'sawtooth', 0.25);
+  } else if (kind === 'challenger') {
+    const spec = CAR_TYPES.find((c) => c.type === 'supercar');
+    const mesh = makeCarMesh(spec);
+    mesh.position.set(spot.x, 0, spot.z); mesh.rotation.y = Math.random() * Math.PI * 2; scene.add(mesh);
+    const dest = roadPoint();
+    r4event.ai = { mesh, cp: 0, speed: 0, done: false };
+    r4event.target = dest;
+    r4event.active = { kind, timer: 95, state: 'race' };
+    setBeacon(dest.x, dest.z);
+    toast('🏎️ A street challenger revs at you! Beat his supercar to the beacon — $400 if you win.');
+    speakLine('A challenger. Beat him to the marker and take his money.');
+    beep(660, 0.15, 'square', 0.2); setTimeout(() => beep(880, 0.15, 'square', 0.2), 160);
+  } else if (kind === 'stranded') {
+    const spec = CAR_TYPES.find((c) => c.type === 'sedan');
+    const mesh = makeCarMesh(spec);
+    mesh.position.set(spot.x, 0, spot.z); mesh.rotation.y = 0.8; scene.add(mesh);
+    r4event.car = mesh;
+    const driver = makePerson(0xf39c12, 0x2c3e50, 0xd9a066);
+    driver.position.set(spot.x + 2.5, groundHeight(spot.x, spot.z), spot.z + 1); scene.add(driver);
+    r4event.ped = { mesh: driver, x: spot.x + 2.5, z: spot.z + 1, heading: 0, speed: 0, target: null, down: false, downTimer: 0, phase: 0, flee: false, mood: 'calm' };
+    peds.push(r4event.ped);
+    for (let i = 0; i < 4; i++) {
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(0.5 + i * 0.2, 8, 8), new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.5 - i * 0.08 }));
+      puff.position.set(spot.x, 1.5 + i * 0.7, spot.z); scene.add(puff);
+      r4event.smoke.push(puff);
+    }
+    r4event.active = { kind, timer: 90, state: 'fix' };
+    setBeacon(spot.x, spot.z);
+    toast('🔧 Stranded driver! Stand by the smoking car for a few seconds to fix it.');
+    speakLine('Someone broke down. A good mechanic earns a good tip.');
+  } else if (kind === 'tourist') {
+    const mesh = makePerson(0xecf0f1, 0x9b59b6, 0xf0c8a0);
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.16, 10), new THREE.MeshStandardMaterial({ color: 0xe8b820 }));
+    hat.position.y = 1.85; mesh.add(hat);
+    const cam = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.14), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+    cam.position.set(0, 1.1, 0.3); mesh.add(cam);
+    mesh.position.set(spot.x, groundHeight(spot.x, spot.z), spot.z); scene.add(mesh);
+    const p = { mesh, x: spot.x, z: spot.z, heading: 0, speed: 0, target: null, down: false, downTimer: 0, phase: 0, flee: false, mood: 'calm' };
+    peds.push(p); r4event.ped = p;
+    r4event.target = { x: -12, z: -12 };
+    r4event.active = { kind, timer: 95, state: 'escort' };
+    setBeacon(-12, -12);
+    toast('🧳 Lost tourist! Walk them to the downtown plaza — stay close.');
+    speakLine('A tourist is lost. Walk them to the plaza and they will tip you well.');
+  } else {
+    const cart = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.2, 1.2), new THREE.MeshStandardMaterial({ color: 0xe86a1e }));
+    box.position.y = 0.9; cart.add(box);
+    for (const [wx, wz] of [[-0.8, 0.6], [0.8, 0.6], [-0.8, -0.6], [0.8, -0.6]]) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.18, 10), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+      wheel.rotation.z = Math.PI / 2; wheel.position.set(wx, 0.32, wz); cart.add(wheel);
+    }
+    const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshStandardMaterial({ color: 0xff8c1a }));
+    fruit.position.set(0, 1.7, 0); cart.add(fruit);
+    cart.position.set(spot.x, groundHeight(spot.x, spot.z), spot.z); scene.add(cart);
+    r4event.cart = cart;
+    r4event.active = { kind, timer: 40, state: 'chase', vx: 0, vz: 0, dir: Math.random() * Math.PI * 2 };
+    setBeacon(spot.x, spot.z);
+    toast('🛒 Runaway fruit cart! Catch it before it rolls away — $100 reward.');
+    speakLine('A cart broke loose. Catch it before it hits something.');
+  }
+}
+function r4eventPick() {
+  const kind = R4_EVENT_KINDS[Math.floor(Math.random() * R4_EVENT_KINDS.length)];
+  r4eventSpawn(kind);
+}
+function updateR4event(dt) {
+  if (state.mode !== 'play') return;
+  if (!r4event.active) {
+    r4event.timer -= dt;
+    if (r4event.timer <= 0) { r4event.timer = 65 + Math.random() * 55; r4eventPick(); }
+    return;
+  }
+  const ev = r4event.active;
+  ev.timer -= dt;
+  if (ev.timer <= 0) {
+    if (ev.kind === 'challenger') r4eventEnd(false, 'The challenger got away — too slow this time.');
+    else if (ev.kind === 'robbery') r4eventEnd(false, 'The thief escaped with the cash.');
+    else if (ev.kind === 'stranded') r4eventEnd(false, 'The stranded driver gave up and called a tow truck.');
+    else if (ev.kind === 'tourist') r4eventEnd(false, 'The tourist found their own way — no tip for you.');
+    else r4eventEnd(false, 'The cart rolled off and smashed into a wall.');
+    return;
+  }
+  const p = chainPlayerPos();
+  if (ev.kind === 'robbery') {
+    const ped = r4event.ped;
+    if (!ped) { r4eventEnd(false, 'The thief vanished.'); return; }
+    if (ped.down) {
+      state.cash += 250;
+      saveGame(); updateHUD();
+      r4eventEnd(true, 'Thief stopped! The shopkeeper pays you $250.');
+      speakLine('Thief down. The shopkeeper is very grateful, ' + activeName() + '.');
+      return;
+    }
+    const d = Math.hypot(p.x - ped.x, p.z - ped.z);
+    if (d > 45) { r4eventEnd(false, 'The thief slipped away while you were far off.'); return; }
+    ped.mesh.position.y = groundHeight(ped.x, ped.z);
+    if (d < 6 && ped.flee) { ped.speed = 6; const a = Math.atan2(ped.x - p.x, ped.z - p.z); ped.x += Math.sin(a) * 6 * dt; ped.z += Math.cos(a) * 6 * dt; ped.mesh.position.set(ped.x, groundHeight(ped.x, ped.z), ped.z); ped.mesh.rotation.y = a; }
+  } else if (ev.kind === 'challenger') {
+    const ai = r4event.ai;
+    if (!ai) return;
+    const dest = r4event.target;
+    const dx = dest.x - ai.mesh.position.x, dz = dest.z - ai.mesh.position.z;
+    const dd = Math.hypot(dx, dz);
+    if (dd > 3) {
+      const h = Math.atan2(dx, dz);
+      ai.mesh.rotation.y = h;
+      ai.mesh.position.x += Math.sin(h) * 12 * dt;
+      ai.mesh.position.z += Math.cos(h) * 12 * dt;
+      ai.mesh.position.y = groundHeight(ai.mesh.position.x, ai.mesh.position.z);
+    } else {
+      r4eventEnd(false, 'The challenger beat you to the beacon — $400 stays in his pocket.');
+      return;
+    }
+    const pd = Math.hypot(p.x - dest.x, p.z - dest.z);
+    if (pd < 5) {
+      state.cash += 400;
+      saveGame(); updateHUD();
+      r4eventEnd(true, 'You beat the challenger! +$400 and bragging rights.');
+      speakLine('He never stood a chance. Four hundred dollars, straight from his wallet.');
+      return;
+    }
+    setBeacon(dest.x, dest.z);
+  } else if (ev.kind === 'stranded') {
+    for (let i = 0; i < r4event.smoke.length; i++) {
+      const s = r4event.smoke[i];
+      s.position.y += dt * (0.4 + i * 0.15);
+      s.position.x += Math.sin(state.time * 2 + i) * dt * 0.3;
+      if (s.position.y > 5) s.position.y = 1.5;
+      s.material.opacity = 0.35 + Math.sin(state.time * 3 + i * 2) * 0.12;
+    }
+    const car = r4event.car;
+    if (!car) return;
+    const d = Math.hypot(p.x - car.position.x, p.z - car.position.z);
+    if (d < 4 && !state.inCar) {
+      r4event.channel += dt;
+      if (Math.floor(r4event.channel * 2) !== Math.floor((r4event.channel - dt) * 2)) beep(520, 0.06, 'square', 0.1);
+      if (r4event.channel >= 3) {
+        state.cash += 150;
+        saveGame(); updateHUD();
+        r4eventEnd(true, 'Car fixed! The driver tips you $150 and drives off.');
+        speakLine('Fixed in no time. The driver could not believe it.');
+        return;
+      }
+    } else r4event.channel = Math.max(0, r4event.channel - dt * 2);
+    const status = document.getElementById('toast');
+    if (d < 4 && !state.inCar && r4event.channel > 0) toast('Fixing… ' + Math.ceil(3 - r4event.channel) + 's — stay by the car.');
+  } else if (ev.kind === 'tourist') {
+    const ped = r4event.ped;
+    if (!ped) return;
+    const dx = playerState.x - ped.x, dz = playerState.z - ped.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 3) {
+      const sp = d > 12 ? 6.5 : 4;
+      ped.x += (dx / d) * sp * dt; ped.z += (dz / d) * sp * dt;
+      ped.mesh.position.set(ped.x, groundHeight(ped.x, ped.z), ped.z);
+      ped.mesh.rotation.y = Math.atan2(dx, dz);
+    }
+    const destD = Math.hypot(ped.x - (-12), ped.z - (-12));
+    if (destD < 5) {
+      state.cash += 200;
+      saveGame(); updateHUD();
+      r4eventEnd(true, 'Tourist delivered to the plaza! +$200 tip.');
+      speakLine('The tourist loved the tour. Two hundred dollars, and a five-star review.');
+      return;
+    }
+    if (d > 25) { r4eventEnd(false, 'You lost the tourist in the crowd.'); return; }
+  } else if (ev.kind === 'runaway') {
+    const cart = r4event.cart;
+    if (!cart) return;
+    ev.dir += Math.sin(state.time * 0.8) * dt * 0.7;
+    const sp = 5.5;
+    cart.position.x += Math.sin(ev.dir) * sp * dt;
+    cart.position.z += Math.cos(ev.dir) * sp * dt;
+    cart.position.x = clamp(cart.position.x, -HALF, HALF);
+    cart.position.z = clamp(cart.position.z, -HALF, HALF);
+    cart.position.y = groundHeight(cart.position.x, cart.position.z);
+    cart.rotation.y = ev.dir;
+    cart.rotation.z = Math.sin(state.time * 5) * 0.06;
+    setBeacon(cart.position.x, cart.position.z);
+    const d = Math.hypot(p.x - cart.position.x, p.z - cart.position.z);
+    if (d < 2.2) {
+      state.cash += 100;
+      saveGame(); updateHUD();
+      r4eventEnd(true, 'Cart caught! The vendor pays you $100.');
+      speakLine('Got it! The fruit vendor owes you one.');
+      return;
+    }
+  }
+}
+// ---------- Round 4, part five: salvage diving off the east coast ----------
+const DIVE_BUOYS = [
+  { x: 150, z: -90, label: 'wreck of the gull' }, { x: 190, z: 60, label: 'old anchor field' },
+  { x: 230, z: -20, label: 'sunken skiff' }, { x: 165, z: 150, label: 'reef drop' },
+];
+const DIVE_STORE_KEY = 'solmar-bay-r4-dive';
+let diveCratesFound = 0;
+try { diveCratesFound = Number(JSON.parse(localStorage.getItem(DIVE_STORE_KEY) || '0')) || 0; } catch (e) { diveCratesFound = 0; }
+const dive = { active: false, oxygen: 35, maxOxygen: 35, buoy: null, crates: [], buoys: [], bob: 0, surfaced: false };
+function divePersist() { try { localStorage.setItem(DIVE_STORE_KEY, JSON.stringify(diveCratesFound)); } catch (e) {} }
+function diveActive() { return dive.active; }
+{
+  for (let i = 0; i < DIVE_BUOYS.length; i++) {
+    const b = DIVE_BUOYS[i];
+    const g = new THREE.Group();
+    const floatM = new THREE.MeshStandardMaterial({ color: 0xff5b5b, roughness: 0.6 });
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, 0.8, 12), floatM);
+    base.position.y = 0.4; g.add(base);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.4, 10), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 0.7 }));
+    tip.position.y = 1.5; g.add(tip);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.18, 8, 24), new THREE.MeshBasicMaterial({ color: 0x2ee6ff, transparent: true, opacity: 0.7 }));
+    ring.rotation.x = Math.PI / 2; ring.position.y = 0.3; g.add(ring);
+    const light = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshStandardMaterial({ color: 0xff2a7a, emissive: 0xff2a7a, emissiveIntensity: 1.4 }));
+    light.position.y = 2.4; g.add(light);
+    g.position.set(b.x, 0, b.z); scene.add(g);
+    dive.buoys.push({ mesh: g, light, ring, x: b.x, z: b.z, label: b.label });
+  }
+  const crateCols = [0x8a6a42, 0x2e6fb0, 0xc0392b, 0x2ecc71, 0xe8b820, 0x9b59b6, 0xff8c1a, 0x1e8a8a];
+  for (let i = 0; i < 8; i++) {
+    const buoy = DIVE_BUOYS[i % DIVE_BUOYS.length];
+    const cx = buoy.x + (i % 2 === 0 ? -9 : 9) + (i % 3) * 3;
+    const cz = buoy.z + (i < 4 ? -7 : 8) - (i % 2) * 4;
+    const g = new THREE.Group();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1, 1.1), new THREE.MeshStandardMaterial({ color: crateCols[i], roughness: 0.9 }));
+    box.position.y = 0.5; g.add(box);
+    const strap = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.2, 0.3), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+    strap.position.y = 0.5; g.add(strap);
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(1.1, 8, 8), new THREE.MeshBasicMaterial({ color: 0x2ee6ff, transparent: true, opacity: 0.22 }));
+    glow.position.y = 0.6; g.add(glow);
+    const seaY = groundHeight(cx, cz);
+    g.position.set(cx, seaY, cz); scene.add(g);
+    dive.crates.push({ mesh: g, x: cx, z: cz, taken: i < diveCratesFound, bob: i * 1.1, buoy: i % DIVE_BUOYS.length });
+    if (i < diveCratesFound) g.visible = false;
+  }
+}
+function diveNearBuoy() {
+  const p = chainPlayerPos();
+  for (let i = 0; i < DIVE_BUOYS.length; i++) {
+    if (Math.hypot(p.x - DIVE_BUOYS[i].x, p.z - DIVE_BUOYS[i].z) < 10) return i;
+  }
+  return -1;
+}
+function diveToggle() {
+  if (state.mode !== 'play') return;
+  if (dive.active) { diveSurface(false); return; }
+  if (state.inCar) { toast('Get out of the vehicle to dive — swim to a blue-ringed buoy first.'); return; }
+  const bi = diveNearBuoy();
+  if (bi < 0) { toast('Dive buoys ring the east coast (blue rings on the water). Swim to one and press X.'); return; }
+  dive.active = true; dive.buoy = bi; dive.oxygen = dive.maxOxygen; dive.surfaced = false;
+  const overlay = document.getElementById('diveOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+  toast('🤿 Diving at ' + DIVE_BUOYS[bi].label + '! Oxygen 35s — grab the glowing crates, X to surface.');
+  speakLine('Down we go. Watch the air, ' + activeName() + ' — the crates are worth two hundred each.');
+  beep(440, 0.2, 'sine', 0.2);
+}
+function diveSurface(ranOut) {
+  dive.active = false;
+  const overlay = document.getElementById('diveOverlay');
+  if (overlay) overlay.classList.add('hidden');
+  const b = DIVE_BUOYS[dive.buoy || 0];
+  playerState.x = b.x; playerState.z = b.z; playerState.y = 0; playerState.vy = 0; playerState.onGround = true;
+  player.position.set(b.x, 0.5, b.z);
+  dive.oxygen = dive.maxOxygen;
+  if (ranOut) { state.health = Math.max(10, state.health - 15); toast('Out of air! You surface gasping — lost 15 health.'); updateHUD(); }
+  else toast('Surfaced at the buoy. Air refilled.');
+}
+function updateDive(dt) {
+  dive.bob += dt;
+  for (let i = 0; i < dive.buoys.length; i++) {
+    const b = dive.buoys[i];
+    b.mesh.position.y = Math.sin(dive.bob * 1.6 + i) * 0.15;
+    b.ring.rotation.z += dt * 0.5;
+    b.light.material.emissiveIntensity = 1 + Math.sin(dive.bob * 3 + i) * 0.6;
+  }
+  if (!dive.active) return;
+  dive.oxygen -= dt;
+  const overlay = document.getElementById('diveOverlay');
+  if (overlay) {
+    const pct = Math.max(0, dive.oxygen / dive.maxOxygen);
+    overlay.style.background = 'linear-gradient(180deg, rgba(6,40,70,' + (0.25 + (1 - pct) * 0.25) + '), rgba(4,20,50,0.55))';
+  }
+  const line = document.getElementById('diveLine');
+  if (line) line.textContent = '🤿 OXYGEN ' + Math.max(0, Math.ceil(dive.oxygen)) + 's · crates ' + diveCratesFound + '/8 · X to surface';
+  if (dive.oxygen <= 10 && dive.oxygen > 0 && Math.floor(dive.oxygen * 2) !== Math.floor((dive.oxygen + dt) * 2)) beep(880, 0.08, 'square', 0.14);
+  if (dive.oxygen <= 0) { diveSurface(true); return; }
+  const sin = Math.sin(camYaw), cos = Math.cos(camYaw);
+  let mx = 0, mz = 0;
+  if (keys['KeyW']) mz += 1;
+  if (keys['KeyS']) mz -= 1;
+  if (keys['KeyA']) mx -= 1;
+  if (keys['KeyD']) mx += 1;
+  const len = Math.hypot(mx, mz) || 1;
+  mx /= len; mz /= len;
+  const sp = 3.4;
+  const wx = (mx * cos - mz * sin) * sp * dt;
+  const wz = (mx * sin + mz * cos) * sp * dt;
+  playerState.x = clamp(playerState.x + wx, 120, 280);
+  playerState.z = clamp(playerState.z + wz, -280, 280);
+  const floorY = groundHeight(playerState.x, playerState.z);
+  playerState.y = floorY + 0.9 + Math.sin(dive.bob * 2) * 0.25;
+  player.position.set(playerState.x, playerState.y, playerState.z);
+  if (mx !== 0 || mz !== 0) playerState.heading = Math.atan2(wx, wz);
+  player.rotation.y = playerState.heading;
+  for (let i = 0; i < dive.crates.length; i++) {
+    const c = dive.crates[i];
+    if (c.taken) continue;
+    c.mesh.rotation.y += dt * 0.8;
+    c.mesh.position.y = groundHeight(c.x, c.z) + Math.sin(dive.bob * 1.5 + c.bob) * 0.15;
+    const d = Math.hypot(playerState.x - c.x, playerState.z - c.z);
+    if (d < 2.4) {
+      c.taken = true; c.mesh.visible = false;
+      diveCratesFound++; divePersist();
+      state.cash += 200; chime();
+      toast('Salvage crate! +$200 (' + diveCratesFound + '/8)');
+      speakLine('A salvage crate — two hundred dollars of someone else\'s bad luck.');
+      if (diveCratesFound >= 8) {
+        state.cash += 500;
+        toast('All 8 crates! Marisol adds a $500 salvage bonus — the buoys restock next trip.');
+        diveCratesFound = 0; divePersist();
+        for (const cc of dive.crates) { cc.taken = false; cc.mesh.visible = true; }
+      }
+      saveGame(); updateHUD();
+    }
+  }
+}
+// ---------- Round 4, part six: Coral Cay night market + scenic viewpoints ----------
+const MARKET_STALLS = [
+  { id: 'coconut', label: 'Coconut Water', desc: 'fresh from the Cay palms', price: 15, heal: 30, icon: '🥥' },
+  { id: 'grilled', label: 'Grilled Fish', desc: 'caught this morning off the pier', price: 30, heal: 50, icon: '🐟' },
+  { id: 'charm1', label: 'Shell Charm — Wave', desc: 'a keepsake carved from a Cay shell', price: 100, heal: 0, icon: '🐚' },
+  { id: 'charm2', label: 'Shell Charm — Sun', desc: 'warm colours, lucky for drivers', price: 100, heal: 0, icon: '☀️' },
+  { id: 'charm3', label: 'Shell Charm — Moon', desc: 'pale shell, lucky for night work', price: 100, heal: 0, icon: '🌙' },
+  { id: 'lantern', label: 'Paper Lantern', desc: 'lights your dashboard at night', price: 60, heal: 0, icon: '🏮' },
+];
+const marketState = { open: false, charms: [], stall: 0 };
+try { const m = JSON.parse(localStorage.getItem('solmar-bay-r4-market') || 'null'); if (m && m.charms) marketState.charms = m.charms; } catch (e) {}
+function marketPersist() { try { localStorage.setItem('solmar-bay-r4-market', JSON.stringify({ charms: marketState.charms })); } catch (e) {} }
+const marketMeshes = [];
+{
+  const stallSpots = [
+    { x: ISLE_CX - 10, z: ISLE_CZ - 10, col: 0xff5b5b }, { x: ISLE_CX + 10, z: ISLE_CZ - 10, col: 0x2ecc71 },
+    { x: ISLE_CX - 10, z: ISLE_CZ + 14, col: 0x2ee6ff },
+  ];
+  for (let i = 0; i < stallSpots.length; i++) {
+    const s = stallSpots[i];
+    const g = new THREE.Group();
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(3, 1.1, 1.6), new THREE.MeshStandardMaterial({ color: 0x8a6a42 }));
+    counter.position.y = 0.55; g.add(counter);
+    const awn = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.15, 2.4), new THREE.MeshStandardMaterial({ color: s.col }));
+    awn.position.y = 2.6; awn.rotation.x = 0.2; g.add(awn);
+    for (let p = 0; p < 2; p++) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.6, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+      pole.position.set(-1.6 + p * 3.2, 1.3, 1); g.add(pole);
+    }
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1.2 }));
+    lamp.position.set(0, 2.9, 0); g.add(lamp);
+    const keeper = makePerson([0xe84a7a, 0x2ee6ff, 0xffd23f][i], 0x2a3a4a, 0xd9a066);
+    keeper.position.set(0, 0, -1.4); g.add(keeper);
+    const goods = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshStandardMaterial({ color: s.col }));
+    goods.position.set(-0.8, 1.4, 0.3); g.add(goods);
+    const goods2 = goods.clone(); goods2.position.x = 0.8; goods2.material = new THREE.MeshStandardMaterial({ color: 0xffe27a }); g.add(goods2);
+    g.position.set(s.x, ISLE_TOP, s.z); scene.add(g);
+    marketMeshes.push({ group: g, x: s.x, z: s.z, lamp, awn, stall: i });
+  }
+  const buntingM = new THREE.MeshStandardMaterial({ color: 0xffd23f });
+  for (let i = 0; i < 12; i++) {
+    const flag = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.7, 4), new THREE.MeshStandardMaterial({ color: [0xff5b5b, 0x2ee6ff, 0x2ecc71, 0xffd23f][i % 4] }));
+    const a = (i / 12) * Math.PI * 2;
+    flag.position.set(ISLE_CX + Math.cos(a) * 13, ISLE_TOP + 4.2, ISLE_CZ + Math.sin(a) * 13);
+    flag.rotation.x = Math.PI; scene.add(flag);
+  }
+}
+function marketNear() {
+  if (state.inCar) return -1;
+  for (let i = 0; i < marketMeshes.length; i++) {
+    if (Math.hypot(playerState.x - marketMeshes[i].x, playerState.z - marketMeshes[i].z) < 5) return i;
+  }
+  return -1;
+}
+function marketOpenPanel(stallIdx) {
+  marketState.open = true; marketState.stall = stallIdx;
+  const el = document.getElementById('marketPanel');
+  if (el) { el.classList.remove('hidden'); marketRenderList(); }
+  beep(880, 0.08, 'sine', 0.12);
+}
+function marketClosePanel() {
+  marketState.open = false;
+  const el = document.getElementById('marketPanel');
+  if (el) el.classList.add('hidden');
+}
+function marketRenderList() {
+  const el = document.getElementById('marketItems');
+  if (!el) return;
+  el.innerHTML = '';
+  const stallNames = ['Mara\'s Drinks', 'Tomas\' Grill', 'Nadia\'s Keepsakes'];
+  const title = document.getElementById('marketTitle');
+  if (title) title.textContent = '🏮 ' + stallNames[marketState.stall] + ' — Coral Cay Market';
+  const items = marketState.stall === 0 ? MARKET_STALLS.slice(0, 1) : marketState.stall === 1 ? MARKET_STALLS.slice(1, 2) : MARKET_STALLS.slice(2);
+  for (const item of items) {
+    const owned = item.id.startsWith('charm') && marketState.charms.includes(item.id);
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = item.icon + ' ' + item.label + ' — $' + item.price + (owned ? ' (owned)' : '');
+    b.disabled = state.cash < item.price || owned;
+    b.addEventListener('click', () => marketBuy(item));
+    el.appendChild(b);
+    const d = document.createElement('div');
+    d.style.cssText = 'font-size:12px;color:#cfe8ff;margin:-2px 0 6px';
+    d.textContent = item.desc + (item.heal ? ' · restores ' + item.heal + ' health' : '');
+    el.appendChild(d);
+  }
+  if (marketState.stall === 2 && !lootState.mapBought) {
+    const mb = document.createElement('button');
+    mb.className = 'shopItem';
+    mb.textContent = '🗺️ Treasure Map — $50 (marks 5 dig sites)';
+    mb.disabled = state.cash < 50;
+    mb.addEventListener('click', () => { lootBuyMap(); marketRenderList(); });
+    el.appendChild(mb);
+    const md = document.createElement('div');
+    md.style.cssText = 'font-size:12px;color:#cfe8ff;margin:-2px 0 6px';
+    md.textContent = 'Five X marks around the bay — hold F at a mound to dig.';
+    el.appendChild(md);
+  }
+  const cash = document.getElementById('marketCash');
+  if (cash) cash.textContent = 'Cash: $' + state.cash.toLocaleString('en-US') + ' · Charms owned: ' + marketState.charms.length + '/3';
+}
+function marketBuy(item) {
+  if (state.cash < item.price) { toast('Not enough cash for that.'); return; }
+  state.cash -= item.price;
+  if (item.heal) {
+    state.health = Math.min(100, state.health + item.heal);
+    toast(item.icon + ' ' + item.label + ' — health +' + item.heal + '.');
+    speakLine('Mmm. The Cay market never misses, ' + activeName() + '.');
+  } else if (item.id.startsWith('charm')) {
+    marketState.charms.push(item.id); marketPersist();
+    toast(item.icon + ' ' + item.label + ' bought! (' + marketState.charms.length + '/3 charms)');
+    if (marketState.charms.length >= 3) { state.cash += 250; toast('All three charms! A collector pays you $250 for the set.'); }
+  } else {
+    toast(item.icon + ' ' + item.label + ' bought — it hangs in your car now.');
+  }
+  chime(); saveGame(); updateHUD(); marketRenderList();
+}
+function marketKey() {
+  if (marketState.open) { marketClosePanel(); return; }
+  const s = marketNear();
+  if (s < 0) { toast('The Cay night market is on Coral Cay — three stalls around the plaza. Press E near one.'); return; }
+  marketOpenPanel(s);
+}
+const VIEW_SPOTS = [
+  { x: 120, z: -120, label: 'the lighthouse from the beach' },
+  { x: -240, z: 200, label: 'the desert dunes at dusk' },
+  { x: 0, z: -260, label: 'the northern peaks' },
+  { x: ISLE_CX + 26, z: ISLE_CZ - 26, label: 'the Cay lighthouse up close' },
+  { x: -210, z: -40, label: 'the airport runway at sunrise' },
+];
+const viewState = { taken: [], store: 'solmar-bay-r4-views' };
+try { const v = JSON.parse(localStorage.getItem(viewState.store) || 'null'); if (v) viewState.taken = v; } catch (e) {}
+function viewPersist() { try { localStorage.setItem(viewState.store, JSON.stringify(viewState.taken)); } catch (e) {} }
+const viewMarkers = [];
+for (let i = 0; i < VIEW_SPOTS.length; i++) {
+  const v = VIEW_SPOTS[i];
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.2, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  post.position.y = 1.1; g.add(post);
+  const frame = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.1, 6, 20), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.5 }));
+  frame.position.y = 2.4; g.add(frame);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.1), new THREE.MeshStandardMaterial({ color: 0x0b2c44 }));
+  plate.position.y = 1.4; g.add(plate);
+  const gy = isleOnLand(v.x, v.z) ? ISLE_TOP : groundHeight(v.x, v.z);
+  g.position.set(v.x, gy, v.z); scene.add(g);
+  viewMarkers.push({ mesh: g, x: v.x, z: v.z, label: v.label, done: viewState.taken.includes(i) });
+  if (viewState.taken.includes(i)) frame.material.color.set(0x2ecc71);
+}
+function viewNear() {
+  if (state.inCar) return -1;
+  for (let i = 0; i < VIEW_SPOTS.length; i++) {
+    if (Math.hypot(playerState.x - VIEW_SPOTS[i].x, playerState.z - VIEW_SPOTS[i].z) < 6) return i;
+  }
+  return -1;
+}
+function snapViewpoint() {
+  const i = viewNear();
+  if (i < 0) return false;
+  if (viewState.taken.includes(i)) { toast('You already photographed ' + VIEW_SPOTS[i].label + '.'); return true; }
+  viewState.taken.push(i); viewPersist();
+  viewMarkers[i].mesh.children[1].material.color.set(0x2ecc71);
+  state.cash += 80;
+  beep(1200, 0.1, 'square', 0.2);
+  toast('📷 Viewpoint: ' + VIEW_SPOTS[i].label + '! +$80 (' + viewState.taken.length + '/5)');
+  speakLine('A postcard shot. Marisol buys these for eighty dollars each.');
+  if (viewState.taken.length >= 5) {
+    state.cash += 300;
+    toast('All 5 viewpoints! A travel magazine pays a $300 bonus.');
+    speakLine('Five postcards, five sales. Three hundred more, on top.');
+  }
+  chime(); saveGame(); updateHUD();
+  return true;
+}
+function updateMarket(dt) {
+  for (let i = 0; i < marketMeshes.length; i++) {
+    const m = marketMeshes[i];
+    m.lamp.material.emissiveIntensity = 0.9 + Math.sin(state.time * 2.4 + i * 2) * 0.5;
+    m.awn.rotation.z = Math.sin(state.time * 1.2 + i) * 0.03;
+  }
+  for (let i = 0; i < viewMarkers.length; i++) {
+    if (!viewMarkers[i].done) viewMarkers[i].mesh.children[1].rotation.z += dt * 0.4;
+  }
+}
+// ---------- Round 4, part seven: the Cay ferry + bay storms ----------
+const FERRY_A = { x: HALF + 16, z: 42 };
+const FERRY_B = { x: ISLE_CX - ISLE_R - 26, z: ISLE_CZ + 14 };
+const ferry = { mesh: null, t: 0, dir: 1, speed: 0.045, docked: true, dockTimer: 8, aboard: false, prevX: 0, prevZ: 0, horn: 0 };
+function ferryAboard() { return ferry.aboard; }
+{
+  const g = makeBoatMesh(0xf0ead8);
+  g.scale.set(2.4, 1.6, 2.4);
+  const deckM = new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 1 });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(4.6, 0.3, 10), deckM);
+  deck.position.y = 1.1; g.add(deck);
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.8, 4), new THREE.MeshStandardMaterial({ color: 0x2e6fb0, roughness: 0.7 }));
+  cabin.position.set(0, 2.1, -2.2); g.add(cabin);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.25, 4.6), new THREE.MeshStandardMaterial({ color: 0xf0ead8 }));
+  roof.position.set(0, 3.1, -2.2); g.add(roof);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 2; c++) {
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+      bench.position.set(-1.2 + c * 2.4, 1.4, 1 + r * 1.6); g.add(bench);
+    }
+  }
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 4, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  mast.position.set(0, 4.4, -4.4); g.add(mast);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.9), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, side: THREE.DoubleSide }));
+  flag.position.set(0.8, 6, -4.4); g.add(flag);
+  const lampF = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1 }));
+  lampF.position.set(1.6, 1.6, 4.6); g.add(lampF);
+  const lampF2 = lampF.clone(); lampF2.position.x = -1.6; g.add(lampF2);
+  g.position.set(FERRY_A.x, 0.2, FERRY_A.z);
+  scene.add(g);
+  ferry.mesh = g; ferry.prevX = FERRY_A.x; ferry.prevZ = FERRY_A.z;
+  const pierM = new THREE.MeshStandardMaterial({ color: 0xb98d5f, roughness: 1 });
+  for (let i = 0; i < 4; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(3, 0.35, 4), pierM);
+    plank.position.set(FERRY_A.x + 2 + i * 0.5, 0.9, FERRY_A.z - 8 - i * 3.5); scene.add(plank);
+  }
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 0.25), new THREE.MeshStandardMaterial({ color: 0x0b2c44 }));
+  sign.position.set(FERRY_A.x, 3.4, FERRY_A.z - 14); scene.add(sign);
+}
+function ferryNear() {
+  if (!ferry.mesh) return false;
+  return Math.hypot(playerState.x - ferry.mesh.position.x, playerState.z - ferry.mesh.position.z) < 6;
+}
+function ferryToggleBoard() {
+  if (ferry.aboard) {
+    ferry.aboard = false;
+    const a = ferry.mesh.rotation.y;
+    playerState.x = ferry.mesh.position.x + Math.sin(a + Math.PI / 2) * 5;
+    playerState.z = ferry.mesh.position.z + Math.cos(a + Math.PI / 2) * 5;
+    playerState.y = 0; playerState.onGround = true;
+    player.position.set(playerState.x, isleOnLand(playerState.x, playerState.z) ? ISLE_TOP : groundHeight(playerState.x, playerState.z), playerState.z);
+    toast('You step off the ferry.');
+    return true;
+  }
+  if (ferryNear() && !state.inCar) {
+    ferry.aboard = true;
+    toast('Aboard the Cay ferry — free ride, enjoy the view. Press E to get off.');
+    speakLine('The ferry to Coral Cay. Best seat in the bay, and it costs nothing.');
+    beep(330, 0.3, 'sine', 0.2); setTimeout(() => beep(330, 0.3, 'sine', 0.2), 350);
+    return true;
+  }
+  return false;
+}
+function updateFerry(dt) {
+  if (!ferry.mesh) return;
+  ferry.horn += dt;
+  if (ferry.docked) {
+    ferry.dockTimer -= dt;
+    if (ferry.dockTimer <= 0) {
+      ferry.docked = false;
+      ferry.horn = 0;
+      beep(220, 0.5, 'sine', 0.25); setTimeout(() => beep(220, 0.5, 'sine', 0.25), 600);
+      const dest = ferry.dir === 1 ? 'Coral Cay' : 'the mainland';
+      if (ferryNear() || ferry.aboard) toast('The ferry is leaving for ' + dest + '!');
+    }
+  } else {
+    ferry.t += ferry.speed * ferry.dir * dt;
+    if (ferry.t >= 1) { ferry.t = 1; ferry.dir = -1; ferry.docked = true; ferry.dockTimer = 12; }
+    else if (ferry.t <= 0) { ferry.t = 0; ferry.dir = 1; ferry.docked = true; ferry.dockTimer = 12; }
+  }
+  const x = lerp(FERRY_A.x, FERRY_B.x, ferry.t);
+  const z = lerp(FERRY_A.z, FERRY_B.z, ferry.t);
+  const dx = x - ferry.prevX, dz = z - ferry.prevZ;
+  ferry.mesh.position.set(x, 0.2 + Math.sin(state.time * 1.8) * 0.1, z);
+  ferry.mesh.rotation.y = Math.atan2(FERRY_B.x - FERRY_A.x, FERRY_B.z - FERRY_A.z) * ferry.dir;
+  if (ferry.dir === -1) ferry.mesh.rotation.y += Math.PI;
+  ferry.mesh.rotation.z = Math.sin(state.time * 1.4) * 0.02;
+  if (ferry.aboard) {
+    playerState.x += dx; playerState.z += dz;
+    player.position.set(playerState.x, 1.6 + Math.sin(state.time * 1.8) * 0.1, playerState.z);
+    playerState.y = 1.6;
+    const d = Math.hypot(playerState.x - ferry.mesh.position.x, playerState.z - ferry.mesh.position.z);
+    if (d > 7) { ferry.aboard = false; toast('You slipped off the ferry!'); }
+  }
+  ferry.prevX = x; ferry.prevZ = z;
+}
+const storm = { active: false, timer: 210, left: 0, flash: 0, nextFlash: 5 };
+function updateStorm(dt) {
+  storm.timer -= dt;
+  if (!storm.active && storm.timer <= 0) {
+    storm.active = true; storm.left = 45; storm.nextFlash = 2;
+    state.weather = 'rain';
+    toast('⛈️ A bay storm is rolling in! Lightning over the water — 45 seconds.');
+    speakLine('Storm coming off the sea. Get under cover or enjoy the show.');
+  }
+  if (!storm.active) return;
+  storm.left -= dt;
+  storm.nextFlash -= dt;
+  if (storm.nextFlash <= 0) {
+    storm.nextFlash = 2 + Math.random() * 4;
+    lightningTimer = 0.35;
+    storm.flash = 0.35;
+    beep(70, 0.5, 'sawtooth', 0.25);
+    rainDark = Math.min(1, rainDark + 0.2);
+  }
+  if (storm.flash > 0) storm.flash -= dt;
+  if (storm.left <= 0) {
+    storm.active = false; storm.timer = 180 + Math.random() * 120;
+    state.weather = 'clear';
+    toast('The storm passes — the bay is calm again.');
+  }
+}
+// ---------- Round 4, part eight: a self-test the playtest can call ----------
+function r4SelfTest() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('coral-cay-built', isleGroup.children.length >= 20, isleGroup.children.length + ' island pieces');
+  ok('lighthouse-beam', !!isleBeam, 'beam present (lamp room glows emissive, no scene light)');
+  ok('isle-walkers', isleWalkers.length === 5, isleWalkers.length + ' walkers');
+  ok('isle-shells', isleShells.length === 6, isleShells.length + ' shells');
+  ok('hovercrafts', hovercrafts.length === 2 && hovercrafts.every((h) => h.kind === 'hover'), hovercrafts.length + ' craft');
+  ok('hover-mesh', !!hovercrafts[0].mesh.userData.fan, 'fan present');
+  ok('chain-jobs', CHAIN_JOBS.length === 4, CHAIN_JOBS.map((j) => j.title).join(', '));
+  ok('chain-rewards', CHAIN_JOBS.every((j) => j.reward >= 700 && j.reward <= 1500), 'rewards in range');
+  ok('darts-board', !!darts.board && !!darts.marker, 'board + aim marker');
+  ok('darts-order', DART_ORDER.length === 20, '20 segments');
+  ok('league-rivals', LEAGUE_RIVALS.length === 3, LEAGUE_RIVALS.map((r) => r.name).join(', '));
+  ok('league-season', league.season >= 1 && league.round >= 0, 'season ' + league.season + ' round ' + league.round);
+  ok('board-jobs', BOARD_JOBS.length === 5, BOARD_JOBS.map((j) => j.label).join(', '));
+  ok('event-kinds', R4_EVENT_KINDS.length === 5, R4_EVENT_KINDS.join(', '));
+  ok('dive-buoys', dive.buoys.length === 4, dive.buoys.length + ' buoys');
+  ok('dive-crates', dive.crates.length === 8, dive.crates.length + ' crates');
+  ok('market-stalls', marketMeshes.length === 3, marketMeshes.length + ' stalls');
+  ok('market-items', MARKET_STALLS.length === 6, MARKET_STALLS.map((m) => m.label).join(', '));
+  ok('viewpoints', VIEW_SPOTS.length === 5, VIEW_SPOTS.length + ' spots');
+  ok('ferry', !!ferry.mesh, 'ferry mesh present');
+  ok('loot-mounds', lootMounds.length === 5, lootMounds.length + ' mounds');
+  ok('keeper', !!keeper.mesh, 'keeper Ansel on the Cay');
+  ok('cove-spots', COVE_SPOTS.length === 3 && COVE_BUYERS.length === 3, '3 coves, 3 buyers');
+  ok('cove-night', typeof coveIsNight() === 'boolean', 'night check runs');
+  ok('cay-bus', !!cayBus.mesh && CAY_BUS_STOPS.length === 4, 'ring bus + 4 stops');
+  ok('ferry-route', Math.hypot(FERRY_B.x - FERRY_A.x, FERRY_B.z - FERRY_A.z) > 10, 'route spans the strait');
+  ok('storm-state', typeof storm.active === 'boolean' && storm.timer > 0, 'storm timer armed');
+  ok('hud-panels', !!document.getElementById('dartsPanel') && !!document.getElementById('boardPanel') && !!document.getElementById('marketPanel'), 'all three panels in the DOM');
+  ok('hud-lines', !!document.getElementById('leagueLine') && !!document.getElementById('isleLine') && !!document.getElementById('diveLine'), 'league/isle/dive lines present');
+  ok('cash-sane', state.cash >= 0 && state.cash < 100000000, 'cash ' + state.cash);
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+// ---------- Round 4, part nine: buried loot + the lighthouse keeper's fish quest ----------
+const LOOT_SPOTS = [
+  { x: 128, z: -140, label: 'under the lone palm' }, { x: 150, z: 120, label: 'by the south keys' },
+  { x: ISLE_CX - 20, z: ISLE_CZ + 30, label: 'behind the Cay stalls' }, { x: -200, z: 240, label: 'in the desert dunes' },
+  { x: 60, z: -240, label: 'at the forest edge' },
+];
+const lootState = { found: [], store: 'solmar-bay-r4-loot', mapBought: false };
+try {
+  const l = JSON.parse(localStorage.getItem(lootState.store) || 'null');
+  if (l) { lootState.found = l.found || []; lootState.mapBought = !!l.mapBought; }
+} catch (e) {}
+function lootPersist() { try { localStorage.setItem(lootState.store, JSON.stringify({ found: lootState.found, mapBought: lootState.mapBought })); } catch (e) {} }
+const lootMounds = [];
+for (let i = 0; i < LOOT_SPOTS.length; i++) {
+  const s = LOOT_SPOTS[i];
+  const g = new THREE.Group();
+  const mound = new THREE.Mesh(new THREE.SphereGeometry(1.3, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), new THREE.MeshStandardMaterial({ color: 0xc9a86a, roughness: 1 }));
+  mound.scale.y = 0.55; g.add(mound);
+  const cross = new THREE.Group();
+  const stick1 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.4, 0.14), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  stick1.position.y = 0.7; cross.add(stick1);
+  const stick2 = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.14, 0.14), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  stick2.position.y = 1.0; cross.add(stick2);
+  cross.position.y = 0.5; g.add(cross);
+  const glint = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1 }));
+  glint.position.y = 0.9; g.add(glint);
+  const gy = isleOnLand(s.x, s.z) ? ISLE_TOP : groundHeight(s.x, s.z);
+  g.position.set(s.x, gy, s.z); scene.add(g);
+  lootMounds.push({ mesh: g, glint, x: s.x, z: s.z, label: s.label, dug: lootState.found.includes(i), dig: 0 });
+  if (lootState.found.includes(i)) { g.visible = false; }
+}
+function lootNear() {
+  if (state.inCar) return -1;
+  for (let i = 0; i < LOOT_SPOTS.length; i++) {
+    if (!lootState.found.includes(i) && Math.hypot(playerState.x - LOOT_SPOTS[i].x, playerState.z - LOOT_SPOTS[i].z) < 4) return i;
+  }
+  return -1;
+}
+function lootBuyMap() {
+  if (lootState.mapBought) { toast('You already own the treasure map.'); return; }
+  if (state.cash < 50) { toast('The map costs $50 — save up first.'); return; }
+  state.cash -= 50; lootState.mapBought = true; lootPersist();
+  for (let i = 0; i < LOOT_SPOTS.length; i++) if (!lootState.found.includes(i)) setBeacon(LOOT_SPOTS[i].x, LOOT_SPOTS[i].z);
+  toast('Treasure map bought! The first dig site is marked — five in all.');
+  speakLine('A map, fifty dollars, five X marks. Someone buried a fortune and forgot where.');
+  chime(); saveGame(); updateHUD();
+}
+function updateLoot(dt) {
+  for (let i = 0; i < lootMounds.length; i++) {
+    const m = lootMounds[i];
+    if (m.dug) continue;
+    m.glint.material.emissiveIntensity = 0.7 + Math.sin(state.time * 3 + i * 2) * 0.5;
+    m.mesh.rotation.y += dt * 0.2;
+  }
+  const i = lootNear();
+  if (i < 0) return;
+  const m = lootMounds[i];
+  if (keys['KeyF']) {
+    m.dig += dt;
+    if (Math.floor(m.dig * 2) !== Math.floor((m.dig - dt) * 2)) beep(300, 0.07, 'square', 0.12);
+    if (m.dig >= 3) {
+      m.dug = true; m.mesh.visible = false;
+      lootState.found.push(i); lootPersist();
+      const reward = 150 + i * 60;
+      state.cash += reward;
+      toast('💰 Buried loot! ' + LOOT_SPOTS[i].label + ' hid $' + reward + ' (' + lootState.found.length + '/5)');
+      speakLine('Buried treasure, right where the map said. ' + reward + ' dollars, no questions asked.');
+      if (lootState.found.length >= 5) { state.cash += 400; toast('All five stashes! A collector pays a $400 bonus for the set.'); }
+      chime(); saveGame(); updateHUD();
+      beacon.visible = false;
+    } else if (m.dig > 0.5) toast('Digging… ' + Math.ceil(3 - m.dig) + 's — hold F.');
+  } else m.dig = Math.max(0, m.dig - dt * 2);
+}
+const keeper = { mesh: null, quest: 0, fishAtStart: 0, store: 'solmar-bay-r4-keeper' };
+try { keeper.quest = Number(JSON.parse(localStorage.getItem(keeper.store) || '0')) || 0; } catch (e) { keeper.quest = 0; }
+function keeperPersist() { try { localStorage.setItem(keeper.store, JSON.stringify(keeper.quest)); } catch (e) {} }
+{
+  const k = makePerson(0xf0ead8, 0x2a3a4a, 0xc98a5a);
+  const beard = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.35, 0.12), new THREE.MeshStandardMaterial({ color: 0xf0ead8 }));
+  beard.position.set(0, 1.42, 0.24); k.add(beard);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.28, 0.14, 10), new THREE.MeshStandardMaterial({ color: 0x2e6fb0 }));
+  cap.position.y = 1.86; k.add(cap);
+  k.position.set(ISLE_CX + 26, ISLE_TOP, ISLE_CZ - 22);
+  scene.add(k);
+  keeper.mesh = k;
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 1), new THREE.MeshStandardMaterial({ color: 0x8a6a42 }));
+  crate.position.set(ISLE_CX + 23, ISLE_TOP + 0.4, ISLE_CZ - 21); scene.add(crate);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.4, 6), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  rod.position.set(ISLE_CX + 24, ISLE_TOP + 1.7, ISLE_CZ - 22); rod.rotation.z = 0.5; scene.add(rod);
+}
+function keeperNear() {
+  if (state.inCar || !keeper.mesh) return false;
+  return Math.hypot(playerState.x - (ISLE_CX + 26), playerState.z - (ISLE_CZ - 22)) < 5;
+}
+function keeperTalk() {
+  if (!keeperNear()) return false;
+  if (keeper.quest === 0) {
+    keeper.quest = 1; keeper.fishAtStart = fish.caught; keeperPersist();
+    toast('Keeper Ansel: "Three fish for my supper and I will make it worth your while. Go fish!"');
+    speakLine('Three fish, he says. The old keeper of the Cay light drives a hard bargain.');
+    showStory('Ansel (lighthouse keeper): "The light has guided boats for forty years. Bring me three fish and I will pay you like a sailor."');
+    return true;
+  }
+  if (keeper.quest === 1) {
+    const got = fish.caught - keeper.fishAtStart;
+    if (got >= 3) {
+      keeper.quest = 2; keeperPersist();
+      state.cash += 600;
+      toast('Keeper Ansel: "Three fine fish! Here is $600 — and the light will always guide you home."');
+      speakLine('Six hundred dollars for three fish. The keeper pays better than the market.');
+      chime(); saveGame(); updateHUD();
+    } else {
+      toast('Keeper Ansel: "That is ' + got + '/3 fish. The sea provides — go and cast a line."');
+    }
+    return true;
+  }
+  toast('Keeper Ansel: "The light is lit, the sea is calm. Come back anytime, friend."');
+  return true;
+}
+function updateKeeper(dt) {
+  if (!keeper.mesh) return;
+  const d = Math.hypot(playerState.x - keeper.mesh.position.x, playerState.z - keeper.mesh.position.z);
+  if (d < 8) {
+    keeper.mesh.rotation.y = Math.atan2(playerState.x - keeper.mesh.position.x, playerState.z - keeper.mesh.position.z);
+    keeper.mesh.position.y = ISLE_TOP + Math.sin(state.time * 1.5) * 0.05;
+  }
+}
+// ---------- Round 4, part ten: night-only smuggler cove runs ----------
+const COVE_SPOTS = [
+  { x: -258, z: 198, label: 'the west cliff cove' }, { x: 182, z: 252, label: 'the south keys cove' },
+  { x: -248, z: -178, label: 'the north forest cove' },
+];
+const COVE_BUYERS = [
+  { x: 84, z: -60, label: 'the beach shack' }, { x: -60, z: 84, label: 'the plaza back alley' }, { x: 120, z: 120, label: 'the marina warehouse' },
+];
+const coveState = { runs: 0, active: false, cove: -1, buyer: -1, timer: 0, lastDay: -1, store: 'solmar-bay-r4-cove' };
+try {
+  const c = JSON.parse(localStorage.getItem(coveState.store) || 'null');
+  if (c) { coveState.runs = c.runs || 0; coveState.lastDay = c.lastDay === undefined ? -1 : c.lastDay; }
+} catch (e) {}
+function covePersist() { try { localStorage.setItem(coveState.store, JSON.stringify({ runs: coveState.runs, lastDay: coveState.lastDay })); } catch (e) {} }
+function coveIsNight() { return state.dayTime > 0.78 || state.dayTime < 0.25; }
+function coveDayNumber() { return Math.floor(state.time / DAY_LENGTH); }
+const coveMarkers = [];
+for (let i = 0; i < COVE_SPOTS.length; i++) {
+  const s = COVE_SPOTS[i];
+  const g = new THREE.Group();
+  const crate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 1.4), new THREE.MeshStandardMaterial({ color: 0x5a2a6a, roughness: 0.9 }));
+  crate.position.y = 0.6; g.add(crate);
+  const crate2 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 1), new THREE.MeshStandardMaterial({ color: 0x7a3a8a, roughness: 0.9 }));
+  crate2.position.set(1.4, 0.45, 0.6); g.add(crate2);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(1.4, 8, 8), new THREE.MeshBasicMaterial({ color: 0xb45ae8, transparent: true, opacity: 0.2 }));
+  glow.position.y = 0.8; g.add(glow);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshStandardMaterial({ color: 0xb45ae8, emissive: 0xb45ae8, emissiveIntensity: 1.4 }));
+  lamp.position.set(0, 1.6, 0); g.add(lamp);
+  const skiff = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 4), new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 }));
+  skiff.position.set(-3, 0.3, 2); g.add(skiff);
+  const gy = groundHeight(s.x, s.z);
+  g.position.set(s.x, gy, s.z); scene.add(g);
+  coveMarkers.push({ mesh: g, glow, lamp, x: s.x, z: s.z, label: s.label });
+}
+const coveBuyerMarkers = [];
+for (let i = 0; i < COVE_BUYERS.length; i++) {
+  const b = COVE_BUYERS[i];
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.4, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  post.position.y = 1.2; g.add(post);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.9, 0.12), new THREE.MeshStandardMaterial({ color: 0x5a2a6a, emissive: 0x5a2a6a, emissiveIntensity: 0.4 }));
+  sign.position.y = 2.6; g.add(sign);
+  g.position.set(b.x, groundHeight(b.x, b.z), b.z); scene.add(g);
+  coveBuyerMarkers.push({ mesh: g, x: b.x, z: b.z, label: b.label });
+}
+function coveNear() {
+  if (state.inCar) return -1;
+  for (let i = 0; i < COVE_SPOTS.length; i++) {
+    if (Math.hypot(playerState.x - COVE_SPOTS[i].x, playerState.z - COVE_SPOTS[i].z) < 5) return i;
+  }
+  return -1;
+}
+function coveStart(i) {
+  if (coveState.active) { toast('A cove run is already going — deliver the package first.'); return true; }
+  if (!coveIsNight()) { toast('The coves only open at night. Come back after dark — the purple crates will be lit.'); return true; }
+  if (coveState.lastDay === coveDayNumber()) { toast('The cove crew is done for tonight — one run a night, sailor.'); return true; }
+  coveState.active = true; coveState.cove = i; coveState.timer = 100;
+  coveState.buyer = Math.floor(Math.random() * COVE_BUYERS.length);
+  const b = COVE_BUYERS[coveState.buyer];
+  setBeacon(b.x, b.z);
+  toast('🤫 Cove run: take the package to ' + b.label + ' — 100 seconds, $350. No questions, no cops.');
+  speakLine('A package from ' + COVE_SPOTS[i].label + '. Deliver it quiet and quick — the buyer pays in cash.');
+  beep(440, 0.15, 'sine', 0.2);
+  return true;
+}
+function updateCove(dt) {
+  for (let i = 0; i < coveMarkers.length; i++) {
+    const m = coveMarkers[i];
+    const lit = coveIsNight();
+    m.glow.visible = lit;
+    m.lamp.material.emissiveIntensity = lit ? 1.2 + Math.sin(state.time * 3 + i) * 0.6 : 0.15;
+    m.mesh.rotation.y += dt * 0.1;
+  }
+  if (!coveState.active) return;
+  coveState.timer -= dt;
+  if (coveState.timer <= 0) {
+    coveState.active = false; beacon.visible = false;
+    toast('The buyer left — the cove run went cold.');
+    return;
+  }
+  const p = chainPlayerPos();
+  const b = COVE_BUYERS[coveState.buyer];
+  const d = Math.hypot(p.x - b.x, p.z - b.z);
+  if (d < 5) {
+    coveState.active = false; coveState.runs++; coveState.lastDay = coveDayNumber(); covePersist();
+    state.cash += 350;
+    addWanted(1, 'The drop was seen — the law is sniffing around.');
+    beacon.visible = false;
+    toast('Cove run done! +$350 — but the heat is on (+1 star).');
+    speakLine('Package delivered, cash in hand. One star of heat — worth it, ' + activeName() + '.');
+    chime(); saveGame(); updateHUD();
+    if (coveState.runs >= 5) { state.cash += 500; toast('Five cove runs! The crew trusts you now — $500 loyalty cut.'); }
+  }
+}
+function coveStatusLine() {
+  if (coveState.active) return 'Cove run: ' + Math.max(0, Math.ceil(coveState.timer)) + 's to ' + COVE_BUYERS[coveState.buyer].label;
+  if (coveIsNight()) return 'Coves open tonight — runs done: ' + coveState.runs;
+  return 'Coves open after dark — runs done: ' + coveState.runs;
+}
+// ---------- Round 4, part eleven: the Coral Cay ring bus ----------
+const CAY_BUS_STOPS = [
+  { x: ISLE_CX + 24, z: ISLE_CZ, label: 'lighthouse stop' }, { x: ISLE_CX, z: ISLE_CZ + 24, label: 'market stop' },
+  { x: ISLE_CX - 24, z: ISLE_CZ, label: 'pier stop' }, { x: ISLE_CX, z: ISLE_CZ - 24, label: 'north stop' },
+];
+const cayBus = { mesh: null, angle: 0, speed: 0.12, stop: 0, wait: 6, aboard: false, prevX: 0, prevZ: 0, rides: 0 };
+try { cayBus.rides = Number(JSON.parse(localStorage.getItem('solmar-bay-r4-caybus') || '0')) || 0; } catch (e) { cayBus.rides = 0; }
+function cayBusPersist() { try { localStorage.setItem('solmar-bay-r4-caybus', JSON.stringify(cayBus.rides)); } catch (e) {} }
+function cayBusAboard() { return cayBus.aboard; }
+{
+  const spec = CAR_TYPES.find((c) => c.type === 'bus');
+  const g = makeCarMesh(spec);
+  g.scale.set(1.1, 1.1, 1.1);
+  const roofSign = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.5, 0.3), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, emissive: 0x2ee6ff, emissiveIntensity: 0.8 }));
+  roofSign.position.set(0, 2.1, 0); g.add(roofSign);
+  const bell = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xffc040, emissiveIntensity: 1 }));
+  bell.position.set(1, 1.9, 1.4); g.add(bell);
+  g.position.set(CAY_BUS_STOPS[0].x, ISLE_TOP, CAY_BUS_STOPS[0].z);
+  scene.add(g);
+  cayBus.mesh = g; cayBus.prevX = CAY_BUS_STOPS[0].x; cayBus.prevZ = CAY_BUS_STOPS[0].z;
+  for (let i = 0; i < CAY_BUS_STOPS.length; i++) {
+    const s = CAY_BUS_STOPS[i];
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.6, 6), new THREE.MeshStandardMaterial({ color: 0x2ee6ff }));
+    post.position.set(s.x, ISLE_TOP + 1.3, s.z); scene.add(post);
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 0.1), new THREE.MeshStandardMaterial({ color: 0x0b2c44 }));
+    sign.position.set(s.x, ISLE_TOP + 2.8, s.z); scene.add(sign);
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 0.6), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+    bench.position.set(s.x + 1.6, ISLE_TOP + 0.25, s.z); scene.add(bench);
+  }
+}
+function cayBusNear() {
+  if (!cayBus.mesh) return false;
+  return Math.hypot(playerState.x - cayBus.mesh.position.x, playerState.z - cayBus.mesh.position.z) < 6;
+}
+function cayBusToggle() {
+  if (cayBus.aboard) {
+    cayBus.aboard = false;
+    const a = cayBus.mesh.rotation.y;
+    playerState.x = cayBus.mesh.position.x + Math.sin(a + Math.PI / 2) * 4;
+    playerState.z = cayBus.mesh.position.z + Math.cos(a + Math.PI / 2) * 4;
+    playerState.y = ISLE_TOP; playerState.onGround = true;
+    player.position.set(playerState.x, ISLE_TOP, playerState.z);
+    toast('You hop off the ring bus.');
+    return true;
+  }
+  if (cayBusNear() && !state.inCar) {
+    cayBus.aboard = true; cayBus.rides++; cayBusPersist();
+    toast('Aboard the Cay ring bus — free loop around the island. E to hop off at a stop.');
+    if (cayBus.rides === 3) { state.cash += 100; toast('Three bus rides! The driver slips you $100 for the company.'); saveGame(); updateHUD(); }
+    beep(660, 0.12, 'sine', 0.15);
+    return true;
+  }
+  return false;
+}
+function updateCayBus(dt) {
+  if (!cayBus.mesh) return;
+  if (cayBus.wait > 0) {
+    cayBus.wait -= dt;
+    if (cayBus.wait <= 0) {
+      const s = CAY_BUS_STOPS[cayBus.stop];
+      if (cayBusNear() || cayBus.aboard) toast('Ring bus leaving ' + s.label + '.');
+      beep(520, 0.1, 'sine', 0.12);
+    }
+  } else {
+    cayBus.angle += cayBus.speed * dt;
+    const target = (cayBus.stop + 1) % CAY_BUS_STOPS.length;
+    const tx = CAY_BUS_STOPS[target].x, tz = CAY_BUS_STOPS[target].z;
+    const dx = tx - cayBus.mesh.position.x, dz = tz - cayBus.mesh.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1.5) {
+      cayBus.stop = target; cayBus.wait = 6;
+      toast('Ring bus at ' + CAY_BUS_STOPS[target].label + ' — 6 seconds.');
+    } else {
+      const h = Math.atan2(dx, dz);
+      cayBus.mesh.rotation.y = h;
+      cayBus.mesh.position.x += Math.sin(h) * 7 * dt;
+      cayBus.mesh.position.z += Math.cos(h) * 7 * dt;
+    }
+  }
+  const nx = cayBus.mesh.position.x, nz = cayBus.mesh.position.z;
+  const ddx = nx - cayBus.prevX, ddz = nz - cayBus.prevZ;
+  cayBus.mesh.position.y = ISLE_TOP + Math.sin(state.time * 2) * 0.05;
+  if (cayBus.aboard) {
+    playerState.x += ddx; playerState.z += ddz;
+    player.position.set(playerState.x, ISLE_TOP + 1.2, playerState.z);
+    playerState.y = ISLE_TOP + 1.2;
+    const d = Math.hypot(playerState.x - cayBus.mesh.position.x, playerState.z - cayBus.mesh.position.z);
+    if (d > 7) { cayBus.aboard = false; toast('You slipped off the ring bus!'); }
+  }
+  cayBus.prevX = nx; cayBus.prevZ = nz;
+}
+// ---------- Round 4, part twelve: Bram, the darts champion at the bar ----------
+const dartChamp = { mesh: null, active: false, target: 90, lastDay: -1, store: 'solmar-bay-r4-champ' };
+try { dartChamp.lastDay = Number(JSON.parse(localStorage.getItem(dartChamp.store) || '-1')) || -1; } catch (e) { dartChamp.lastDay = -1; }
+function dartChampPersist() { try { localStorage.setItem(dartChamp.store, JSON.stringify(dartChamp.lastDay)); } catch (e) {} }
+{
+  const r = makePerson(0x1a1a1a, 0x2a2a2a, 0x8a5a33);
+  const vest = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.5, 0.38), new THREE.MeshStandardMaterial({ color: 0xffd23f }));
+  vest.position.y = 1.15; r.add(vest);
+  const trophy = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.24, 0.5, 8), new THREE.MeshStandardMaterial({ color: 0xffd23f, metalness: 0.8, roughness: 0.2 }));
+  trophy.position.set(0.5, 1.0, 0.3); r.add(trophy);
+  const dart1 = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6), new THREE.MeshStandardMaterial({ color: 0xdddddd }));
+  dart1.position.set(-0.5, 1.2, 0.3); dart1.rotation.z = 0.6; r.add(dart1);
+  r.position.set(DART_BAR.x + 4, groundHeight(DART_BAR.x + 4, DART_BAR.z + 6), DART_BAR.z + 6);
+  scene.add(r);
+  dartChamp.mesh = r;
+  const table = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.1, 12), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
+  table.position.set(DART_BAR.x + 5.5, 0.9, DART_BAR.z + 7); scene.add(table);
+  const tleg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 0.9, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  tleg.position.set(DART_BAR.x + 5.5, 0.45, DART_BAR.z + 7); scene.add(tleg);
+}
+function dartChampNear() {
+  if (state.inCar || !dartChamp.mesh) return false;
+  return Math.hypot(playerState.x - (DART_BAR.x + 4), playerState.z - (DART_BAR.z + 6)) < 5;
+}
+function dartChampChallenge() {
+  if (!dartChampNear()) return false;
+  if (dartChamp.lastDay === coveDayNumber()) { toast('Bram: "You already had your shot today. Come back tomorrow, champ."'); return true; }
+  if (dartChamp.active) { toast('Bram: "The challenge is on — score 90 or more in one turn of three darts!"'); return true; }
+  dartChamp.active = true;
+  toast('🎯 Bram the darts champion: "Beat 90 in one turn and $500 is yours. Lose and you buy the next round."');
+  speakLine('Bram has never lost at this bar. Ninety points, three darts. Show him what you have got.');
+  showStory('Bram: "I have held this bar for six years. Ninety points, three darts, five hundred dollars."');
+  return true;
+}
+function dartChampTurnEnd(turnScore) {
+  if (!dartChamp.active) return;
+  dartChamp.active = false;
+  if (turnScore >= dartChamp.target) {
+    dartChamp.lastDay = coveDayNumber(); dartChampPersist();
+    state.cash += 500;
+    toast('🏆 You beat Bram! $500 — the bar goes wild!');
+    speakLine('Ninety points! Bram shakes your hand and pays five hundred. The whole bar saw it.');
+    chime(); saveGame(); updateHUD();
+  } else {
+    toast('Bram: "Only ' + turnScore + '? The board is not going anywhere. Try again tomorrow."');
+    speakLine('Bram keeps his title. Tomorrow is another day, ' + activeName() + '.');
+  }
+}
+function updateDartChamp(dt) {
+  if (!dartChamp.mesh) return;
+  const d = Math.hypot(playerState.x - dartChamp.mesh.position.x, playerState.z - dartChamp.mesh.position.z);
+  if (d < 9) {
+    dartChamp.mesh.rotation.y = Math.atan2(playerState.x - dartChamp.mesh.position.x, playerState.z - dartChamp.mesh.position.z);
+    dartChamp.mesh.position.y = groundHeight(dartChamp.mesh.position.x, dartChamp.mesh.position.z) + Math.sin(state.time * 1.4) * 0.04;
+  }
+}
+window.__r4exports = window.__r4exports || {};
+window.__r4exports.dartChamp = { dartChamp, challenge: dartChampChallenge, near: dartChampNear };
+window.__r4exports.cayBus = { cayBus, board: cayBusToggle, near: cayBusNear, stops: CAY_BUS_STOPS };
+window.__r4exports.cove = { coveState, start: coveStart, near: coveNear, isNight: coveIsNight, spots: COVE_SPOTS, buyers: COVE_BUYERS };
+window.__r4exports.loot = { lootState, keeper, buyMap: lootBuyMap, talk: keeperTalk, spots: LOOT_SPOTS };
+window.__r4exports.r4selftest = r4SelfTest;
+window.__r4exports.r4ferry = { ferry, storm, board: ferryToggleBoard, near: ferryNear };
+window.__r4exports.r4market = { marketState, viewState, snap: snapViewpoint, marketKey, stalls: MARKET_STALLS, views: VIEW_SPOTS };
+window.__r4exports.dive = { dive, toggle: diveToggle, buoys: DIVE_BUOYS, cratesFound: () => diveCratesFound };
+window.__r4exports.r4event = { state: () => r4event, spawn: r4eventSpawn, kinds: R4_EVENT_KINDS };
+window.__r4exports.r4extra = { darts, league, leagueStandings, boardJob, acceptBoardJob, boardOpenPanel, DART_BAR, BOARD_SPOT };
+leagueRender();
+window.__r4exports.chain = { chain, start: chainStart, snap: chainSnapPhoto, jobs: CHAIN_JOBS, done: () => chainDone };
+window.__r4exports.isle = { shellsFound: () => isleShellsFound, shells: isleShells, walkers: isleWalkers, hovercrafts, centre: { x: ISLE_CX, z: ISLE_CZ }, onLand: isleOnLand };
 function setupShot() {
   if (!state.shot) return;
   rng = mulberry32(seedParam); // re-seed for the shot (textures already built; logic uses it)
@@ -4245,6 +6159,14 @@ function setupShot() {
     police[2].mesh.position.set(-63.5, 0, 8); police[2].heading = 0; police[2].mesh.rotation.y = 0;
     startMission(2); updateHUD(); updateObjective();
     camera.position.set(-60, 7, -20); camera.lookAt(-60, 1.5, 12);
+  } else if (state.shot === 'isle') {
+    const hc = hovercrafts[0];
+    state.inCar = hc; hc.stolen = true; hc.speed = 10; state.speed = 10;
+    hc.mesh.position.set(150, 0.5, 10); hc.mesh.rotation.y = 1.1;
+    player.visible = false;
+    camera.position.set(140, 14, -18); camera.lookAt(212, 4, 28);
+    toast('Coral Cay — the island off the east coast.');
+    updateHUD();
   } else if (state.shot === 'mission') {
     startMission(1); state.missionStage = 2; state.missionTimer = 64;
     setBeacon(SPOTS.airport.x, SPOTS.airport.z);
@@ -4265,7 +6187,7 @@ let hudTimer = 0;
 function animate() {
   requestAnimationFrame(animate);
   const dtRaw = clock.getDelta();
-  const dt = Math.min(dtRaw, 0.05);
+  const dt = Math.min(dtRaw, 0.1);
   state.time += dt;
   if (photoMode) {
     updatePhotoMode(dt);
@@ -4323,6 +6245,20 @@ function animate() {
     updatePickups(dt);
     updateVestPickups(dt);
     updateAmbientPlanes(dt);
+    updateIsle(dt);
+    updateChain(dt);
+    updateDarts(dt);
+    updateBoardJob(dt);
+    updateR4event(dt);
+    updateDive(dt);
+    updateMarket(dt);
+    updateFerry(dt);
+    updateStorm(dt);
+    updateLoot(dt);
+    updateKeeper(dt);
+    updateCove(dt);
+    updateCayBus(dt);
+    updateDartChamp(dt);
     if (!state.inCar) updatePlayer(dt);
     if (state.inCar) updateCar(dt);
     updateTraffic(dt);
@@ -4361,3 +6297,4 @@ function animate() {
 setupShot();
 animate();
 window.__solmar = { state, buildingCount, playerState, parkedCars, camera, scene, police, policeBikes, roadblocks, extraVehicles, helis, boats, planes, traffic, buses, BUS_STOPS, CHARS, RADIO_STATIONS, WEAPONS, weaponPickups, vestPickups, ambientPlanes, movingBoats, hunters, AIRPORTS, RACE_CPS, RACE_START, animals, SHOPS, HEIST_STAGES, HEIST_REWARD, groundHeight, chute, heist, ownedProperties, skills, skillLevel, packages, packagesFound: () => packagesFound, golf, streetEvent: () => streetEvent, fireJob: () => fireJob, medicJob: () => medicJob, busJob: () => busJob, taxiJob: () => taxiJob, charMission: () => charMission, onRiver, fish, race, taxiActive: () => !!taxiCall, speak: speakLine, damage: damagePlayer, startRace, togglePhone, openShop, startHeist, startCharMission, startDriverJob, startGolf, collectPassiveIncome, spawnStreetEvent, togglePhotoMode, takePhoto, toggleScope, showStory };
+if (window.__r4exports) Object.assign(window.__solmar, window.__r4exports);

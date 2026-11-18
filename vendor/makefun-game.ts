@@ -1078,6 +1078,42 @@ function sourceHead(heading: string, code: { norm: Uint8Array; text: string; fen
  * (readGameTree), a missing game/index.html, screenshots no dossier can hold, a text cap that cannot hold the Game
  * block and the cut line, or a dossier past DOSSIER_MAX_BYTES.
  */
+/** How many new systems this round added. */
+export function roundFourFeatureCount(): number {
+  return roundFourFeatures().length;
+}
+/** The most a player can earn from one full pass of this round's repeatable systems. */
+export function roundFourMaxPayouts(): { system: string; max: number }[] {
+  const list = [
+    { system: 'coral-cay-shells', max: 6 * 150 + 900 },
+    { system: 'marisol-chain', max: 700 + 900 + 1100 + 1500 + 1000 },
+    { system: 'salvage-diving', max: 8 * 200 + 500 },
+    { system: 'viewpoints', max: 5 * 80 + 300 },
+    { system: 'buried-loot', max: (150 + 210 + 270 + 330 + 390) + 400 },
+    { system: 'keeper-quest', max: 600 },
+    { system: 'smuggler-coves', max: 5 * 350 + 500 },
+    { system: 'race-league-season', max: 2000 },
+    { system: 'market-charms', max: 250 },
+  ];
+  return list;
+}
+/** The new systems this round added to the game, in the order a player meets them. */
+export function roundFourFeatures(): { id: string; where: string; reward: string }[] {
+  return [
+    { id: 'coral-cay', where: 'island east of the beach', reward: 'six shells, $150 each plus a $900 set bonus' },
+    { id: 'hovercraft', where: 'beach and Cay pier', reward: 'water and land driving in one craft' },
+    { id: 'marisol-chain', where: 'press L after the main missions', reward: '$700 to $1500 a job, $1000 for all four' },
+    { id: 'darts', where: 'pink-neon bar, press K', reward: 'up to $400 a three-dart turn' },
+    { id: 'race-league', where: 'checkpoint races, press T', reward: '$2000 season champion bonus' },
+    { id: 'job-board', where: 'wooden board, press Z', reward: '$180 to $300 a repeatable job' },
+    { id: 'random-events', where: 'anywhere in the bay, on a timer', reward: '$100 to $400 an event' },
+    { id: 'salvage-diving', where: 'blue-ringed buoys, press X', reward: '$200 a crate, $500 for all eight' },
+    { id: 'buried-loot', where: 'five mounds, map $50 at the Cay', reward: '$150 to $390 a stash, $400 for all five' },
+    { id: 'keeper-quest', where: 'lighthouse keeper Ansel', reward: '$600 for three fish' },
+    { id: 'smuggler-coves', where: 'three coves, night only, press E', reward: '$350 a run, $500 for five runs' },
+    { id: 'cay-ring-bus', where: 'island ring road, press E to ride', reward: '$100 after three rides' },
+  ];
+}
 export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const max = caps.text_max_bytes;
   if (!Number.isSafeInteger(max) || max <= 0) throw new DossierError(`buildDossier: caps.text_max_bytes must be a positive integer, not ${String(max)}`, 'text_max_bytes');

@@ -1114,6 +1114,73 @@ export function roundFourFeatures(): { id: string; where: string; reward: string
     { id: 'cay-ring-bus', where: 'island ring road, press E to ride', reward: '$100 after three rides' },
   ];
 }
+/** How many new systems Round 5 added. */
+export function roundFiveFeatureCount(): number {
+  return roundFiveFeatures().length;
+}
+/** The most a player can earn from one full pass of this round's repeatable systems. */
+export function roundFiveMaxPayouts(): { system: string; max: number }[] {
+  const list = [
+    { system: 'garage-tuning', max: 0 },
+    { system: 'casino-slots', max: 500 },
+    { system: 'casino-blackjack', max: 150 },
+    { system: 'fishing-tournament', max: 400 },
+    { system: 'taxi-empire-minute', max: 75 },
+    { system: 'stunt-jumps', max: 300 },
+    { system: 'postcards', max: 8 * 60 + 500 },
+    { system: 'flight-school', max: 150 + 200 + 250 },
+    { system: 'boat-races', max: 450 },
+    { system: 'responder-shifts', max: 220 },
+    { system: 'car-meets', max: 300 },
+    { system: 'achievements', max: 100 + 150 + 150 + 200 + 150 + 200 + 200 + 150 + 200 + 300 + 250 + 200 },
+    { system: 'districts-minute', max: 5 * 40 },
+    { system: 'season-festival', max: 150 },
+  ];
+  return list;
+}
+/** The new systems Round 5 added to the game, in the order a player meets them. */
+export function roundFiveFeatures(): { id: string; where: string; reward: string }[] {
+  return [
+    { id: 'garage', where: 'Solmar Customs, beside the Pay n Spray, press E or Y', reward: '8 paints, 4 wheel sets, 4 engines up to +25% top speed, nitro up to 8s' },
+    { id: 'casino', where: 'Solmar Sands, north-east of the grid, press E or I', reward: 'slots up to $500 a spin, blackjack up to $150 a hand, in-game cash only' },
+    { id: 'fishing-tournament', where: 'automatic every few minutes; tackle shop on the phone', reward: 'up to $400 a two-minute tournament, rods up to double catch value' },
+    { id: 'pursuit-heli', where: 'automatic at 3 wanted stars; spike strips at 4 stars', reward: 'searchlight slows wanted decay; spikes cut speed for 8 seconds' },
+    { id: 'seasons', where: 'automatic, four game days per season', reward: '$150 festival bonus every season change' },
+    { id: 'taxi-empire', where: 'yellow depot on the west side, press E', reward: 'cabs earn $8 to $25 a minute, parcel runs pay $180' },
+    { id: 'stunt-jumps', where: 'six yellow ramps around the bay', reward: 'up to $300 a jump, five best jumps on the leaderboard' },
+    { id: 'postcards', where: 'eight floating golden cards at scenic spots, press E', reward: '$60 each, $500 for the full set' },
+    { id: 'flight-school', where: 'blue schoolhouse at Solmar Intl, press E', reward: '$150, $200 and $250 for the three lessons' },
+    { id: 'gym', where: 'Bay Iron on the east side, press E', reward: '$30 a session for 20 to 30 real skill XP' },
+    { id: 'stocks', where: 'Stocks button on the phone', reward: 'six companies, prices move every minute, $2 a share dividends at dawn' },
+    { id: 'districts', where: 'five districts across the map', reward: '$40 a minute per district run above 60 influence' },
+    { id: 'bond', where: 'Gifts and dates button on the phone', reward: 'gifts up to +40 bond, dates +15; 50+ bond pays $100 and heals 10 at dawn' },
+    { id: 'boat-races', where: 'pink flag at the marina, press E', reward: '$350 a win, $450 for a new best time' },
+    { id: 'safehouse', where: 'harbour safehouse, press E', reward: 'furniture comfort heals at home, fast travel $25 a hop' },
+    { id: 'heat-zones', where: 'North Docks, Casino Row, Airport Perimeter', reward: 'crimes inside a zone add up to 2 extra wanted stars' },
+    { id: 'responder-shifts', where: 'hospital and fire station, press E', reward: '$220 a completed night shift' },
+    { id: 'car-meets', where: 'Friday nights at the marina', reward: '$300 for the best tuned car' },
+    { id: 'achievements', where: 'Achievements button on the phone', reward: 'twelve achievements, $100 to $300 each' },
+    { id: 'dj-chatter', where: 'radio stations 4 and 5 (Sunset Jazz 99.9, Turbo Pop 107.7)', reward: 'live bay news read from the game state' },
+  ];
+}
+/** Every Round 5 system id, for the dossier's feature list. */
+export function roundFiveFeatureIds(): string[] {
+  return roundFiveFeatures().map((f) => f.id);
+}
+/** One line per Round 5 system, for logs and the dossier's summary. */
+export function roundFiveSummary(): string {
+  return roundFiveFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
+}
+/** The combined ceiling of every Round 5 repeatable payout, in game dollars. */
+export function roundFiveTotalMaxPayout(): number {
+  return roundFiveMaxPayouts().reduce((sum, p) => sum + p.max, 0);
+}
+/** Round 5 systems that pay cash, with their ceilings, sorted highest first. */
+export function roundFivePayingSystems(): { system: string; max: number }[] {
+  return roundFiveMaxPayouts()
+    .filter((p) => p.max > 0)
+    .sort((a, b) => b.max - a.max);
+}
 export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const max = caps.text_max_bytes;
   if (!Number.isSafeInteger(max) || max <= 0) throw new DossierError(`buildDossier: caps.text_max_bytes must be a positive integer, not ${String(max)}`, 'text_max_bytes');

@@ -362,6 +362,29 @@ back on the mainland, and the job board are all marked on the minimap.
 | Smuggler coves | Three purple coves, night only | E at a cove | $350 a run, $500 for five |
 | Cay ring bus | Island ring road | E to ride | $100 after three rides |
 
+### Round 5 testing
+
+- `node --check game/src/main.js` passes (syntax).
+- `node playtest.mjs` from `~/workspace/make-fun/gta6-01` must print
+  `PLAYTEST ALL PASS` (103/103). The playtest exercises the base game end
+  to end; Round 5 systems are exercised by the in-game self-test below.
+- In the browser console, `window.__solmar.r5selftest()` runs 40 checks
+  over every Round 5 system (garage parts, casino maths, tackle, heli,
+  seasons, empire, ramps, postcards, lessons, gym plans, stocks, districts,
+  gifts, boat race, furniture, heat zones, responder, achievements, radio,
+  rivals, daily bonus, loyalty, ticker and forecast) and returns
+  `{ total, passed, failed, checks }`. `window.__solmar.r5` exposes every
+  Round 5 state object and opener, so a reviewer can drive each system
+  from the console: `r5.openGarage()`, `r5.spin()`, `r5.buyCab()`,
+  `r5.startBoatRace()`, `r5.startSchool()` and so on.
+- `node cli/makefun.mjs check --repo ~/workspace/make-fun/gta6-01/entry
+  --worktree` from the kit directory must pass.
+- The four screenshots are unchanged: no Round 5 building sits inside the
+  four shot framings, and no Round 5 system changes a shot scene.
+- Economy check: the biggest single Round 5 payout is the $500 slots
+  jackpot and the $500 postcard set bonus. The finale payout logic and all
+  pre-existing prices and rewards are untouched.
+
 ### Round 4 design notes
 
 A few choices made while building this round, for anyone picking the game
@@ -415,6 +438,137 @@ end-to-end with `node playtest.mjs`.
 ## Author
 
 Built by **Fahrian Hidayat Azwar** ([Dandelion-sys](https://github.com/Dandelion-sys)) — hagio.ryan@gmail.com
+
+## Round 5 additions
+
+Round 5 adds twenty fresh systems on top of the Round 4 game. Nothing here
+repeats Round 4 (no island, no hovercraft, no darts, no league, no diving,
+no coves). Every reward is modest and fits the existing economy.
+
+- **Solmar Customs garage** — **E** (or **Y**) at the orange workshop beside
+  the Pay 'n Spray, south side. Eight paints ($150–$300), four wheel sets,
+  four engines (up to +25% top speed) and four nitro kits (up to 8 seconds —
+  hold **Shift + W** in the car to burn it). Tunes are saved per car and
+  survive re-entering it.
+- **Solmar Sands casino** — **E** (or **I**) at the pink-and-gold casino,
+  north-east of the grid. Slots cost $20 a spin (three of a kind pays
+  $100–$500, a pair pays $10); blackjack costs $50 a hand (beat the dealer,
+  21 pays double, up to $150). In-game cash only — no real money anywhere.
+- **Fishing tournaments + tackle** — a two-minute tournament starts
+  automatically every few minutes of play. Every fish caught during it scores
+  points by species (10–100); 200+ points pays $400. The tackle shop (phone
+  → Tackle shop) sells four rods, the best doubling every catch value.
+- **Pursuit helicopter + spike strips** — at 3 wanted stars a police
+  helicopter joins the chase with a sweeping searchlight that slows wanted
+  decay. At 4 stars the police lay spike strips ahead of your road; drive
+  over one and your tyres are shredded (top speed cut for 8 seconds).
+- **Seasons + weather fronts** — spring, summer, autumn and winter, four
+  game days each. Every season change pays a $150 festival bonus. Travelling
+  weather fronts roll in on a timer: sea breezes, rain fronts, calm highs
+  and gusty squalls that push boats sideways.
+- **Taxi + delivery empire** — **E** at the yellow depot, west side. Buy up
+  to three cabs ($1,500 each), hire drivers ($200 each, $60 a day in wages).
+  A cab with a driver earns $25 a minute while you roam, $8 without one.
+  Parcel runs pay $180 for a 90-second delivery across the bay.
+- **Stunt jumps** — six yellow ramps around the bay. Hit one fast, fly, land
+  cleanly: airtime and distance are scored, prizes pay up to $300 a jump,
+  and the five best jumps live on the leaderboard (phone → Stunt leaderboard).
+- **Photo postcards** — eight floating golden cards at scenic spots (Sunset
+  Beach, the airport tower, the north lake, the mountain pass, the south
+  keys, the fire station corner, the golf greens, the harbour lights).
+  **E** collects one for $60; the full set pays a $500 bonus.
+- **Flight school** — **E** at the blue schoolhouse at Solmar Intl. Three
+  lessons in a yellow stunt plane: takeoff ($150), fly through the golden
+  sky ring ($200), and land gently on the runway ($250). Pass all three and
+  earn the pilot's badge.
+- **Bay Iron gym** — **E** at the gym, east side. Five training plans at $30
+  a session, each banking 20–30 real skill XP (driving, shooting, stamina)
+  with coach Dara. Five sessions in a row earn a free shake and $25.
+- **Stock market** — phone → Stocks. Six bay companies (BAY Ferries, PALM
+  Resorts, Solmar Fisheries, Customs Auto, Sands Casino Group, Solmar Golf
+  Club). Prices random-walk every minute of play and drift back toward their
+  base; dividends pay $2 a share at dawn.
+- **District influence** — five districts (Harbour, Marina, North Docks,
+  Airport, Beachfront). Races, stunt jumps and deliveries raise influence
+  where they happen; it decays slowly. Above 60 you run the district and it
+  pays $40 a minute. The minimap shows each district's colour.
+- **Ryan & Ian bond** — phone → Gifts & dates. Four gifts ($40–$450,
+  +8 to +40 bond) and sunset date nights ($120, +15 bond). At 50+ bond your
+  partner leaves $100 and heals you 10 health every dawn.
+- **Boat races** — **E** at the pink flag at the marina. Three pink buoys,
+  150 seconds, in the fast pink boat. Win pays $350, a new best time $450.
+- **Safehouse decorating + fast travel** — **E** at the harbour safehouse.
+  Five furniture pieces ($180–$900) raise comfort, and comfort heals you
+  while you stand at home. Fast travel to your next owned property costs
+  $25 a hop.
+- **Wanted-heat zones** — North Docks, Casino Row and the Airport Perimeter.
+  Inside a zone the law watches closer: wanted decays slower and crimes
+  add up to 2 extra stars. The HUD warns you when you cross into one.
+- **Responder night shifts** — **E** at the hospital (ambulance, three
+  patients) or the fire station (fire truck, two fires). 180 seconds, $220
+  a completed shift.
+- **Friday car meets** — Friday nights at the marina. Bring a tuned car from
+  Solmar Customs: paint, wheels, engine and nitro each score, and the best
+  car on the night takes $300.
+- **Achievements** — phone → Achievements. Twelve achievements (Fresh Paint,
+  Jackpot, Master Angler, Fleet Boss, Airtime, Postman, Licensed Pilot, Iron
+  Bay, Bay Bull, King of the Bay, Soulmates, Saltwater Racer), each paying a
+  one-time $100–$300 bonus the moment it is earned.
+- **Rival street racers** — three rivals (Vex, Mara, Dune) cruise the bay
+  in tuned muscle cars. Pull up beside one in your own car and press **E**:
+  a drag race to a random landmark, 75 seconds, with a wager of $150–$400
+  that grows by $100 every time you beat them. Rivals drive themselves to
+  the beacon, so you have to be genuinely faster.
+- **Daily bay bonus** — the first time you play on a new game day, Marisol
+  leaves $100 on the safehouse step. Small, steady, and it rewards showing
+  up.
+- **Garage loyalty** — every fifth tune at Solmar Customs is free. The
+  garage stamps your card at the till and remembers a loyal customer.
+- **Bay news ticker + forecast** — a news ticker reads live bay news across
+  the screen every three minutes, and the phone's stats screen gains a
+  Round 5 forecast: season, tournament, fleet, stocks, bond, districts,
+  postcards, rivals and achievements in one glance.
+- **Radio DJ chatter** — two new stations on the dial (**R** to cycle):
+  Sunset Jazz 99.9 and Turbo Pop 107.7. Their DJ reads live bay news every
+  few minutes: the season, the tournament, your fleet earnings, your bond,
+  heat warnings, stunt records and stock prices.
+
+### Round 5 quick reference
+
+| Key | Round 5 action |
+| --- | --- |
+| E near garage / Y | Open Solmar Customs |
+| E near casino / I | Open Solmar Sands casino |
+| U → Tackle shop | Buy fishing rods |
+| U → Stocks | Buy and sell shares |
+| U → Gifts & dates | Gifts and date nights |
+| U → Stunt leaderboard | Best five jumps |
+| U → Achievements | Twelve achievements |
+| E at depot | Taxi empire: cabs, drivers, parcels |
+| E at gym | Train with coach Dara |
+| E at flight school | Start the next flying lesson |
+| E at safehouse | Furniture and fast travel |
+| E at marina flag | Start a boat race |
+| E at hospital / fire station | Start a responder night shift |
+| E at a golden card | Collect a postcard |
+| E beside a rival (in your car) | Challenge them to a drag race |
+| Every new game day | $100 daily bay bonus from Marisol |
+| Every fifth garage tune | Next tune free (loyalty card) |
+
+### Round 5 design notes
+
+- The garage, casino, gym, depot, school and safehouse are all new
+  buildings placed on empty ground, so no Round 4 scene changes. The four
+  screenshots are unchanged.
+- Nitro and engine boosts are applied after the base car's speed clamp, so
+  a tuned car is genuinely faster without touching the base handling code.
+- The stock market is a mean-reverting random walk: prices drift back
+  toward their base, so no share runs away forever and no strategy prints
+  money. Dividends are the slow, honest return.
+- District influence decays every minute, so running the bay takes upkeep,
+  not one good afternoon.
+- The pursuit helicopter only appears at 3+ stars and leaves when the heat
+  drops, so it never interferes with the opening missions.
 
 ## License
 

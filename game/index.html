@@ -14,10 +14,13 @@
   #topleft { position: absolute; top: 12px; left: 12px; }
   #healthbar { width: 180px; height: 12px; background: #400; border-radius: 6px; overflow: hidden; margin-top: 4px; }
   #healthfill { height: 100%; width: 100%; background: linear-gradient(90deg, #2ecc71, #7CFC00); }
+  #armorbar { width: 180px; height: 9px; background: #223344; border-radius: 5px; overflow: hidden; margin-top: 3px; }
+  #armorfill { height: 100%; width: 0%; background: linear-gradient(90deg, #4a6fa5, #7fb2e8); }
+  #armorlabel { font-size: 11px; color: #9fc3e8; margin-top: 2px; }
   #cash { font-size: 20px; font-weight: bold; color: #7dff9a; }
   #stars { font-size: 22px; letter-spacing: 3px; color: #ffd23f; text-shadow: 0 0 6px #000; }
   #stars .off { color: rgba(255,255,255,0.35); }
-  #speedo { position: absolute; right: 14px; bottom: 14px; font-size: 26px; font-weight: bold; text-align: right; }
+  #speedo { position: absolute; right: 14px; bottom: 78px; font-size: 26px; font-weight: bold; text-align: right; }
   #speedo small { font-size: 12px; color: #cfe8ff; display: block; }
   #minimap { position: absolute; top: 12px; right: 12px; border: 2px solid rgba(255,255,255,0.5); border-radius: 6px; background: #0a2436; }
   #objective { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; max-width: 560px; }
@@ -41,6 +44,32 @@
   .keys b { color: #ffd23f; }
   #wasted { background: rgba(40,0,0,0.8); }
   #wasted h1 { color: #ff5b5b; text-shadow: 0 4px 0 #600, 0 8px 24px #000; }
+  #phone { position: absolute; right: 14px; bottom: 90px; width: 250px; background: rgba(10,22,34,0.95); border: 2px solid #4a6fa5; border-radius: 14px; padding: 12px; color: #fff; font-size: 13px; pointer-events: auto; z-index: 6; }
+  #phone.hidden { display: none; }
+  #phone h3 { margin: 0 0 6px; color: #7fb2e8; font-size: 15px; }
+  #phoneMsg { background: rgba(255,255,255,0.08); border-radius: 8px; padding: 8px; min-height: 44px; margin-bottom: 8px; line-height: 1.4; }
+  #phoneStats { background: rgba(255,255,255,0.08); border-radius: 8px; padding: 8px; margin-top: 8px; line-height: 1.5; display: none; }
+  .phoneBtn { display: block; width: 100%; margin: 4px 0; padding: 8px; font-size: 14px; font-weight: bold; color: #08222f; background: #7fb2e8; border: 0; border-radius: 8px; cursor: pointer; }
+  .phoneBtn:hover { background: #a8ccf0; }
+  #raceInfo { position: absolute; top: 64px; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: bold; color: #ff9a5a; text-shadow: 0 2px 4px #000; }
+  #story { position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%); max-width: 640px; text-align: center; font-size: 16px; font-style: italic; color: #fff; background: rgba(0,0,0,0.65); padding: 10px 18px; border-radius: 10px; pointer-events: none; z-index: 6; }
+  #story.hidden { display: none; }
+  #golf { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; background: rgba(10,30,16,0.97); border: 2px solid #2ecc71; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  #golf.hidden { display: none; }
+  #golf h3 { margin: 0 0 8px; color: #7dff9a; font-size: 17px; }
+  #golf label { display: block; margin-top: 8px; font-size: 13px; color: #bfe8c8; }
+  #golf input[type=range] { width: 100%; }
+  #scope { position: absolute; left: 50%; top: 50%; width: 220px; height: 220px; margin: -110px 0 0 -110px; border: 3px solid #000; border-radius: 50%; pointer-events: none; z-index: 5; box-shadow: 0 0 0 400px rgba(0,0,0,0.55); }
+  #scope.hidden { display: none; }
+  #photoBar { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 8; pointer-events: auto; }
+  #photoBar.hidden { display: none; }
+  #shop { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; background: rgba(10,22,34,0.97); border: 2px solid #ffd23f; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  #shop.hidden { display: none; }
+  #shop h3 { margin: 0 0 8px; color: #ffd23f; font-size: 17px; }
+  #shopItems { display: flex; flex-direction: column; gap: 6px; }
+  .shopItem { display: flex; justify-content: space-between; padding: 9px 10px; font-size: 14px; font-weight: bold; color: #08222f; background: #7fb2e8; border: 0; border-radius: 8px; cursor: pointer; text-align: left; }
+  .shopItem:hover { background: #a8ccf0; }
+  .shopItem:disabled { opacity: 0.45; cursor: default; }
 </style>
 </head>
 <body>
@@ -50,24 +79,63 @@
     <div id="cash">$0</div>
     <div id="stars"></div>
     <div id="healthbar"><div id="healthfill"></div></div>
+    <div id="armorbar"><div id="armorfill"></div></div>
+    <div id="armorlabel">Vest 0</div>
+    <div id="clock" style="font-size:15px;color:#cfe8ff;margin-top:4px">08:10</div>
+    <div id="force" style="font-size:12px;color:#ffb0b0">Solmar Bay Police</div>
+    <div id="bounty" style="font-size:13px;color:#ff9a5a">Bounty $0</div>
+    <div id="charName" style="font-size:13px;color:#ffd23f;margin-top:4px">Ian · C to switch</div>
+    <div id="radio" style="font-size:13px;color:#bfe6ff">♪ Solmar FM 88.5</div>
+    <div id="weapon" style="font-size:13px;color:#ffe27a">Pistol · ∞</div>
+    <div id="packages" style="font-size:13px;color:#ffd23f">📦 0/50</div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="objective" class="panel"><b id="objTitle">Solmar Bay</b><div class="sub" id="objText">Welcome to the bay.</div></div>
   <div id="speedo">0<small>MPH</small></div>
   <div id="crosshair"></div>
   <div id="toast"></div>
-  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car &nbsp;·&nbsp; F punch &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="raceInfo"></div>
+  <div id="story" class="hidden"></div>
+  <div id="scope" class="hidden"></div>
+  <div id="golf" class="hidden">
+    <h3>⛳ Solmar Golf Club</h3>
+    <div id="golfInfo" style="font-size:13px;color:#bfe8c8"></div>
+    <label>Direction: <input type="range" id="golfDir" min="-45" max="45" value="0"></label>
+    <label>Power: <input type="range" id="golfPower" min="10" max="100" value="50"></label>
+    <button class="phoneBtn" id="golfSwing" style="margin-top:10px">🏌️ Swing</button>
+    <button class="phoneBtn" id="golfClose" style="margin-top:6px">Leave the course</button>
+  </div>
+  <div id="shop" class="hidden">
+    <h3 id="shopTitle">Shop</h3>
+    <div id="shopCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="shopItems"></div>
+    <button class="phoneBtn" id="shopClose" style="margin-top:10px">Close (Esc)</button>
+  </div>
+  <div id="phone" class="hidden">
+    <h3>📱 Phone — <span id="phoneChar">Ian</span></h3>
+    <div id="phoneMsg">Marisol: Ian, I got work. Check your objective.</div>
+    <button class="phoneBtn" id="phoneBtnMarisol">📞 Call Marisol (hint)</button>
+    <button class="phoneBtn" id="phoneBtnTaxi">🚕 Call a Taxi</button>
+    <button class="phoneBtn" id="phoneBtnStats">📊 Stats</button>
+    <div id="phoneStats"></div>
+    <div style="font-size:11px;color:#9fc3e8;margin-top:6px">Press U to close. Game keeps running.</div>
+  </div>
+  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car / jack traffic / shop &nbsp;·&nbsp; F punch / fish &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; 1–8 weapons &nbsp;·&nbsp; V scope &nbsp;·&nbsp; R radio &nbsp;·&nbsp; C switch character &nbsp;·&nbsp; N character mission &nbsp;·&nbsp; B driver job &nbsp;·&nbsp; T race &nbsp;·&nbsp; U phone &nbsp;·&nbsp; G golf &nbsp;·&nbsp; O photo mode &nbsp;·&nbsp; J bail out &nbsp;·&nbsp; Shift fly up (heli) &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
 </div>
+<div id="photoBar" class="hidden">📷 PHOTO MODE — WASD move camera · Q/E up/down · drag to look · <b>Enter</b> take photo · O to exit</div>
 <div id="start" class="screen">
   <h1>SOLMAR BAY</h1>
   <h2>An open-world crime story on the sunny coast</h2>
-  <p>You are <b>Rico Vane</b>, fresh out of the harbour district and broke.
+  <p>You are <b>Ian</b>, fresh out of the harbour district and broke.
   Fixer <b>Marisol</b> has work for you — if you can handle the heat.
+  Your partner <b>Ryan</b> is out there too — the two of you are a couple,
+  taking Solmar Bay back together, one job at a time. Press <b>C</b> to switch between them.
   Steal cars, outrun the Solmar Bay Police, and climb from street hustler to king of the bay.</p>
   <button class="btn" id="btnStart">START GAME</button>
   <button class="btn ghost" id="btnContinue" style="display:none">CONTINUE — LOAD SAVE</button>
   <p class="keys"><b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Shift</b> run &nbsp; <b>Space</b> jump<br>
-  <b>E</b> enter / exit car &nbsp; <b>F</b> punch &nbsp; <b>Click</b> shoot &nbsp; <b>P</b> pause &nbsp; <b>M</b> mute</p>
+  <b>E</b> enter / exit vehicle &nbsp; <b>F</b> punch / fish near water &nbsp; <b>Click</b> shoot &nbsp; <b>1/2/3</b> weapons &nbsp; <b>R</b> radio &nbsp; <b>C</b> switch character &nbsp; <b>T</b> race &nbsp; <b>U</b> phone &nbsp; <b>P</b> pause &nbsp; <b>M</b> mute<br>
+  <span id="gamepadNote">🎮 Gamepad: left stick move · right stick look · A jump · X enter · RT shoot · Start pause</span></p>
 </div>
 <div id="pause" class="screen hidden">
   <h1>PAUSED</h1>
@@ -77,7 +145,8 @@
 </div>
 <div id="wasted" class="screen hidden">
   <h1>BUSTED / WASTED</h1>
-  <p id="wastedText">Rico went down in Solmar Bay.</p>
+  <p id="wastedText">Ian went down in Solmar Bay.</p>
+  <button class="btn" id="btnRespawn">RESPAWN AT SAFEHOUSE</button>
   <button class="btn" id="btnAgain">TRY AGAIN</button>
 </div>
 <script type="importmap">

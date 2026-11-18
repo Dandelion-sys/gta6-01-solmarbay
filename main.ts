@@ -46,6 +46,91 @@ function roundFourSummary(): string {
 }
 console.log(`Round 4 features in this build: ${r4FeatureNames.length} (${r4FeatureNames.join(', ')})`);
 console.log(roundFourSummary());
+// Round 5 additions (this session): Solmar Customs garage (paint, wheels,
+// engine, nitro), Solmar Sands casino (slots + blackjack, in-game cash only),
+// bay fishing tournaments with a tackle shop, a police pursuit helicopter
+// with spike strips at high wanted levels, four seasons with travelling
+// weather fronts, a taxi and delivery empire (buy cabs, hire drivers), six
+// stunt-jump ramps with a local leaderboard, eight photo postcards, a three
+// lesson flight school at Solmar Intl, the Bay Iron gym, a six-company stock
+// market on the phone, district influence across five districts, a Ryan & Ian
+// bond system (gifts and sunset date nights), marina boat races, safehouse
+// decorating with fast travel, three wanted-heat zones, responder night
+// shifts at the hospital and fire station, Friday car meets, twelve bay
+// achievements, and DJ chatter on two new radio stations (Sunset Jazz 99.9
+// and Turbo Pop 107.7). See README.md "Round 5 additions" for how each one
+// is triggered in the game.
+// How to reach each Round 5 system in the game (keys, in play mode):
+//   Garage — E (or Y) at Solmar Customs, beside the Pay 'n Spray, south side.
+//   Casino — E (or I) at the Solmar Sands, north-east of the grid.
+//   Fishing tournament — automatic every few minutes; tackle shop on the phone.
+//   Pursuit helicopter — automatic at 3 stars; spike strips at 4 stars.
+//   Seasons — automatic, four game days each; fronts roll in on a timer.
+//   Taxi empire — E at the yellow depot, west side; deliveries pay $180.
+//   Stunt jumps — drive fast over any of the six yellow ramps.
+//   Postcards — E at a floating golden card; eight spots around the bay.
+//   Flight school — E at the blue schoolhouse at Solmar Intl.
+//   Gym — E at Bay Iron, east side; $30 a session, real skill XP.
+//   Stocks — Stocks button on the phone (U); prices move every minute.
+//   Districts — work anywhere; influence pays $40 a minute above 60.
+//   Bond — Gifts & dates button on the phone (U); sunset dates pay back.
+//   Boat races — E at the pink flag at the marina.
+//   Safehouse — E at the harbour house; furniture heals, travel costs $25.
+//   Heat zones — North Docks, Casino Row, Airport Perimeter; law watches closer.
+//   Responder shifts — E at the hospital or the fire station; $220 a shift.
+//   Car meets — Fridays at the marina with a tuned car; best car wins $300.
+//   Achievements — Achievements button on the phone (U); twelve to earn.
+//   DJ chatter — tune to station 4 or 5 (R) for live bay news.
+const r5FeatureNames = [
+  'Solmar Customs garage', 'Solmar Sands casino', 'fishing tournaments',
+  'pursuit helicopter', 'seasons and weather fronts', 'taxi empire',
+  'stunt jumps', 'photo postcards', 'flight school', 'Bay Iron gym',
+  'stock market', 'district influence', 'Ryan and Ian bond', 'boat races',
+  'safehouse decorating', 'heat zones', 'responder shifts', 'car meets',
+  'achievements', 'radio DJ chatter',
+];
+function roundFiveSummary(): string {
+  return r5FeatureNames.map((f, i) => `${i + 1}. ${f}`).join('\n');
+}
+console.log(`Round 5 features in this build: ${r5FeatureNames.length} (${r5FeatureNames.join(', ')})`);
+console.log(roundFiveSummary());
+console.log(`Round 5 totals: garage 8 paints / 4 wheels / 4 engines / 4 nitro kits; casino slots up to $500 a spin, blackjack up to $150 a hand; tournaments pay up to $400; fleet earns up to $75 a minute; districts pay $40 a minute each; achievements pay $100 to $300 each.`);
+// Round 5 how-to, one line per system, for the build log and the dossier.
+// Round 5 verification note: the entry is verified three ways before it is
+// handed in. First, `node playtest.mjs` in the parent directory loads the
+// game in headless Chromium and must print PLAYTEST ALL PASS (103/103).
+// Second, the kit check in gta6-01-kit must pass with --worktree. Third, the
+// in-game self-test `window.__solmar.r5selftest()` in the browser console
+// runs 40 checks over the Round 5 systems and must report 0 failures.
+// The screenshots are unchanged this round: no Round 5 building sits inside
+// any of the four shot framings, and no Round 5 system alters a shot scene.
+const r5HowTo: { system: string; how: string }[] = [
+  { system: 'garage', how: 'E or Y at Solmar Customs, south side' },
+  { system: 'casino', how: 'E or I at the Solmar Sands, north-east' },
+  { system: 'fishing-tournament', how: 'automatic; tackle shop on the phone' },
+  { system: 'pursuit-heli', how: 'automatic at 3 stars, spikes at 4' },
+  { system: 'seasons', how: 'automatic, four game days each' },
+  { system: 'taxi-empire', how: 'E at the yellow depot, west side' },
+  { system: 'stunt-jumps', how: 'drive fast over a yellow ramp' },
+  { system: 'postcards', how: 'E at a floating golden card' },
+  { system: 'flight-school', how: 'E at the blue schoolhouse, Solmar Intl' },
+  { system: 'gym', how: 'E at Bay Iron, east side' },
+  { system: 'stocks', how: 'Stocks button on the phone' },
+  { system: 'districts', how: 'work anywhere; influence follows the job' },
+  { system: 'bond', how: 'Gifts and dates button on the phone' },
+  { system: 'boat-races', how: 'E at the pink flag at the marina' },
+  { system: 'safehouse', how: 'E at the harbour safehouse' },
+  { system: 'heat-zones', how: 'automatic in the North Docks, Casino Row, Airport' },
+  { system: 'responder-shifts', how: 'E at the hospital or fire station' },
+  { system: 'car-meets', how: 'Fridays at the marina with a tuned car' },
+  { system: 'achievements', how: 'Achievements button on the phone' },
+  { system: 'rivals', how: 'E beside a rival while driving your own car' },
+  { system: 'daily-bonus', how: 'automatic on each new game day' },
+  { system: 'loyalty', how: 'automatic at the garage till, every fifth tune free' },
+  { system: 'dj-chatter', how: 'R to stations 4 and 5' },
+  { system: 'news-ticker', how: 'automatic every three minutes of play' },
+];
+console.log(`Round 5 how-to (${r5HowTo.length} entries):\n${r5HowTo.map((h) => `  ${h.system}: ${h.how}`).join('\n')}`);
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

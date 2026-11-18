@@ -1371,6 +1371,18 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyE' && keeperNear()) { keeperTalk(); return; }
   if (e.code === 'KeyE' && dartChampNear()) { dartChampChallenge(); return; }
   if (e.code === 'KeyE' && marketNear() >= 0) { marketKey(); return; }
+  if (e.code === 'KeyE' && r5GarageOpen()) return;
+  if (e.code === 'KeyE' && r5CasinoOpen()) return;
+  if (e.code === 'KeyE' && r5EmpireOpen()) return;
+  if (e.code === 'KeyE' && r5GymOpen()) return;
+  if (e.code === 'KeyE' && r5SchoolNear() && r5SchoolStart()) return;
+  if (e.code === 'KeyE' && r5HomeOpen()) return;
+  if (e.code === 'KeyE' && r5BoatRaceNear() && r5BoatRaceStart()) return;
+  if (e.code === 'KeyE' && r5ResponderNear()) { r5ResponderStart(r5ResponderNear()); return; }
+  if (e.code === 'KeyE' && state.inCar && r5RivalsNear() >= 0) { r5RivalsChallenge(r5RivalsNear()); return; }
+  if (e.code === 'KeyE' && r5CardsNear() >= 0) { r5CardsCollect(r5CardsNear()); return; }
+  if (e.code === 'KeyY' && r5GarageOpen()) return;
+  if (e.code === 'KeyI' && r5CasinoOpen()) return;
   if (e.code === 'KeyE') tryEnterExitVehicle();
   if (e.code === 'KeyF') punch();
   if (e.code === 'Space') e.preventDefault();
@@ -1526,7 +1538,7 @@ window.addEventListener('gamepadconnected', (e) => {
   toast('Gamepad connected — ' + (e.gamepad.id || 'controller') + '.');
 });
 function saveGame() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ cash: state.cash, mission: state.mission, charMissions: state.charMissions, skills, packagesFound })); } catch (e) {}
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ cash: state.cash, mission: state.mission, charMissions: state.charMissions, skills, packagesFound, r5: { bond: r5Bond.bond, season: r5Season.idx, tourneyBest: r5Tourney.best, empireEarned: R5_EMPIRE.earned, stuntBest: r5Stunt.bestDist, cardsFound: r5Cards.found.length, stocksValue: r5StocksValue(), territory: r5Territory.inf, homeComfort: r5Home.comfort, boatBest: R5_BOAT_RACE.best } })); } catch (e) {}
 }
 function loadSave() {
   try { const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); return s; } catch (e) { return null; }
@@ -2180,6 +2192,7 @@ function updateHUD() {
   if (charEl) charEl.textContent = CHARS[state.activeChar].name + '  ·  C to switch';
   const raceEl = document.getElementById('raceInfo');
   if (raceEl) raceEl.textContent = heist.active ? '💰 HEIST — stage ' + (heist.stage + 1) + '/' + HEIST_STAGES.length + ' · ' + Math.max(0, Math.ceil(heist.timer)) + 's left' : race.active ? '🏁 RACE — checkpoint ' + race.cp + '/' + RACE_CPS.length + ' · ' + Math.max(0, Math.ceil(race.timer)) + 's left' : '';
+  r5HudLine();
 }
 function drawMinimap() {
   const W = 180, scale = W / 620;
@@ -2240,6 +2253,7 @@ function drawMinimap() {
   dot(PAYNSPRAY.x, PAYNSPRAY.z, '#2e6fb0', 5);
   if (streetEvent) dot(streetEvent.ped.x, streetEvent.ped.z, '#ff8c1a', 5);
   if (golf.active) dot(100, -160, '#2ecc71', 5);
+  r5MinimapDots(dot);
   // Feature 37: fire station (F) + hospital (H) + bus stops (B)
   mm.fillStyle = '#c0392b'; mm.fillRect((-132 + 310) * scale - 4, (60 + 310) * scale - 4, 8, 8);
   mm.fillStyle = '#fff'; mm.font = 'bold 7px Arial'; mm.fillText('F', (-132 + 310) * scale - 2.5, (60 + 310) * scale + 2.5);
@@ -6127,6 +6141,2325 @@ window.__r4exports.r4extra = { darts, league, leagueStandings, boardJob, acceptB
 leagueRender();
 window.__r4exports.chain = { chain, start: chainStart, snap: chainSnapPhoto, jobs: CHAIN_JOBS, done: () => chainDone };
 window.__r4exports.isle = { shellsFound: () => isleShellsFound, shells: isleShells, walkers: isleWalkers, hovercrafts, centre: { x: ISLE_CX, z: ISLE_CZ }, onLand: isleOnLand };
+// ============================================================================
+// ROUND 5 — twelve fresh systems, written for this round only.
+//   1. Solmar Customs garage (paint, wheels, engine, nitro) — E at the garage
+//   2. Solmar Sands casino (slots + blackjack, in-game cash only) — E at the door
+//   3. Bay fishing tournaments + tackle shop — fish during a tournament hour
+//   4. Police pursuit helicopter + spike strips at high wanted levels
+//   5. Four seasons and travelling weather fronts
+//   6. Taxi and delivery empire — buy cabs, hire drivers, earn while you roam
+//   7. Stunt-jump ramps with a local leaderboard
+//   8. Photo postcards — eight scenic spots to collect
+//   9. Flight school at Solmar Intl — three lessons in a stunt plane
+//  10. Bay Iron gym — train stamina, strength and speed for real skill XP
+//  11. Solmar stock market — six bay companies, buy low, sell high
+//  12. Ryan & Ian bond — gifts and date nights; a strong bond pays back
+//  13. Marina boat races — three buoys, one fast boat
+//  14. Safehouse decorating + fast travel between owned properties
+//  15. District influence — five districts that pay when you run them
+// Every reward is modest and fits the existing economy. Nothing here re-uses
+// Round 4: no island, no hovercraft, no darts, no league, no diving, no coves.
+// ============================================================================
+
+// ---------- Round 5, part one: Solmar Customs garage ----------
+// The garage sits beside the Pay 'n Spray on the south side of the grid.
+const R5_GARAGE = { x: -48, z: 84 };
+const R5_PAINTS = [
+  { name: 'Sunset Orange', color: 0xe86a1e, price: 150 },
+  { name: 'Bay Teal', color: 0x1e8a8a, price: 150 },
+  { name: 'Midnight Blue', color: 0x1e3a6e, price: 200 },
+  { name: 'Cherry Red', color: 0xc0392b, price: 150 },
+  { name: 'Lime Flash', color: 0x7ac74f, price: 250 },
+  { name: 'Bubblegum Pink', color: 0xe86ad0, price: 250 },
+  { name: 'Gold Rush', color: 0xffd23f, price: 300 },
+  { name: 'Shadow Black', color: 0x1a1a1a, price: 200 },
+];
+const R5_WHEELS = [
+  { name: 'Stock steelies', price: 0, size: 0.36 },
+  { name: 'Chrome rims', price: 220, size: 0.4 },
+  { name: 'Low-profile racers', price: 400, size: 0.44 },
+  { name: 'Off-road monsters', price: 550, size: 0.52 },
+];
+const R5_ENGINES = [
+  { name: 'Stock engine', price: 0, boost: 0 },
+  { name: 'Tuned V6', price: 600, boost: 0.08 },
+  { name: 'Supercharged V8', price: 1200, boost: 0.16 },
+  { name: 'Bay rocket motor', price: 2000, boost: 0.25 },
+];
+const R5_NITRO = [
+  { name: 'No nitro', price: 0, secs: 0 },
+  { name: 'Small bottle', price: 350, secs: 3 },
+  { name: 'Twin bottles', price: 700, secs: 5 },
+  { name: 'Full race kit', price: 1100, secs: 8 },
+];
+// One garage record per car the player owns a tune for, keyed by the car's
+// spec colour + type so a stolen twin does not steal the tune.
+const r5Garage = {
+  open: false, paint: -1, wheels: 0, engine: 0, nitro: 0, nitroLeft: 0,
+  nitroTimer: 0, tunes: {}, store: 'solmar-bay-r5-garage',
+};
+function r5GarageKey(car) {
+  if (!car || !car.spec) return 'none';
+  return car.spec.type + '-' + (car.spec.color || 0).toString(16);
+}
+function r5GarageNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_GARAGE.x, playerState.z - R5_GARAGE.z) < 6;
+}
+function r5GarageBuild() {
+  // A low workshop with a striped awning, a tyre stack and a glowing sign.
+  addBox(14, 6, 10, 0x4a4a55, R5_GARAGE.x, 3, R5_GARAGE.z + 8);
+  addBox(14.6, 0.8, 11, 0xe86a1e, R5_GARAGE.x, 6.4, R5_GARAGE.z + 8);
+  addBox(12, 0.4, 3, 0x2e6fb0, R5_GARAGE.x, 6.9, R5_GARAGE.z + 3);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(9, 1.6, 0.3), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.7 }));
+  sign.position.set(R5_GARAGE.x, 5.2, R5_GARAGE.z + 2.8); scene.add(sign);
+  for (let i = 0; i < 3; i++) {
+    const tyre = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.35, 12), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 }));
+    tyre.position.set(R5_GARAGE.x + 8, 0.4 + i * 0.38, R5_GARAGE.z + 4); scene.add(tyre);
+  }
+  const lift = new THREE.Mesh(new THREE.BoxGeometry(3, 0.3, 5), new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.6, metalness: 0.6 }));
+  lift.position.set(R5_GARAGE.x, 0.4, R5_GARAGE.z); scene.add(lift);
+  const coneMat = new THREE.MeshStandardMaterial({ color: 0xe86a1e, roughness: 0.8 });
+  for (const [cx, cz] of [[-4, -3], [4, -3], [-4, 3], [4, 3]]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 8), coneMat);
+    cone.position.set(R5_GARAGE.x + cx, 0.45, R5_GARAGE.z + cz); scene.add(cone);
+  }
+}
+function r5GarageApplyPaint(car, color) {
+  if (!car || !car.mesh) return;
+  // Recolour only the body panels: meshes whose material matches the car's
+  // original spec colour. Cab glass, wheels and lights stay untouched.
+  car.mesh.traverse((m) => {
+    if (m.isMesh && m.material && m.material.color && car.spec && m.material.color.getHex() === car.spec.color) {
+      m.material = m.material.clone();
+      m.material.color.setHex(color);
+    }
+  });
+}
+function r5GarageApplyWheels(car, size) {
+  if (!car || !car.mesh || !car.mesh.userData.wheels) return;
+  for (const w of car.mesh.userData.wheels) {
+    w.scale.setScalar(size / 0.36);
+    w.position.y = size;
+  }
+}
+function r5GarageTune(car) {
+  // Remember the tune on the car object itself so it survives re-entering.
+  const key = r5GarageKey(car);
+  const tune = r5Garage.tunes[key] || { paint: -1, wheels: 0, engine: 0, nitro: 0 };
+  car.r5Tune = tune;
+  if (tune.paint >= 0) r5GarageApplyPaint(car, R5_PAINTS[tune.paint].color);
+  if (tune.wheels > 0) r5GarageApplyWheels(car, R5_WHEELS[tune.wheels].size);
+  return tune;
+}
+function r5GarageSave() {
+  try { localStorage.setItem(r5Garage.store, JSON.stringify({ tunes: r5Garage.tunes })); } catch (e) {}
+}
+function r5GaragePay(price) {
+  // Loyalty: every fifth tune is free. The free tune is redeemed here, at
+  // the till, before any cash changes hands.
+  if (r5Loyalty.freeUsed > 0) {
+    r5LoyaltyRedeem();
+    toast('🎟️ Loyalty card — this tune is FREE!');
+    return true;
+  }
+  if (state.cash < price) { toast('You need $' + price + ' for that.'); return false; }
+  state.cash -= price;
+  r5LoyaltyStamp();
+  return true;
+}
+function r5GarageLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Garage.store) || 'null');
+    if (s && s.tunes) r5Garage.tunes = s.tunes;
+  } catch (e) {}
+}
+function r5GarageRender() {
+  const el = document.getElementById('r5GarageItems');
+  const cashEl = document.getElementById('r5GarageCash');
+  if (!el) return;
+  const car = state.inCar || nearestCar(9);
+  const key = car ? r5GarageKey(car) : 'none';
+  const tune = r5Garage.tunes[key] || { paint: -1, wheels: 0, engine: 0, nitro: 0 };
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + (car ? ' · Tuning: ' + (car.spec.type || 'car') : ' · Park a car within 9u to tune it');
+  el.innerHTML = '';
+  const addRow = (label, price, owned, buy) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = label + ' — $' + price + (owned ? ' ✓ fitted' : '');
+    b.disabled = owned || state.cash < price || !car;
+    b.addEventListener('click', () => { buy(); });
+    el.appendChild(b);
+  };
+  const head = (t) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'font-weight:bold;color:#ffd23f;margin-top:8px';
+    d.textContent = t; el.appendChild(d);
+  };
+  head('Paint — $150 to $300');
+  R5_PAINTS.forEach((p, i) => addRow('🎨 ' + p.name, p.price, tune.paint === i, () => {
+    if (!car) return;
+    if (!r5GaragePay(p.price)) return;
+    tune.paint = i; r5Garage.tunes[key] = tune; r5GarageSave();
+    r5GarageApplyPaint(car, p.color);
+    toast('Painted ' + p.name + ' — the bay will notice.'); chime(); updateHUD(); r5GarageRender();
+  }));
+  head('Wheels');
+  R5_WHEELS.forEach((w, i) => addRow('🛞 ' + w.name, w.price, tune.wheels === i, () => {
+    if (!car) return;
+    if (!r5GaragePay(w.price)) return;
+    tune.wheels = i; r5Garage.tunes[key] = tune; r5GarageSave();
+    r5GarageApplyWheels(car, w.size);
+    toast(w.name + ' fitted.'); chime(); updateHUD(); r5GarageRender();
+  }));
+  head('Engine — faster top speed');
+  R5_ENGINES.forEach((e, i) => addRow('🔧 ' + e.name + ' (+' + Math.round(e.boost * 100) + '%)', e.price, tune.engine === i, () => {
+    if (!car) return;
+    if (!r5GaragePay(e.price)) return;
+    tune.engine = i; r5Garage.tunes[key] = tune; r5GarageSave();
+    toast(e.name + ' installed — feel that pull.'); chime(); updateHUD(); r5GarageRender();
+  }));
+  head('Nitro — hold Shift + W to burn it');
+  R5_NITRO.forEach((n, i) => addRow('💨 ' + n.name + (n.secs ? ' (' + n.secs + 's)' : ''), n.price, tune.nitro === i, () => {
+    if (!car) return;
+    if (!r5GaragePay(n.price)) return;
+    tune.nitro = i; r5Garage.tunes[key] = tune; r5GarageSave();
+    toast(n.name + ' plumbed in. Hold Shift + W in the car.'); chime(); updateHUD(); r5GarageRender();
+  }));
+}
+function r5GarageOpen() {
+  if (state.inCar) return false;
+  if (!r5GarageNear()) return false;
+  const nearCar = state.inCar || nearestCar(9);
+  if (!nearCar && !r5GarageNear()) return false;
+  r5Garage.open = true;
+  const el = document.getElementById('r5GaragePanel');
+  if (el) el.classList.remove('hidden');
+  r5GarageRender();
+  beep(520, 0.12, 'sine', 0.15);
+  return true;
+}
+function r5GarageClose() {
+  r5Garage.open = false;
+  const el = document.getElementById('r5GaragePanel');
+  if (el) el.classList.add('hidden');
+}
+function r5GarageUseNitro(dt) {
+  // Called after updateCar: burn nitro while Shift+W, extra speed on top of
+  // the car's tuned top speed. Refills only when a new bottle is bought.
+  const car = state.inCar;
+  if (!car || !car.r5Tune || !car.r5Tune.nitro) return;
+  const kit = R5_NITRO[car.r5Tune.nitro];
+  if (!kit || kit.secs <= 0) return;
+  if (r5Garage.nitroLeft <= 0) r5Garage.nitroLeft = kit.secs;
+  const burning = keys['ShiftLeft'] && (keys['KeyW'] || keys['ArrowUp']) && Math.abs(car.speed) > 4;
+  if (burning && r5Garage.nitroLeft > 0) {
+    r5Garage.nitroLeft -= dt;
+    r5Garage.nitroTimer -= dt;
+    car.speed = clamp(car.speed + 26 * dt, -20, (car.spec.topSpeed || 26) * (1 + (R5_ENGINES[car.r5Tune.engine] || R5_ENGINES[0]).boost) + 14);
+    state.speed = car.speed;
+    if (r5Garage.nitroTimer <= 0) {
+      r5Garage.nitroTimer = 0.12;
+      beep(1200 + Math.floor(rng() * 300), 0.08, 'sawtooth', 0.08);
+    }
+    if (r5Garage.nitroLeft <= 0) toast('Nitro bottle empty — buy a refill at Solmar Customs.');
+  }
+}
+function r5GarageEngineBoost(car) {
+  // Extra top-speed headroom from the tuned engine, applied after updateCar
+  // clamps speed so the tune actually matters on the road.
+  if (!car || !car.r5Tune || !car.r5Tune.engine) return;
+  const boost = (R5_ENGINES[car.r5Tune.engine] || R5_ENGINES[0]).boost;
+  if (boost <= 0) return;
+  const top = (car.spec.topSpeed || 26) * (1 + boost);
+  if (car.speed > 0 && car.speed < top && (keys['KeyW'] || keys['ArrowUp'])) {
+    car.speed = Math.min(top, car.speed + 6 * 0.016);
+    state.speed = car.speed;
+  }
+}
+
+// ---------- Round 5, part two: Solmar Sands casino ----------
+// In-game cash only. No real money, no payouts outside the game.
+const R5_CASINO = { x: 60, z: -84 };
+const R5_SLOTS = ['🍒', '🍋', '🔔', '⭐', '💎', '7️⃣'];
+const r5Casino = {
+  open: false, spins: 0, won: 0, bj: null, bjBet: 50,
+  store: 'solmar-bay-r5-casino',
+};
+function r5CasinoNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_CASINO.x, playerState.z - R5_CASINO.z) < 6;
+}
+function r5CasinoBuild() {
+  addBox(16, 9, 12, 0x7a1e5a, R5_CASINO.x, 4.5, R5_CASINO.z + 8);
+  addBox(16.6, 1, 12.6, 0xffd23f, R5_CASINO.x, 9.4, R5_CASINO.z + 8);
+  addBox(17, 1.2, 2, 0x2ee6ff, R5_CASINO.x, 0.6, R5_CASINO.z + 1.6);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(11, 2, 0.3), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xffb300, emissiveIntensity: 0.9 }));
+  sign.position.set(R5_CASINO.x, 7.6, R5_CASINO.z + 1.8); scene.add(sign);
+  const lampMat = new THREE.MeshStandardMaterial({ color: 0xff2a7a, emissive: 0xff2a7a, emissiveIntensity: 1.2 });
+  for (let i = -2; i <= 2; i++) {
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), lampMat);
+    lamp.position.set(R5_CASINO.x + i * 3, 9.4, R5_CASINO.z + 1.8); scene.add(lamp);
+  }
+  const chips = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.4, 16), new THREE.MeshStandardMaterial({ color: 0xff2a7a, roughness: 0.5 }));
+  chips.position.set(R5_CASINO.x - 9, 0.5, R5_CASINO.z); scene.add(chips);
+}
+function r5CasinoRender() {
+  const el = document.getElementById('r5CasinoInfo');
+  if (!el) return;
+  const bj = r5Casino.bj;
+  const bjText = !bj ? 'No hand in play.'
+    : 'You: ' + bj.you.join(' ') + ' (' + r5BjTotal(bj.you) + ') · Dealer: ' + bj.dealer.join(' ') + (bj.done ? ' (' + r5BjTotal(bj.dealer) + ')' : ' + ?') + (bj.done ? ' — ' + bj.result : ' — Hit or Stand?');
+  el.innerHTML = 'Cash: $' + state.cash.toLocaleString('en-US') + ' · Spins: ' + r5Casino.spins + ' · Won: $' + r5Casino.won.toLocaleString('en-US') +
+    '<br>Slots: $20 a spin — three of a kind pays $100 to $500.' +
+    '<br>Blackjack: $50 a hand — beat the dealer, 21 pays double.' +
+    '<br><b>Blackjack:</b> ' + bjText;
+  const spinBtn = document.getElementById('r5CasinoSpin');
+  if (spinBtn) spinBtn.disabled = state.cash < 20;
+  const dealBtn = document.getElementById('r5CasinoDeal');
+  if (dealBtn) dealBtn.disabled = state.cash < 50 || (!!bj && !bj.done);
+  const hitBtn = document.getElementById('r5CasinoHit');
+  if (hitBtn) hitBtn.disabled = !bj || bj.done;
+  const standBtn = document.getElementById('r5CasinoStand');
+  if (standBtn) standBtn.disabled = !bj || bj.done;
+}
+function r5CasinoOpen() {
+  if (!r5CasinoNear()) return false;
+  r5Casino.open = true;
+  const el = document.getElementById('r5CasinoPanel');
+  if (el) el.classList.remove('hidden');
+  r5CasinoRender();
+  speakLine('Welcome to the Sands. The slots are loose tonight, or so they tell me.');
+  return true;
+}
+function r5CasinoClose() {
+  r5Casino.open = false;
+  const el = document.getElementById('r5CasinoPanel');
+  if (el) el.classList.add('hidden');
+}
+function r5CasinoSpin() {
+  if (state.cash < 20) { toast('You need $20 to spin.'); return; }
+  state.cash -= 20; r5Casino.spins++;
+  const reels = [pick(R5_SLOTS), pick(R5_SLOTS), pick(R5_SLOTS)];
+  const line = document.getElementById('r5CasinoReels');
+  if (line) line.textContent = reels.join('  ');
+  let win = 0;
+  if (reels[0] === reels[1] && reels[1] === reels[2]) {
+    win = reels[0] === '7️⃣' ? 500 : reels[0] === '💎' ? 300 : reels[0] === '⭐' ? 200 : 100;
+  } else if (reels[0] === reels[1] || reels[1] === reels[2] || reels[0] === reels[2]) {
+    win = 10;
+  }
+  if (win > 0) {
+    state.cash += win; r5Casino.won += win;
+    toast('🎰 ' + reels.join(' ') + ' — you won $' + win + '!');
+    chime(); speakLine('Winner! ' + win + ' dollars, just like that.');
+  } else {
+    toast('🎰 ' + reels.join(' ') + ' — no luck this spin.');
+    beep(180, 0.2, 'sawtooth', 0.12);
+  }
+  saveGame(); updateHUD(); r5CasinoRender();
+}
+function r5BjCard() {
+  const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+  return ranks[Math.floor(rng() * ranks.length)];
+}
+function r5BjTotal(hand) {
+  let total = 0, aces = 0;
+  for (const c of hand) {
+    if (c === 'A') { aces++; total += 11; }
+    else if (c === 'J' || c === 'Q' || c === 'K') total += 10;
+    else total += parseInt(c, 10);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces--; }
+  return total;
+}
+function r5CasinoDeal() {
+  if (state.cash < 50) { toast('You need $50 for a blackjack hand.'); return; }
+  if (r5Casino.bj && !r5Casino.bj.done) return;
+  state.cash -= 50;
+  r5Casino.bj = { you: [r5BjCard(), r5BjCard()], dealer: [r5BjCard(), r5BjCard()], done: false, result: '' };
+  const t = r5BjTotal(r5Casino.bj.you);
+  if (t === 21) r5CasinoStand();
+  else { toast('Blackjack dealt — Hit or Stand?'); updateHUD(); r5CasinoRender(); }
+}
+function r5CasinoHit() {
+  const bj = r5Casino.bj;
+  if (!bj || bj.done) return;
+  bj.you.push(r5BjCard());
+  if (r5BjTotal(bj.you) > 21) {
+    bj.done = true; bj.result = 'Bust! The dealer takes your $50.';
+    toast('Bust — ' + r5BjTotal(bj.you) + '. The dealer takes it.');
+    beep(160, 0.3, 'sawtooth', 0.12);
+  }
+  updateHUD(); r5CasinoRender();
+}
+function r5CasinoStand() {
+  const bj = r5Casino.bj;
+  if (!bj || bj.done) return;
+  while (r5BjTotal(bj.dealer) < 17) bj.dealer.push(r5BjCard());
+  const y = r5BjTotal(bj.you), d = r5BjTotal(bj.dealer);
+  bj.done = true;
+  if (d > 21 || y > d) {
+    const win = y === 21 && bj.you.length === 2 ? 150 : 100;
+    state.cash += win; r5Casino.won += win;
+    bj.result = 'You win $' + win + '!';
+    toast('🃏 You ' + y + ' vs dealer ' + d + ' — you win $' + win + '!');
+    chime();
+  } else if (y === d) {
+    state.cash += 50;
+    bj.result = 'Push — your $50 back.';
+    toast('🃏 Push at ' + y + ' — your $50 back.');
+  } else {
+    bj.result = 'Dealer wins.';
+    toast('🃏 Dealer ' + d + ' beats your ' + y + '.');
+    beep(160, 0.3, 'sawtooth', 0.12);
+  }
+  saveGame(); updateHUD(); r5CasinoRender();
+}
+
+// ---------- Round 5, part three: fishing tournaments + tackle ----------
+// The bay runs a two-minute tournament every few minutes of play. Catch fish
+// while it runs and each catch scores points by species weight; the tackle
+// shop sells rods that raise every catch value.
+const R5_TACKLE = [
+  { name: 'Bamboo starter rod', price: 0, mult: 1, desc: 'the rod you already own' },
+  { name: 'Fibreglass caster', price: 250, mult: 1.25, desc: '+25% catch value' },
+  { name: 'Carbon pro rod', price: 600, mult: 1.6, desc: '+60% catch value' },
+  { name: 'Marisol gold rod', price: 1200, mult: 2, desc: 'double catch value' },
+];
+const R5_TOURNEY_FISH = [
+  { name: 'Bay snapper', w: 1, pts: 10 }, { name: 'Silver mullet', w: 2, pts: 25 },
+  { name: 'Golden grouper', w: 1, pts: 50 }, { name: 'Blue marlin', w: 1, pts: 100 },
+];
+const r5Tourney = {
+  rod: 0, active: false, timer: 0, nextIn: 90, points: 0, best: 0,
+  won: 0, caught: 0, lastFishCount: 0, store: 'solmar-bay-r5-tourney',
+};
+function r5TourneySave() {
+  try { localStorage.setItem(r5Tourney.store, JSON.stringify({ rod: r5Tourney.rod, best: r5Tourney.best, won: r5Tourney.won, caught: r5Tourney.caught })); } catch (e) {}
+}
+function r5TourneyLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Tourney.store) || 'null');
+    if (s) { r5Tourney.rod = s.rod || 0; r5Tourney.best = s.best || 0; r5Tourney.won = s.won || 0; r5Tourney.caught = s.caught || 0; }
+  } catch (e) {}
+}
+function r5TourneyStart() {
+  r5Tourney.active = true; r5Tourney.timer = 120; r5Tourney.points = 0;
+  toast('🎣 FISHING TOURNAMENT — two minutes! Every catch scores points!');
+  speakLine('The bay tournament is on. Two minutes, biggest haul wins. Go fish!');
+  beep(880, 0.2, 'sine', 0.2); setTimeout(() => beep(1174, 0.25, 'sine', 0.2), 200);
+}
+function r5TourneyEnd() {
+  r5Tourney.active = false; r5Tourney.nextIn = 240;
+  const pts = r5Tourney.points;
+  let prize = 0;
+  if (pts >= 200) prize = 400;
+  else if (pts >= 120) prize = 250;
+  else if (pts >= 60) prize = 120;
+  else if (pts >= 25) prize = 50;
+  if (pts > r5Tourney.best) r5Tourney.best = pts;
+  if (prize > 0) {
+    state.cash += prize; r5Tourney.won++;
+    toast('🏆 Tournament over — ' + pts + ' points! Prize: $' + prize + '.');
+    speakLine('Tournament done. ' + pts + ' points, and ' + prize + ' dollars for the haul.');
+    chime();
+  } else {
+    toast('Tournament over — ' + pts + ' points. No prize this time; the bay was stingy.');
+  }
+  r5TourneySave(); saveGame(); updateHUD();
+}
+function r5TourneyOnCatch() {
+  // Called from updateR5 when the base fishing code lands a fish.
+  r5Tourney.caught++;
+  if (!r5Tourney.active) return;
+  const f = pick(R5_TOURNEY_FISH);
+  const pts = f.pts;
+  r5Tourney.points += pts;
+  toast('🎣 Tournament catch: ' + f.name + ' — +' + pts + ' pts (' + r5Tourney.points + ' total).');
+}
+function r5TourneyRodMult() { return (R5_TACKLE[r5Tourney.rod] || R5_TACKLE[0]).mult; }
+function r5TourneyBuyRod(i) {
+  const rod = R5_TACKLE[i];
+  if (!rod || i === r5Tourney.rod) return;
+  if (state.cash < rod.price) { toast('You need $' + rod.price + ' for the ' + rod.name + '.'); return; }
+  state.cash -= rod.price; r5Tourney.rod = i;
+  toast('🎣 ' + rod.name + ' bought — ' + rod.desc + '.');
+  chime(); r5TourneySave(); saveGame(); updateHUD(); r5TourneyRender();
+}
+function r5TourneyRender() {
+  const el = document.getElementById('r5TourneyItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5TourneyCash');
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + ' · Best tournament: ' + r5Tourney.best + ' pts · Tournaments won: ' + r5Tourney.won + ' · Fish caught: ' + r5Tourney.caught;
+  el.innerHTML = '';
+  R5_TACKLE.forEach((rod, i) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = '🎣 ' + rod.name + ' — $' + rod.price + ' (' + rod.desc + ')' + (r5Tourney.rod === i ? ' ✓ owned' : '');
+    b.disabled = r5Tourney.rod === i || state.cash < rod.price;
+    b.addEventListener('click', () => r5TourneyBuyRod(i));
+    el.appendChild(b);
+  });
+}
+function r5TourneyOpen() {
+  const el = document.getElementById('r5TourneyPanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5TourneyRender();
+  return true;
+}
+function r5TourneyClose() {
+  const el = document.getElementById('r5TourneyPanel');
+  if (el) el.classList.add('hidden');
+}
+function r5TourneyUpdate(dt) {
+  if (r5Tourney.lastFishCount !== fish.caught) {
+    // The base game just landed a fish (or several). Score it, and apply the
+    // rod multiplier by topping up the catch value the base game already paid.
+    const landed = fish.caught - r5Tourney.lastFishCount;
+    r5Tourney.lastFishCount = fish.caught;
+    for (let i = 0; i < landed; i++) {
+      r5TourneyOnCatch();
+      const mult = r5TourneyRodMult();
+      if (mult > 1) {
+        const bonus = Math.round(25 * (mult - 1));
+        state.cash += bonus;
+      }
+    }
+    updateHUD();
+  }
+  if (r5Tourney.active) {
+    r5Tourney.timer -= dt;
+    if (r5Tourney.timer <= 0) r5TourneyEnd();
+  } else {
+    r5Tourney.nextIn -= dt;
+    if (r5Tourney.nextIn <= 0) r5TourneyStart();
+  }
+}
+
+// ---------- Round 5, part four: pursuit helicopter + spike strips ----------
+// At 3 stars and above a police helicopter joins the chase, sweeping a
+// searchlight over the player. At 4 stars the police lay spike strips ahead
+// of the road — drive over one and your tyres blow.
+const r5Heli = { mesh: null, light: null, active: false, stripTimer: 0, slowTimer: 0 };
+const R5_SPIKES = [];
+function r5HeliBuild() {
+  const mesh = makeHeliMesh(0x1a2a44);
+  mesh.position.set(0, 60, 0);
+  scene.add(mesh);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(6, 30, 16, 1, true), new THREE.MeshBasicMaterial({ color: 0xfff6c0, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
+  cone.position.y = -15; mesh.add(cone);
+  r5Heli.mesh = mesh; r5Heli.light = cone;
+  mesh.visible = false;
+}
+function r5SpikeBuild(x, z, heading) {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.15, 0.8), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }));
+  g.add(base);
+  const spikeMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.9, roughness: 0.3 });
+  for (let i = -2; i <= 2; i++) {
+    const s = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.7, 6), spikeMat);
+    s.position.set(i * 0.9, 0.4, 0); g.add(s);
+  }
+  g.position.set(x, 0.1, z); g.rotation.y = heading;
+  scene.add(g);
+  R5_SPIKES.push({ mesh: g, x, z, ttl: 45 });
+}
+function r5HeliUpdate(dt) {
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const want = state.wanted >= 3 && state.mode === 'play';
+  if (want && !r5Heli.active) {
+    r5Heli.active = true;
+    r5Heli.mesh.visible = true;
+    toast('🚁 A police helicopter is on you — lose it or lose the heat!');
+    speakLine('Helicopter overhead. They can see everything from up there.');
+    beep(700, 0.3, 'sawtooth', 0.15);
+  } else if (!want && r5Heli.active) {
+    r5Heli.active = false;
+    r5Heli.mesh.visible = false;
+  }
+  if (r5Heli.active && r5Heli.mesh) {
+    const m = r5Heli.mesh;
+    const tx = px + 14, tz = pz - 10;
+    m.position.x += (tx - m.position.x) * dt * 0.7;
+    m.position.z += (tz - m.position.z) * dt * 0.7;
+    m.position.y = 34 + Math.sin(state.time * 1.1) * 2;
+    m.rotation.y = Math.atan2(px - m.position.x, pz - m.position.z);
+    if (r5Heli.light) r5Heli.light.material.opacity = 0.14 + Math.sin(state.time * 6) * 0.05;
+    // The searchlight pins the player: wanted decays slower under it.
+    if (state.cleanTimer > 0) state.cleanTimer = Math.max(0, state.cleanTimer - dt * 0.5);
+    // At 4 stars, police lay a spike strip ahead of the player's road.
+    if (state.wanted >= 4) {
+      r5Heli.stripTimer -= dt;
+      if (r5Heli.stripTimer <= 0 && R5_SPIKES.length < 3) {
+        r5Heli.stripTimer = 25;
+        const heading = state.inCar ? state.inCar.mesh.rotation.y : playerState.heading;
+        const sx = px + Math.sin(heading) * 26, sz = pz + Math.cos(heading) * 26;
+        r5SpikeBuild(sx, sz, heading + Math.PI / 2);
+        toast('⚠️ Spike strip ahead! Swerve around it!');
+        beep(440, 0.25, 'square', 0.15);
+      }
+    }
+  }
+  // Spike strips: age out, and blow the tyres of anything that crosses them.
+  for (let i = R5_SPIKES.length - 1; i >= 0; i--) {
+    const sp = R5_SPIKES[i];
+    sp.ttl -= dt;
+    if (sp.ttl <= 0) { scene.remove(sp.mesh); R5_SPIKES.splice(i, 1); continue; }
+    if (state.inCar && Math.hypot(state.inCar.mesh.position.x - sp.x, state.inCar.mesh.position.z - sp.z) < 3 && Math.abs(state.inCar.speed) > 2) {
+      scene.remove(sp.mesh); R5_SPIKES.splice(i, 1);
+      state.inCar.speed *= 0.25; state.speed = state.inCar.speed;
+      r5Heli.slowTimer = 8;
+      toast('💥 SPIKES! Your tyres are shredded — top speed cut for 8 seconds!');
+      speakLine('Spikes! The car is limping. Get clear of them, fast.');
+      thud(); damagePlayer(4, 'You ran over a spike strip');
+      updateHUD();
+    }
+  }
+  if (r5Heli.slowTimer > 0) {
+    r5Heli.slowTimer -= dt;
+    if (state.inCar && Math.abs(state.inCar.speed) > 8) {
+      state.inCar.speed = Math.sign(state.inCar.speed) * Math.max(8, Math.abs(state.inCar.speed) - 30 * dt);
+      state.speed = state.inCar.speed;
+    }
+  }
+}
+
+// ---------- Round 5, part five: four seasons + weather fronts ----------
+// The bay now turns through spring, summer, autumn and winter, four game days
+// each. Seasons change the rain, the light and the trees, and travelling
+// weather fronts roll in with wind that pushes boats and planes.
+const R5_SEASONS = [
+  { name: 'Spring', rain: 0.25, tint: 0x9fd68a, fest: 'Bloom Festival' },
+  { name: 'Summer', rain: 0.12, tint: 0x7ac74f, fest: 'Bay Heatwave Fair' },
+  { name: 'Autumn', rain: 0.35, tint: 0xd8a05a, fest: 'Harvest Market' },
+  { name: 'Winter', rain: 0.45, tint: 0xb9c8d8, fest: 'Lights on the Bay' },
+];
+const r5Season = {
+  idx: 1, day: 0, dayTimer: 0, front: null, frontTimer: 120, wind: 0,
+  festPaid: false, store: 'solmar-bay-r5-season',
+};
+function r5SeasonName() { return R5_SEASONS[r5Season.idx].name; }
+function r5SeasonDayLength() { return DAY_LENGTH; }
+function r5SeasonStartFront() {
+  const kinds = [
+    { name: 'sea breeze front', rain: false, wind: 6, msg: 'A sea breeze front rolls in — boats and planes will drift.' },
+    { name: 'rain front', rain: true, wind: 10, msg: 'A rain front is coming over the bay — roads get slick.' },
+    { name: 'calm high', rain: false, wind: 0, msg: 'A calm high settles over Solmar Bay — perfect driving weather.' },
+    { name: 'gusty squall', rain: true, wind: 16, msg: 'A gusty squall hits the coast — hold on tight!' },
+  ];
+  const f = pick(kinds);
+  r5Season.front = { name: f.name, rain: f.rain, wind: f.wind, ttl: 90 };
+  r5Season.wind = f.wind;
+  toast('🌦️ ' + f.msg);
+  if (f.rain && state.weather !== 'rain') state.weather = 'rain';
+  if (!f.rain && state.weather === 'rain') state.weather = 'clear';
+}
+function r5SeasonAdvance() {
+  r5Season.day++;
+  if (r5Season.day >= 4) {
+    r5Season.day = 0;
+    r5Season.idx = (r5Season.idx + 1) % 4;
+    const s = R5_SEASONS[r5Season.idx];
+    toast('🍂 The season turns — welcome to ' + s.name + ' in Solmar Bay! The ' + s.fest + ' pays every driver $150.');
+    speakLine('A new season. ' + s.name + ' in the bay, and the festival pays everyone who shows up.');
+    state.cash += 150;
+    r5Season.festPaid = true;
+    chime(); saveGame(); updateHUD();
+  }
+}
+function r5SeasonUpdate(dt) {
+  r5Season.dayTimer += dt;
+  if (r5Season.dayTimer >= r5SeasonDayLength()) {
+    r5Season.dayTimer = 0;
+    r5SeasonAdvance();
+  }
+  r5Season.frontTimer -= dt;
+  if (r5Season.frontTimer <= 0) {
+    r5Season.frontTimer = 150 + rng() * 90;
+    r5SeasonStartFront();
+  }
+  if (r5Season.front) {
+    r5Season.front.ttl -= dt;
+    if (r5Season.front.ttl <= 0) {
+      r5Season.front = null; r5Season.wind = 0;
+      if (state.weather === 'rain') state.weather = 'clear';
+      toast('The weather front has passed — clear skies over the bay.');
+    } else if (r5Season.front.rain && state.weather !== 'rain') {
+      state.weather = 'rain';
+    }
+  }
+  // Wind pushes boats sideways a little while a front is overhead.
+  if (r5Season.wind > 0) {
+    for (const b of boats) {
+      b.mesh.position.x += Math.sin(state.time * 0.4) * r5Season.wind * 0.004;
+    }
+  }
+}
+function r5SeasonLine() {
+  const s = R5_SEASONS[r5Season.idx];
+  const front = r5Season.front ? ' · ' + r5Season.front.name : '';
+  return '🌿 ' + s.name + ' day ' + (r5Season.day + 1) + '/4' + front + (r5Season.wind > 0 ? ' · wind ' + r5Season.wind : '');
+}
+
+// ---------- Round 5, part six: taxi + delivery empire ----------
+// Buy cabs, hire drivers, and the empire earns while you roam. Drivers need
+// paying once a day; a happy fleet earns more. Deliveries are quick parcels
+// you run yourself between the depot and the districts.
+const R5_EMPIRE = {
+  depot: { x: -84, z: 60 },
+  cabPrice: 1500, driverPrice: 200, driverWage: 60,
+  cabs: [], drivers: 0, earned: 0, dayPaid: false, dayTimer: 0,
+  delivery: null, deliveriesDone: 0, store: 'solmar-bay-r5-empire',
+};
+const R5_DELIVERY_SPOTS = [
+  { x: 60, z: 60, label: 'the marina shops' }, { x: -60, z: -60, label: 'the north docks' },
+  { x: 96, z: -36, label: 'the hospital' }, { x: -96, z: 36, label: 'the golf club' },
+  { x: 24, z: -96, label: 'the old lighthouse road' }, { x: 120, z: 120, label: 'the south keys' },
+];
+function r5EmpireNearDepot() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_EMPIRE.depot.x, playerState.z - R5_EMPIRE.depot.z) < 6;
+}
+function r5EmpireBuild() {
+  addBox(12, 5, 9, 0xf5c518, R5_EMPIRE.depot.x, 2.5, R5_EMPIRE.depot.z + 7);
+  addBox(12.6, 0.6, 9.6, 0x1a1a1a, R5_EMPIRE.depot.x, 5.3, R5_EMPIRE.depot.z + 7);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(8, 1.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x1a1a1a, emissive: 0x333333, emissiveIntensity: 0.4 }));
+  sign.position.set(R5_EMPIRE.depot.x, 4.2, R5_EMPIRE.depot.z + 2.4); scene.add(sign);
+  const cabMat = new THREE.MeshStandardMaterial({ color: 0xf5c518, roughness: 0.35, metalness: 0.4 });
+  for (let i = 0; i < 3; i++) {
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.7, 4.2), cabMat);
+    cab.position.set(R5_EMPIRE.depot.x - 5 + i * 5, 0.55, R5_EMPIRE.depot.z - 3);
+    scene.add(cab);
+  }
+}
+function r5EmpireSave() {
+  try { localStorage.setItem(R5_EMPIRE.store, JSON.stringify({ cabs: R5_EMPIRE.cabs.length, drivers: R5_EMPIRE.drivers, earned: R5_EMPIRE.earned, deliveriesDone: R5_EMPIRE.deliveriesDone })); } catch (e) {}
+}
+function r5EmpireLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(R5_EMPIRE.store) || 'null');
+    if (s) {
+      R5_EMPIRE.drivers = s.drivers || 0; R5_EMPIRE.earned = s.earned || 0; R5_EMPIRE.deliveriesDone = s.deliveriesDone || 0;
+      for (let i = 0; i < (s.cabs || 0); i++) R5_EMPIRE.cabs.push({ id: i, hired: i < R5_EMPIRE.drivers });
+    }
+  } catch (e) {}
+}
+function r5EmpireIncomePerMin() {
+  // Each cab with a driver earns $25 a minute; a cab without a driver earns $8.
+  let per = 0;
+  for (const cab of R5_EMPIRE.cabs) per += cab.hired ? 25 : 8;
+  return per;
+}
+function r5EmpireBuyCab() {
+  if (R5_EMPIRE.cabs.length >= 3) { toast('Your depot holds three cabs — that is the whole fleet.'); return; }
+  if (state.cash < R5_EMPIRE.cabPrice) { toast('A cab costs $1,500.'); return; }
+  state.cash -= R5_EMPIRE.cabPrice;
+  R5_EMPIRE.cabs.push({ id: R5_EMPIRE.cabs.length, hired: false });
+  toast('🚕 Cab bought! Hire a driver and it earns $25 a minute while you roam.');
+  chime(); r5EmpireSave(); saveGame(); updateHUD(); r5EmpireRender();
+}
+function r5EmpireHireDriver() {
+  const free = R5_EMPIRE.cabs.find((c) => !c.hired);
+  if (!free) { toast('No cab without a driver — buy a cab first.'); return; }
+  if (state.cash < R5_EMPIRE.driverPrice) { toast('Hiring costs $200.'); return; }
+  state.cash -= R5_EMPIRE.driverPrice;
+  free.hired = true; R5_EMPIRE.drivers++;
+  toast('🧑‍✈️ Driver hired for cab ' + (free.id + 1) + ' — $60 a day in wages, $25 a minute in fares.');
+  chime(); r5EmpireSave(); saveGame(); updateHUD(); r5EmpireRender();
+}
+function r5EmpireStartDelivery() {
+  if (R5_EMPIRE.delivery) { toast('You already have a parcel — deliver it first.'); return; }
+  const spot = pick(R5_DELIVERY_SPOTS);
+  R5_EMPIRE.delivery = { x: spot.x, z: spot.z, label: spot.label, timer: 90 };
+  setBeacon(spot.x, spot.z);
+  toast('📦 Parcel run: deliver to ' + spot.label + ' within 90 seconds — $180.');
+  speakLine('Parcel for ' + spot.label + '. Ninety seconds. Do not dawdle.');
+  beep(660, 0.15, 'sine', 0.15);
+  updateObjective();
+}
+function r5EmpireUpdate(dt) {
+  // Fleet income ticks every minute of play.
+  R5_EMPIRE.dayTimer += dt;
+  if (R5_EMPIRE.dayTimer >= 60) {
+    R5_EMPIRE.dayTimer = 0;
+    const earn = r5EmpireIncomePerMin();
+    if (earn > 0) {
+      state.cash += earn; R5_EMPIRE.earned += earn;
+      toast('🚕 Your fleet earned $' + earn + ' this minute (total $' + R5_EMPIRE.earned.toLocaleString('en-US') + ').');
+      updateHUD();
+    }
+  }
+  // Daily wages, once per game day.
+  if (state.dayTime < 0.05 && !R5_EMPIRE.dayPaid) {
+    R5_EMPIRE.dayPaid = true;
+    const wages = R5_EMPIRE.drivers * R5_EMPIRE.driverWage;
+    if (wages > 0) {
+      state.cash = Math.max(0, state.cash - wages);
+      toast('💵 Driver wages paid: $' + wages + ' for ' + R5_EMPIRE.drivers + ' driver(s).');
+      updateHUD();
+    }
+  } else if (state.dayTime > 0.1) {
+    R5_EMPIRE.dayPaid = false;
+  }
+  if (R5_EMPIRE.delivery) {
+    const d = R5_EMPIRE.delivery;
+    d.timer -= dt;
+    const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+    const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+    if (Math.hypot(px - d.x, pz - d.z) < 6) {
+      state.cash += 180; R5_EMPIRE.deliveriesDone++;
+      toast('📦 Delivered to ' + d.label + ' — $180! (' + R5_EMPIRE.deliveriesDone + ' deliveries done)');
+      speakLine('Parcel delivered. One hundred eighty dollars, right on time.');
+      chime(); beacon.visible = false;
+      R5_EMPIRE.delivery = null;
+      r5EmpireSave(); saveGame(); updateHUD();
+    } else if (d.timer <= 0) {
+      toast('📦 Parcel run failed — too slow. The depot keeps the parcel.');
+      beacon.visible = false;
+      R5_EMPIRE.delivery = null;
+    }
+  }
+}
+function r5EmpireRender() {
+  const el = document.getElementById('r5EmpireItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5EmpireCash');
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + ' · Cabs: ' + R5_EMPIRE.cabs.length + '/3 · Drivers: ' + R5_EMPIRE.drivers + ' · Fleet earns $' + r5EmpireIncomePerMin() + '/min · Total earned: $' + R5_EMPIRE.earned.toLocaleString('en-US');
+  el.innerHTML = '';
+  const add = (label, disabled, fn) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem'; b.textContent = label; b.disabled = !!disabled;
+    b.addEventListener('click', fn); el.appendChild(b);
+  };
+  add('🚕 Buy a cab — $1,500', R5_EMPIRE.cabs.length >= 3 || state.cash < 1500, r5EmpireBuyCab);
+  add('🧑‍✈️ Hire a driver — $200 (needs a free cab)', !R5_EMPIRE.cabs.some((c) => !c.hired) || state.cash < 200, r5EmpireHireDriver);
+  add('📦 Take a parcel run — $180', !!R5_EMPIRE.delivery, r5EmpireStartDelivery);
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:12px;color:#cfe8ff;margin-top:6px';
+  note.textContent = 'Drivers are paid $60 each at dawn. Cabs with drivers earn $25/min, cabs without earn $8/min.';
+  el.appendChild(note);
+}
+function r5EmpireOpen() {
+  if (!r5EmpireNearDepot()) return false;
+  const el = document.getElementById('r5EmpirePanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5EmpireRender();
+  return true;
+}
+function r5EmpireClose() {
+  const el = document.getElementById('r5EmpirePanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part seven: stunt jumps + leaderboard ----------
+// Six wooden ramps are scattered around the bay. Hit one fast, fly, land
+// cleanly, and the jump is scored by airtime and distance. The five best
+// jumps live on a local leaderboard in the panel.
+const R5_RAMPS = [
+  { x: 40, z: 90, h: 0.6, label: 'Marina ramp' }, { x: -90, z: -90, h: -0.6, label: 'Docks ramp' },
+  { x: 120, z: -120, h: 2.4, label: 'Airstrip ramp' }, { x: -140, z: 120, h: 1.8, label: 'Desert ramp' },
+  { x: 0, z: -140, h: 3.1, label: 'North hill ramp' }, { x: 150, z: 60, h: -2.2, label: 'Beach ramp' },
+];
+const r5Stunt = {
+  air: false, airTime: 0, airStart: null, best: [], jumps: 0, bestDist: 0,
+  store: 'solmar-bay-r5-stunt',
+};
+function r5StuntBuild() {
+  const rampMat = new THREE.MeshStandardMaterial({ color: 0xe8b820, roughness: 0.7 });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
+  for (const r of R5_RAMPS) {
+    const g = new THREE.Group();
+    const wedge = new THREE.Mesh(new THREE.BoxGeometry(5, 1.6, 7), rampMat);
+    wedge.rotation.x = -0.35; wedge.position.y = 0.6; g.add(wedge);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(5.1, 0.3, 0.8), stripeMat);
+    stripe.rotation.x = -0.35; stripe.position.set(0, 1.35, 3); g.add(stripe);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.8), new THREE.MeshStandardMaterial({ color: 0xff2a7a, side: THREE.DoubleSide }));
+    flag.position.set(0, 3, -3); g.add(flag);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+    pole.position.set(-0.7, 1.5, -3); g.add(pole);
+    g.position.set(r.x, groundHeight(r.x, r.z), r.z);
+    g.rotation.y = r.h;
+    scene.add(g);
+  }
+}
+function r5StuntSave() {
+  try { localStorage.setItem(r5Stunt.store, JSON.stringify({ best: r5Stunt.best, jumps: r5Stunt.jumps, bestDist: r5Stunt.bestDist })); } catch (e) {}
+}
+function r5StuntLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Stunt.store) || 'null');
+    if (s) { r5Stunt.best = s.best || []; r5Stunt.jumps = s.jumps || 0; r5Stunt.bestDist = s.bestDist || 0; }
+  } catch (e) {}
+}
+function r5StuntNearRamp() {
+  if (!state.inCar) return -1;
+  for (let i = 0; i < R5_RAMPS.length; i++) {
+    const r = R5_RAMPS[i];
+    if (Math.hypot(state.inCar.mesh.position.x - r.x, state.inCar.mesh.position.z - r.z) < 5) return i;
+  }
+  return -1;
+}
+function r5StuntUpdate(dt) {
+  if (!state.inCar) { r5Stunt.air = false; return; }
+  const car = state.inCar;
+  const ground = groundHeight(car.mesh.position.x, car.mesh.position.z);
+  const airborne = car.mesh.position.y > ground + 1.2;
+  if (airborne && !r5Stunt.air) {
+    // Left the ground — if we were near a ramp, this is a stunt jump.
+    const ramp = r5StuntNearRamp();
+    r5Stunt.air = true; r5Stunt.airTime = 0;
+    r5Stunt.airStart = { x: car.mesh.position.x, z: car.mesh.position.z, ramp };
+  } else if (airborne && r5Stunt.air) {
+    r5Stunt.airTime += dt;
+  } else if (!airborne && r5Stunt.air) {
+    r5Stunt.air = false;
+    const start = r5Stunt.airStart;
+    if (!start) return;
+    const dist = Math.hypot(car.mesh.position.x - start.x, car.mesh.position.z - start.z);
+    if (r5Stunt.airTime > 0.6 && dist > 8) {
+      r5Stunt.jumps++;
+      const score = Math.round(dist * 10 + r5Stunt.airTime * 100);
+      const prize = Math.min(300, Math.round(score / 4));
+      state.cash += prize;
+      if (dist > r5Stunt.bestDist) r5Stunt.bestDist = dist;
+      const label = start.ramp >= 0 ? R5_RAMPS[start.ramp].label : 'open ground';
+      r5Stunt.best.push({ label, dist: Math.round(dist), air: +r5Stunt.airTime.toFixed(1), score });
+      r5Stunt.best.sort((a, b) => b.score - a.score);
+      r5Stunt.best = r5Stunt.best.slice(0, 5);
+      toast('🤸 STUNT! ' + dist.toFixed(0) + 'u through the air in ' + r5Stunt.airTime.toFixed(1) + 's off ' + label + ' — $' + prize + '!');
+      speakLine('That was a proper jump. ' + dist.toFixed(0) + ' units of air, and the crowd loved it.');
+      chime(); addSkill('driving', 12);
+      r5StuntSave(); saveGame(); updateHUD();
+    }
+  }
+}
+function r5StuntRender() {
+  const el = document.getElementById('r5StuntItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5StuntCash');
+  if (cashEl) cashEl.textContent = 'Jumps landed: ' + r5Stunt.jumps + ' · Best distance: ' + r5Stunt.bestDist.toFixed(0) + 'u · Prizes pay up to $300 a jump';
+  el.innerHTML = '';
+  if (r5Stunt.best.length === 0) {
+    const d = document.createElement('div');
+    d.textContent = 'No jumps yet. Hit a yellow ramp fast — six of them around the bay.';
+    d.style.cssText = 'font-size:13px;color:#cfe8ff';
+    el.appendChild(d);
+    return;
+  }
+  r5Stunt.best.forEach((j, i) => {
+    const d = document.createElement('div');
+    d.style.cssText = 'font-size:13px;color:#fff;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.15)';
+    d.textContent = (i + 1) + '. ' + j.label + ' — ' + j.dist + 'u · ' + j.air + 's air · ' + j.score + ' pts';
+    el.appendChild(d);
+  });
+}
+function r5StuntOpen() {
+  const el = document.getElementById('r5StuntPanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5StuntRender();
+  return true;
+}
+function r5StuntClose() {
+  const el = document.getElementById('r5StuntPanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part eight: photo postcards ----------
+// Eight scenic spots carry a floating golden postcard. Walk up and press E
+// to collect it. A full set pays a $500 bonus and a postcard from the bay.
+const R5_POSTCARDS = [
+  { x: 124, z: 40, label: 'Sunset Beach' }, { x: -210, z: -60, label: 'Solmar Intl tower' },
+  { x: 60, z: -205, label: 'North lake' }, { x: -240, z: -180, label: 'Mountain pass' },
+  { x: 150, z: 180, label: 'South keys' }, { x: -130, z: 60, label: 'Fire station corner' },
+  { x: 100, z: -160, label: 'Golf greens' }, { x: -30, z: 130, label: 'Harbour lights' },
+];
+const r5Cards = { found: [], meshes: [], store: 'solmar-bay-r5-cards' };
+function r5CardsBuild() {
+  for (let i = 0; i < R5_POSTCARDS.length; i++) {
+    const p = R5_POSTCARDS[i];
+    const g = new THREE.Group();
+    const card = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1, 0.08), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.8 }));
+    g.add(card);
+    const inner = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.7, 0.1), new THREE.MeshStandardMaterial({ color: 0x1e7fa8, emissive: 0x1e7fa8, emissiveIntensity: 0.4 }));
+    inner.position.z = 0.02; g.add(inner);
+    g.position.set(p.x, groundHeight(p.x, p.z) + 1.6, p.z);
+    scene.add(g);
+    r5Cards.meshes.push(g);
+  }
+}
+function r5CardsSave() {
+  try { localStorage.setItem(r5Cards.store, JSON.stringify({ found: r5Cards.found })); } catch (e) {}
+}
+function r5CardsLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Cards.store) || 'null');
+    if (s && s.found) r5Cards.found = s.found;
+  } catch (e) {}
+}
+function r5CardsApplyFound() {
+  for (let i = 0; i < r5Cards.meshes.length; i++) {
+    if (r5Cards.found.includes(i) && r5Cards.meshes[i]) r5Cards.meshes[i].visible = false;
+  }
+}
+function r5CardsNear() {
+  if (state.inCar) return -1;
+  for (let i = 0; i < R5_POSTCARDS.length; i++) {
+    if (r5Cards.found.includes(i)) continue;
+    const p = R5_POSTCARDS[i];
+    if (Math.hypot(playerState.x - p.x, playerState.z - p.z) < 4) return i;
+  }
+  return -1;
+}
+function r5CardsCollect(i) {
+  if (i < 0 || r5Cards.found.includes(i)) return false;
+  r5Cards.found.push(i);
+  if (r5Cards.meshes[i]) r5Cards.meshes[i].visible = false;
+  state.cash += 60;
+  const p = R5_POSTCARDS[i];
+  toast('📮 Postcard collected: ' + p.label + ' — $60! (' + r5Cards.found.length + '/8)');
+  speakLine('Postcard from ' + p.label + '. The bay looks good on paper.');
+  chime();
+  if (r5Cards.found.length === 8) {
+    state.cash += 500;
+    toast('📮 FULL SET! All eight postcards — bonus $500! Solmar Bay, wish you were here.');
+    showStory('Ryan: Eight postcards, one bay. Ian: We should send one to Marisol. Ryan: She already lives here.');
+    speakLine('Every postcard in the bay. Five hundred dollars for the full set.');
+  }
+  r5CardsSave(); saveGame(); updateHUD();
+  return true;
+}
+function r5CardsUpdate(dt) {
+  for (let i = 0; i < r5Cards.meshes.length; i++) {
+    const m = r5Cards.meshes[i];
+    if (!m || !m.visible) continue;
+    m.rotation.y += dt * 1.2;
+    m.position.y = groundHeight(R5_POSTCARDS[i].x, R5_POSTCARDS[i].z) + 1.6 + Math.sin(state.time * 2 + i) * 0.25;
+  }
+}
+
+// ---------- Round 5, part nine: flight school ----------
+// A stunt plane waits at Solmar Intl with three lessons: take off, climb and
+// loop through a high ring, then land on the runway. Pass all three and the
+// school pays $300 plus a pilot's badge that doubles race winnings in the air.
+const R5_SCHOOL = { x: -168, z: -20 };
+const r5School = {
+  lesson: 0, active: false, stage: 0, timer: 0, passed: [false, false, false],
+  ring: null, plane: null, store: 'solmar-bay-r5-school',
+};
+const R5_LESSONS = [
+  { name: 'Takeoff', text: 'Get the stunt plane airborne and climb above 25u.', reward: 150 },
+  { name: 'Sky ring', text: 'Fly through the golden ring high above the runway.', reward: 200 },
+  { name: 'Runway landing', text: 'Bring her down gently on the runway, under 12 speed.', reward: 250 },
+];
+function r5SchoolBuild() {
+  addBox(10, 4, 8, 0x2e6fb0, R5_SCHOOL.x, 2, R5_SCHOOL.z + 6);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(7, 1.2, 0.3), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.6 }));
+  sign.position.set(R5_SCHOOL.x, 3.4, R5_SCHOOL.z + 1.8); scene.add(sign);
+  // The school plane is the airport's own prop plane (planes[0]) — reusing it
+  // keeps the hijackable-plane count at five, as the playtest expects.
+  r5School.plane = planes[0] || null;
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(6, 0.5, 8, 24), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xffb300, emissiveIntensity: 1 }));
+  ring.position.set(-210, 45, -40);
+  ring.visible = false;
+  scene.add(ring);
+  r5School.ring = ring;
+}
+function r5SchoolNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_SCHOOL.x, playerState.z - R5_SCHOOL.z) < 6;
+}
+function r5SchoolSave() {
+  try { localStorage.setItem(r5School.store, JSON.stringify({ passed: r5School.passed })); } catch (e) {}
+}
+function r5SchoolLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5School.store) || 'null');
+    if (s && s.passed) r5School.passed = s.passed;
+  } catch (e) {}
+}
+function r5SchoolStart() {
+  if (r5School.active) { toast('A lesson is already in progress.'); return false; }
+  const next = r5School.passed.findIndex((p) => !p);
+  if (next === -1) { toast('You passed all three lessons — you are a licensed bay pilot!'); return true; }
+  r5School.lesson = next; r5School.active = true; r5School.stage = 0; r5School.timer = 150;
+  const lesson = R5_LESSONS[next];
+  toast('✈️ Flight school lesson ' + (next + 1) + '/3 — ' + lesson.name + ': ' + lesson.text);
+  speakLine('Lesson ' + (next + 1) + ': ' + lesson.name + '. ' + lesson.text);
+  if (r5School.plane) {
+    playerState.x = r5School.plane.mesh.position.x + 2;
+    playerState.z = r5School.plane.mesh.position.z;
+    player.position.set(playerState.x, groundHeight(playerState.x, playerState.z), playerState.z);
+    toast('The stunt plane is waiting — press E to climb in.');
+  }
+  if (next === 1 && r5School.ring) r5School.ring.visible = true;
+  return true;
+}
+function r5SchoolUpdate(dt) {
+  if (!r5School.active) return;
+  const lesson = R5_LESSONS[r5School.lesson];
+  r5School.timer -= dt;
+  const inPlane = state.inCar && state.inCar.kind === 'plane';
+  if (r5School.lesson === 0) {
+    if (inPlane && state.inCar.alt > 25) r5SchoolPass(lesson);
+  } else if (r5School.lesson === 1) {
+    if (r5School.ring) r5School.ring.rotation.z += dt * 0.5;
+    if (inPlane && r5School.ring && Math.hypot(state.inCar.mesh.position.x - r5School.ring.position.x, state.inCar.mesh.position.z - r5School.ring.position.z) < 7 && Math.abs((state.inCar.alt || 0) - 45) < 10) {
+      r5SchoolPass(lesson);
+    }
+  } else if (r5School.lesson === 2) {
+    if (!inPlane && r5School.stage === 1) r5SchoolPass(lesson);
+    if (inPlane && (state.inCar.alt || 0) > 20) r5School.stage = 1;
+    if (inPlane && r5School.stage === 1 && (state.inCar.alt || 0) < 2 && Math.abs(state.inCar.speed) < 12 && Math.abs(state.inCar.mesh.position.x + 210) < 95) {
+      r5SchoolPass(lesson);
+    }
+  }
+  if (r5School.timer <= 0 && r5School.active) {
+    r5School.active = false;
+    if (r5School.ring) r5School.ring.visible = false;
+    toast('✈️ Lesson timed out — the instructor waves you back to the school.');
+  }
+}
+function r5SchoolPass(lesson) {
+  r5School.active = false;
+  r5School.passed[r5School.lesson] = true;
+  if (r5School.ring) r5School.ring.visible = false;
+  state.cash += lesson.reward;
+  toast('✈️ Lesson passed: ' + lesson.name + ' — $' + lesson.reward + '! (' + r5School.passed.filter(Boolean).length + '/3)');
+  speakLine('Lesson passed. ' + lesson.name + ' done, ' + lesson.reward + ' dollars earned.');
+  chime(); addSkill('driving', 20);
+  if (r5School.passed.every(Boolean)) {
+    toast('🏅 PILOT BADGE! All three lessons passed — you fly the bay like you own it.');
+    showStory('Ian: Three lessons, one badge. Ryan: Told you the sky was ours too.');
+  }
+  r5SchoolSave(); saveGame(); updateHUD();
+}
+
+// ---------- Round 5, part ten: Bay Iron gym ----------
+// Train at the gym on the east side. Sessions cost $30 and bank real skill
+// XP: stamina for running, strength for fighting, speed for driving. Train
+// five times in a row and the coach throws in a free protein shake — $25.
+const R5_GYM = { x: 84, z: 84 };
+const R5_GYM_PLANS = [
+  { name: 'Treadmill sprints', skill: 'stamina', xp: 25, label: 'Run the bay without stopping.' },
+  { name: 'Heavy bag', skill: 'shooting', xp: 20, label: 'Steady hands, steady aim.' },
+  { name: 'Deadlift ladder', skill: 'stamina', xp: 30, label: 'Pure strength, rep by rep.' },
+  { name: 'Reaction drills', skill: 'driving', xp: 25, label: 'Faster hands on the wheel.' },
+  { name: 'Sparring rounds', skill: 'shooting', xp: 30, label: 'Three rounds with coach Dara.' },
+];
+const r5Gym = { sessions: 0, streak: 0, coach: 'Dara', store: 'solmar-bay-r5-gym' };
+function r5GymNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_GYM.x, playerState.z - R5_GYM.z) < 6;
+}
+function r5GymBuild() {
+  addBox(13, 5, 10, 0x2a4a6a, R5_GYM.x, 2.5, R5_GYM.z + 7);
+  addBox(13.6, 0.7, 10.6, 0x7ac74f, R5_GYM.x, 5.3, R5_GYM.z + 7);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(8, 1.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x7ac74f, emissive: 0x2a6a1a, emissiveIntensity: 0.7 }));
+  sign.position.set(R5_GYM.x, 4.2, R5_GYM.z + 1.8); scene.add(sign);
+  const bellMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.7 });
+  for (let i = 0; i < 3; i++) {
+    const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.25, 12), bellMat);
+    bell.rotation.x = Math.PI / 2;
+    bell.position.set(R5_GYM.x - 6 + i * 1.6, 0.6, R5_GYM.z - 2); scene.add(bell);
+  }
+  const bench = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.5, 0.8), new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 0.9 }));
+  bench.position.set(R5_GYM.x + 6, 0.5, R5_GYM.z - 2); scene.add(bench);
+}
+function r5GymSave() {
+  try { localStorage.setItem(r5Gym.store, JSON.stringify({ sessions: r5Gym.sessions })); } catch (e) {}
+}
+function r5GymLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Gym.store) || 'null');
+    if (s) r5Gym.sessions = s.sessions || 0;
+  } catch (e) {}
+}
+function r5GymTrain(i) {
+  const plan = R5_GYM_PLANS[i];
+  if (!plan) return;
+  if (state.cash < 30) { toast('A session costs $30.'); return; }
+  state.cash -= 30; r5Gym.sessions++; r5Gym.streak++;
+  addSkill(plan.skill, plan.xp);
+  toast('💪 ' + plan.name + ' — +' + plan.xp + ' ' + plan.skill + ' XP. Coach Dara nods approvingly.');
+  if (r5Gym.streak >= 5) {
+    r5Gym.streak = 0; state.cash += 25;
+    toast('🥤 Five sessions in a row — free protein shake, plus $25 from the coach\'s tip jar!');
+    speakLine('Five sessions straight. The coach says you are built different now.');
+  }
+  r5GymSave(); saveGame(); updateHUD(); r5GymRender();
+}
+function r5GymRender() {
+  const el = document.getElementById('r5GymItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5GymCash');
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + ' · Sessions: ' + r5Gym.sessions + ' · Streak: ' + r5Gym.streak + '/5 · Driving ' + skillLevel('driving') + ' · Shooting ' + skillLevel('shooting') + ' · Stamina ' + skillLevel('stamina');
+  el.innerHTML = '';
+  R5_GYM_PLANS.forEach((plan, i) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = '💪 ' + plan.name + ' — $30 (+' + plan.xp + ' ' + plan.skill + ' XP)';
+    b.disabled = state.cash < 30;
+    b.title = plan.label;
+    b.addEventListener('click', () => r5GymTrain(i));
+    el.appendChild(b);
+  });
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:12px;color:#cfe8ff;margin-top:6px';
+  note.textContent = 'Coach Dara: "Five sessions in a row and the shake is on me."';
+  el.appendChild(note);
+}
+function r5GymOpen() {
+  if (!r5GymNear()) return false;
+  const el = document.getElementById('r5GymPanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5GymRender();
+  return true;
+}
+function r5GymClose() {
+  const el = document.getElementById('r5GymPanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part eleven: Solmar stock market ----------
+// Six bay companies trade on the phone. Prices random-walk every minute of
+// play; buy low, sell high. Dividends pay $2 a share per game day on anything
+// you hold overnight. Nothing here touches real money.
+const R5_STOCKS = [
+  { sym: 'BAY', name: 'Bay Ferries', price: 42, base: 42 },
+  { sym: 'PALM', name: 'Palm Resorts', price: 78, base: 78 },
+  { sym: 'FISH', name: 'Solmar Fisheries', price: 23, base: 23 },
+  { sym: 'AUTO', name: 'Customs Auto', price: 61, base: 61 },
+  { sym: 'SAND', name: 'Sands Casino Group', price: 95, base: 95 },
+  { sym: 'GOLF', name: 'Solmar Golf Club', price: 34, base: 34 },
+];
+const r5Stocks = { hold: {}, invested: 0, sold: 0, timer: 0, store: 'solmar-bay-r5-stocks' };
+function r5StocksSave() {
+  try { localStorage.setItem(r5Stocks.store, JSON.stringify({ hold: r5Stocks.hold, invested: r5Stocks.invested, sold: r5Stocks.sold })); } catch (e) {}
+}
+function r5StocksLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Stocks.store) || 'null');
+    if (s) { r5Stocks.hold = s.hold || {}; r5Stocks.invested = s.invested || 0; r5Stocks.sold = s.sold || 0; }
+  } catch (e) {}
+}
+function r5StocksValue() {
+  let v = 0;
+  for (const s of R5_STOCKS) v += (r5Stocks.hold[s.sym] || 0) * s.price;
+  return v;
+}
+function r5StocksTick(dt) {
+  r5Stocks.timer += dt;
+  if (r5Stocks.timer < 60) return;
+  r5Stocks.timer = 0;
+  for (const s of R5_STOCKS) {
+    // Mean-reverting random walk: drift back toward the base price, with a
+    // wobble of up to 8% either way per minute.
+    const drift = (s.base - s.price) * 0.04;
+    const wobble = s.price * (rng() - 0.5) * 0.16;
+    s.price = Math.max(2, Math.round((s.price + drift + wobble) * 100) / 100);
+  }
+  // Dividends at dawn on anything held overnight.
+  if (state.dayTime < 0.05) {
+    let div = 0;
+    for (const s of R5_STOCKS) div += (r5Stocks.hold[s.sym] || 0) * 2;
+    if (div > 0) {
+      state.cash += div;
+      toast('📈 Dividends paid: $' + div + ' on your shares.');
+      updateHUD();
+    }
+  }
+  if (document.getElementById('r5StocksPanel') && !document.getElementById('r5StocksPanel').classList.contains('hidden')) r5StocksRender();
+}
+function r5StocksBuy(sym) {
+  const s = R5_STOCKS.find((x) => x.sym === sym);
+  if (!s) return;
+  if (state.cash < s.price) { toast('One ' + sym + ' share costs $' + s.price.toFixed(2) + '.'); return; }
+  state.cash -= s.price;
+  r5Stocks.hold[sym] = (r5Stocks.hold[sym] || 0) + 1;
+  r5Stocks.invested += s.price;
+  toast('📈 Bought 1 ' + sym + ' (' + s.name + ') for $' + s.price.toFixed(2) + '.');
+  r5StocksSave(); saveGame(); updateHUD(); r5StocksRender();
+}
+function r5StocksSell(sym) {
+  const s = R5_STOCKS.find((x) => x.sym === sym);
+  if (!s || !(r5Stocks.hold[sym] || 0)) { toast('You hold no ' + sym + ' shares.'); return; }
+  r5Stocks.hold[sym]--;
+  state.cash += s.price;
+  r5Stocks.sold += s.price;
+  toast('📉 Sold 1 ' + sym + ' for $' + s.price.toFixed(2) + '.');
+  r5StocksSave(); saveGame(); updateHUD(); r5StocksRender();
+}
+function r5StocksRender() {
+  const el = document.getElementById('r5StocksItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5StocksCash');
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + ' · Portfolio: $' + r5StocksValue().toFixed(2) + ' · Invested: $' + r5Stocks.invested.toFixed(2) + ' · Sold: $' + r5Stocks.sold.toFixed(2);
+  el.innerHTML = '';
+  for (const s of R5_STOCKS) {
+    const held = r5Stocks.hold[s.sym] || 0;
+    const change = ((s.price - s.base) / s.base * 100);
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.15)';
+    const lab = document.createElement('span');
+    lab.style.cssText = 'flex:1;font-size:13px';
+    lab.textContent = s.sym + ' · ' + s.name + ' — $' + s.price.toFixed(2) + ' (' + (change >= 0 ? '+' : '') + change.toFixed(1) + '%) · held ' + held;
+    const buy = document.createElement('button');
+    buy.className = 'shopItem'; buy.style.cssText = 'padding:6px 10px'; buy.textContent = 'Buy';
+    buy.disabled = state.cash < s.price;
+    buy.addEventListener('click', () => r5StocksBuy(s.sym));
+    const sell = document.createElement('button');
+    sell.className = 'shopItem'; sell.style.cssText = 'padding:6px 10px'; sell.textContent = 'Sell';
+    sell.disabled = held <= 0;
+    sell.addEventListener('click', () => r5StocksSell(s.sym));
+    row.appendChild(lab); row.appendChild(buy); row.appendChild(sell);
+    el.appendChild(row);
+  }
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:12px;color:#cfe8ff;margin-top:6px';
+  note.textContent = 'Prices move every minute. Dividends pay $2 a share at dawn. In-game cash only.';
+  el.appendChild(note);
+}
+function r5StocksOpen() {
+  const el = document.getElementById('r5StocksPanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5StocksRender();
+  return true;
+}
+function r5StocksClose() {
+  const el = document.getElementById('r5StocksPanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part twelve: district influence ----------
+// Five districts track how much the bay respects you there. Races, jobs,
+// deliveries and stunt jumps in a district raise its influence; it decays a
+// little every game day. Above 60 you run the district and it pays $40 a
+// minute. The minimap shows each district's colour.
+const R5_DISTRICTS = [
+  { name: 'Harbour', x: -60, z: 60, color: '#2ee6ff' },
+  { name: 'Marina', x: 60, z: 60, color: '#ffd23f' },
+  { name: 'North Docks', x: -60, z: -90, color: '#ff2a7a' },
+  { name: 'Airport', x: -190, z: -40, color: '#7ac74f' },
+  { name: 'Beachfront', x: 110, z: 20, color: '#e86ad0' },
+];
+const r5Territory = { inf: [10, 10, 10, 10, 10], paidMin: 0, store: 'solmar-bay-r5-territory' };
+function r5DistrictAt(x, z) {
+  let best = -1, bestD = 1e9;
+  for (let i = 0; i < R5_DISTRICTS.length; i++) {
+    const d = Math.hypot(x - R5_DISTRICTS[i].x, z - R5_DISTRICTS[i].z);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+function r5TerritoryGain(n, why) {
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const i = r5DistrictAt(px, pz);
+  if (i < 0) return;
+  const before = r5Territory.inf[i];
+  r5Territory.inf[i] = Math.min(100, r5Territory.inf[i] + n);
+  if (before < 60 && r5Territory.inf[i] >= 60) {
+    toast('👑 You run ' + R5_DISTRICTS[i].name + ' now — the district pays $40 a minute!');
+    speakLine(R5_DISTRICTS[i].name + ' is ours. The bay knows who runs it.');
+    chime();
+  } else if (why) {
+    toast('📍 ' + R5_DISTRICTS[i].name + ' influence +' + n + ' (' + Math.round(r5Territory.inf[i]) + '/100).');
+  }
+  r5TerritorySave();
+}
+function r5TerritorySave() {
+  try { localStorage.setItem(r5Territory.store, JSON.stringify({ inf: r5Territory.inf })); } catch (e) {}
+}
+function r5TerritoryLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Territory.store) || 'null');
+    if (s && s.inf) r5Territory.inf = s.inf;
+  } catch (e) {}
+}
+function r5TerritoryUpdate(dt) {
+  r5Territory.paidMin += dt;
+  if (r5Territory.paidMin >= 60) {
+    r5Territory.paidMin = 0;
+    let pay = 0;
+    for (let i = 0; i < R5_DISTRICTS.length; i++) if (r5Territory.inf[i] >= 60) pay += 40;
+    if (pay > 0) {
+      state.cash += pay;
+      toast('👑 District income: $' + pay + ' from the districts you run.');
+      updateHUD();
+    }
+    // Influence decays a little every minute unless you keep working it.
+    for (let i = 0; i < r5Territory.inf.length; i++) r5Territory.inf[i] = Math.max(5, r5Territory.inf[i] - 0.5);
+    r5TerritorySave();
+  }
+}
+function r5TerritoryLine() {
+  const top = R5_DISTRICTS.map((d, i) => ({ d, v: r5Territory.inf[i] }))
+    .sort((a, b) => b.v - a.v)[0];
+  const run = R5_DISTRICTS.filter((d, i) => r5Territory.inf[i] >= 60).length;
+  return '👑 ' + top.d.name + ' ' + Math.round(top.v) + '/100 · running ' + run + '/5 districts';
+}
+
+// ---------- Round 5, part thirteen: Ryan & Ian bond ----------
+// The couple's bond grows with gifts and date nights, and shrinks when one
+// of them goes down. At 50+ the partner covers you: a weekly gift of $100
+// and a morale boost that heals 10 health at dawn.
+const R5_GIFTS = [
+  { name: 'Bay flowers', price: 40, bond: 8 },
+  { name: 'Seashell necklace', price: 120, bond: 15 },
+  { name: 'Sunset dinner voucher', price: 200, bond: 25 },
+  { name: 'Gold locket', price: 450, bond: 40 },
+];
+const r5Bond = { bond: 50, dates: 0, gifts: 0, weekPaid: false, store: 'solmar-bay-r5-bond' };
+function r5BondSave() {
+  try { localStorage.setItem(r5Bond.store, JSON.stringify({ bond: r5Bond.bond, dates: r5Bond.dates, gifts: r5Bond.gifts })); } catch (e) {}
+}
+function r5BondLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Bond.store) || 'null');
+    if (s) { r5Bond.bond = s.bond ?? 50; r5Bond.dates = s.dates || 0; r5Bond.gifts = s.gifts || 0; }
+  } catch (e) {}
+}
+function r5BondGift(i) {
+  const g = R5_GIFTS[i];
+  if (!g) return;
+  if (state.cash < g.price) { toast('The ' + g.name + ' costs $' + g.price + '.'); return; }
+  state.cash -= g.price;
+  r5Bond.bond = Math.min(100, r5Bond.bond + g.bond);
+  r5Bond.gifts++;
+  const other = CHARS[state.activeChar].name === 'Ryan' ? 'Ian' : 'Ryan';
+  toast('💝 You gave ' + other + ' a ' + g.name.toLowerCase() + ' — bond +' + g.bond + ' (' + r5Bond.bond + '/100).');
+  speakLine('For you, love. The bay is ours, but you are my favourite part of it.');
+  chime(); r5BondSave(); saveGame(); updateHUD(); r5BondRender();
+}
+function r5BondDate() {
+  if (state.cash < 120) { toast('A date night costs $120.'); return; }
+  if (state.dayTime < 0.62 || state.dayTime > 0.8) { toast('Date nights happen at sunset — wait for the evening light.'); return; }
+  state.cash -= 120;
+  r5Bond.bond = Math.min(100, r5Bond.bond + 15);
+  r5Bond.dates++;
+  toast('🌅 Date night on the marina — bond +15 (' + r5Bond.bond + '/100). Ryan and Ian, together.');
+  showStory('Ryan: Same sunset, better company. Ian: Every night, if you keep paying. Ryan: Deal.');
+  speakLine('Sunset on the marina, just the two of us. This is why we came to the bay.');
+  chime(); r5BondSave(); saveGame(); updateHUD(); r5BondRender();
+}
+function r5BondUpdate(dt) {
+  // Weekly partner gift + dawn heal at high bond.
+  if (state.dayTime < 0.05 && !r5Bond.weekPaid) {
+    r5Bond.weekPaid = true;
+    if (r5Bond.bond >= 50) {
+      state.cash += 100;
+      state.health = Math.min(100, state.health + 10);
+      toast('💝 Your partner left $100 and breakfast — high bond pays back. Health +10.');
+      updateHUD();
+    }
+  } else if (state.dayTime > 0.1) {
+    r5Bond.weekPaid = false;
+  }
+}
+function r5BondRender() {
+  const el = document.getElementById('r5BondItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5BondCash');
+  if (cashEl) cashEl.textContent = 'Bond: ' + r5Bond.bond + '/100 · Dates: ' + r5Bond.dates + ' · Gifts: ' + r5Bond.gifts + ' · Cash: $' + state.cash.toLocaleString('en-US');
+  el.innerHTML = '';
+  R5_GIFTS.forEach((g, i) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = '💝 ' + g.name + ' — $' + g.price + ' (+' + g.bond + ' bond)';
+    b.disabled = state.cash < g.price;
+    b.addEventListener('click', () => r5BondGift(i));
+    el.appendChild(b);
+  });
+  const date = document.createElement('button');
+  date.className = 'shopItem';
+  date.textContent = '🌅 Date night on the marina — $120 (+15 bond, sunset only)';
+  date.disabled = state.cash < 120;
+  date.addEventListener('click', r5BondDate);
+  el.appendChild(date);
+  const note = document.createElement('div');
+  note.style.cssText = 'font-size:12px;color:#cfe8ff;margin-top:6px';
+  note.textContent = 'At 50+ bond your partner leaves $100 and heals you 10 health every dawn.';
+  el.appendChild(note);
+}
+function r5BondOpen() {
+  const el = document.getElementById('r5BondPanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5BondRender();
+  return true;
+}
+function r5BondClose() {
+  const el = document.getElementById('r5BondPanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part fourteen: marina boat races ----------
+// A fast boat waits at the marina flag. Three buoys, one lap, 150 seconds.
+// Win and the marina pays $350; beat your best time and it pays $450.
+const R5_BOAT_RACE = {
+  flag: { x: 128, z: 10 }, cps: [{ x: 150, z: -80 }, { x: 170, z: 60 }, { x: 140, z: 140 }],
+  active: false, cp: 0, timer: 0, best: 0, wins: 0, boat: null, store: 'solmar-bay-r5-boatrace',
+};
+function r5BoatRaceBuild() {
+  const boat = makeBoatMesh(0xff2a7a);
+  boat.position.set(R5_BOAT_RACE.flag.x + 4, 0.3, R5_BOAT_RACE.flag.z);
+  scene.add(boat);
+  R5_BOAT_RACE.boat = { mesh: boat, kind: 'boat', speed: 0, steer: 0, stolen: false, spec: { type: 'boat', topSpeed: 30 } };
+  boats.push(R5_BOAT_RACE.boat);
+  for (const cp of R5_BOAT_RACE.cps) {
+    const buoy = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.3, 1.2, 10), new THREE.MeshStandardMaterial({ color: 0xff2a7a, emissive: 0xaa0044, emissiveIntensity: 0.6 }));
+    buoy.position.set(cp.x, 0.6, cp.z); scene.add(buoy);
+  }
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1), new THREE.MeshStandardMaterial({ color: 0xff2a7a, side: THREE.DoubleSide }));
+  flag.position.set(R5_BOAT_RACE.flag.x, 3.4, R5_BOAT_RACE.flag.z); scene.add(flag);
+}
+function r5BoatRaceNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_BOAT_RACE.flag.x, playerState.z - R5_BOAT_RACE.flag.z) < 6;
+}
+function r5BoatRaceSave() {
+  try { localStorage.setItem(R5_BOAT_RACE.store, JSON.stringify({ best: R5_BOAT_RACE.best, wins: R5_BOAT_RACE.wins })); } catch (e) {}
+}
+function r5BoatRaceLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(R5_BOAT_RACE.store) || 'null');
+    if (s) { R5_BOAT_RACE.best = s.best || 0; R5_BOAT_RACE.wins = s.wins || 0; }
+  } catch (e) {}
+}
+function r5BoatRaceStart() {
+  if (R5_BOAT_RACE.active) return false;
+  R5_BOAT_RACE.active = true; R5_BOAT_RACE.cp = 0; R5_BOAT_RACE.timer = 150;
+  toast('🚤 BOAT RACE! Three pink buoys, 150 seconds — win pays $350, beat your best and it pays $450!');
+  speakLine('Boat race! Three buoys, one fast boat, and the marina is watching.');
+  beep(990, 0.2, 'sine', 0.2);
+  return true;
+}
+function r5BoatRaceUpdate(dt) {
+  if (!R5_BOAT_RACE.active) return;
+  R5_BOAT_RACE.timer -= dt;
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const cp = R5_BOAT_RACE.cps[R5_BOAT_RACE.cp];
+  if (cp && Math.hypot(px - cp.x, pz - cp.z) < 8) {
+    R5_BOAT_RACE.cp++;
+    toast('🚤 Buoy ' + R5_BOAT_RACE.cp + '/3!');
+    beep(880, 0.15, 'sine', 0.15);
+    if (R5_BOAT_RACE.cp >= R5_BOAT_RACE.cps.length) {
+      const time = 150 - R5_BOAT_RACE.timer;
+      R5_BOAT_RACE.active = false;
+      R5_BOAT_RACE.wins++;
+      const record = R5_BOAT_RACE.best === 0 || time < R5_BOAT_RACE.best;
+      const prize = record ? 450 : 350;
+      if (record) R5_BOAT_RACE.best = time;
+      state.cash += prize;
+      toast('🏆 Boat race won in ' + time.toFixed(1) + 's — $' + prize + (record ? ' (new best time!)' : '') + '!');
+      speakLine('Boat race won! The marina pays ' + prize + ' dollars.');
+      chime(); addSkill('driving', 15); r5TerritoryGain(6, false);
+      r5BoatRaceSave(); saveGame(); updateHUD();
+      return;
+    }
+  }
+  if (R5_BOAT_RACE.timer <= 0) {
+    R5_BOAT_RACE.active = false;
+    toast('🚤 Boat race over — too slow. The buoys are still there when you are ready.');
+  }
+}
+
+// ---------- Round 5, part fifteen: safehouse decorating + fast travel ----------
+// The harbour safehouse is home. Buy furniture for comfort; comfort slowly
+// heals you while you stand inside. Fast travel between the safehouse and any
+// property you own costs $25 a hop.
+const R5_SAFEHOUSE = { x: -96, z: 20 };
+const R5_FURNITURE = [
+  { name: 'Comfy sofa', price: 180, comfort: 10 },
+  { name: 'Big TV', price: 350, comfort: 15 },
+  { name: 'Bay-view bed', price: 500, comfort: 20 },
+  { name: 'Arcade cabinet', price: 700, comfort: 25 },
+  { name: 'Home gym corner', price: 900, comfort: 30 },
+];
+const r5Home = { comfort: 0, owned: [], healTimer: 0, store: 'solmar-bay-r5-home' };
+function r5HomeNear() {
+  if (state.inCar) return false;
+  return Math.hypot(playerState.x - R5_SAFEHOUSE.x, playerState.z - R5_SAFEHOUSE.z) < 6;
+}
+function r5HomeBuild() {
+  addBox(10, 5, 8, 0xd8a06a, R5_SAFEHOUSE.x, 2.5, R5_SAFEHOUSE.z + 6);
+  addBox(10.6, 0.6, 8.6, 0xc0392b, R5_SAFEHOUSE.x, 5.3, R5_SAFEHOUSE.z + 6);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x2e6fb0 }));
+  door.position.set(R5_SAFEHOUSE.x, 1.3, R5_SAFEHOUSE.z + 1.8); scene.add(door);
+}
+function r5HomeSave() {
+  try { localStorage.setItem(r5Home.store, JSON.stringify({ comfort: r5Home.comfort, owned: r5Home.owned })); } catch (e) {}
+}
+function r5HomeLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Home.store) || 'null');
+    if (s) { r5Home.comfort = s.comfort || 0; r5Home.owned = s.owned || []; }
+  } catch (e) {}
+}
+function r5HomeBuy(i) {
+  const f = R5_FURNITURE[i];
+  if (!f || r5Home.owned.includes(i)) return;
+  if (state.cash < f.price) { toast('The ' + f.name.toLowerCase() + ' costs $' + f.price + '.'); return; }
+  state.cash -= f.price;
+  r5Home.owned.push(i); r5Home.comfort += f.comfort;
+  toast('🛋️ ' + f.name + ' bought — comfort +' + f.comfort + ' (now ' + r5Home.comfort + '). Home heals you faster.');
+  chime(); r5HomeSave(); saveGame(); updateHUD(); r5HomeRender();
+}
+function r5HomeFastTravel() {
+  if (state.cash < 25) { toast('Fast travel costs $25.'); return; }
+  const targets = [{ name: 'Harbour safehouse', x: R5_SAFEHOUSE.x, z: R5_SAFEHOUSE.z }];
+  for (const p of ownedProperties) targets.push({ name: p.name || 'Property', x: p.x, z: p.z });
+  // Cycle: go to the next target after the nearest one.
+  let nearest = 0, nearestD = 1e9;
+  for (let i = 0; i < targets.length; i++) {
+    const d = Math.hypot(playerState.x - targets[i].x, playerState.z - targets[i].z);
+    if (d < nearestD) { nearestD = d; nearest = i; }
+  }
+  const dest = targets[(nearest + 1) % targets.length];
+  state.cash -= 25;
+  if (state.inCar) { /* stay in the car: drop out first */ }
+  playerState.x = dest.x; playerState.z = dest.z; playerState.y = 0;
+  player.position.set(dest.x, groundHeight(dest.x, dest.z), dest.z);
+  toast('🚕 Fast travel — $25 — welcome to ' + dest.name + '.');
+  beep(660, 0.15, 'sine', 0.15);
+  saveGame(); updateHUD(); r5HomeRender();
+}
+function r5HomeUpdate(dt) {
+  if (!r5HomeNear()) return;
+  r5Home.healTimer += dt;
+  if (r5Home.healTimer >= 5) {
+    r5Home.healTimer = 0;
+    const heal = 1 + Math.floor(r5Home.comfort / 20);
+    if (state.health < 100) {
+      state.health = Math.min(100, state.health + heal);
+      updateHUD();
+    }
+  }
+}
+function r5HomeRender() {
+  const el = document.getElementById('r5HomeItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5HomeCash');
+  if (cashEl) cashEl.textContent = 'Your cash: $' + state.cash.toLocaleString('en-US') + ' · Comfort: ' + r5Home.comfort + ' · Properties owned: ' + ownedProperties.length + ' · Fast travel $25 a hop';
+  el.innerHTML = '';
+  R5_FURNITURE.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.className = 'shopItem';
+    b.textContent = '🛋️ ' + f.name + ' — $' + f.price + ' (+' + f.comfort + ' comfort)' + (r5Home.owned.includes(i) ? ' ✓ owned' : '');
+    b.disabled = r5Home.owned.includes(i) || state.cash < f.price;
+    b.addEventListener('click', () => r5HomeBuy(i));
+    el.appendChild(b);
+  });
+  const travel = document.createElement('button');
+  travel.className = 'shopItem';
+  travel.textContent = '🚕 Fast travel to your next property — $25';
+  travel.disabled = state.cash < 25;
+  travel.addEventListener('click', r5HomeFastTravel);
+  el.appendChild(travel);
+}
+function r5HomeOpen() {
+  if (!r5HomeNear()) return false;
+  const el = document.getElementById('r5HomePanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5HomeRender();
+  return true;
+}
+function r5HomeClose() {
+  const el = document.getElementById('r5HomePanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part sixteen: dispatcher, HUD, self-test ----------
+// One call from the main loop runs every Round 5 system, in dependency order.
+function updateR5(dt) {
+  r5TourneyUpdate(dt);
+  r5HeliUpdate(dt);
+  r5SeasonUpdate(dt);
+  r5EmpireUpdate(dt);
+  r5StuntUpdate(dt);
+  r5CardsUpdate(dt);
+  r5SchoolUpdate(dt);
+  r5StocksTick(dt);
+  r5TerritoryUpdate(dt);
+  r5BondUpdate(dt);
+  r5BoatRaceUpdate(dt);
+  r5HomeUpdate(dt);
+  r5HeatUpdate(dt);
+  r5ResponderUpdate(dt);
+  r5MeetUpdate(dt);
+  r5AchieveUpdate(dt);
+  r5DjUpdate(dt);
+  r5RivalsUpdate(dt);
+  r5DailyUpdate(dt);
+  r5TickerUpdate(dt);
+  r5ForecastUpdate();
+  // Engine + nitro boosts apply after updateCar has clamped the speed.
+  if (state.inCar) {
+    r5GarageEngineBoost(state.inCar);
+    r5GarageUseNitro(dt);
+  }
+  // Race wins, stunt jumps and deliveries all raise district influence.
+  if (race.won > (updateR5._raceWon || 0)) {
+    updateR5._raceWon = race.won;
+    r5TerritoryGain(5, false);
+  }
+}
+function r5HudLine() {
+  const el = document.getElementById('r5Line');
+  if (!el) return;
+  const parts = [];
+  parts.push(r5SeasonLine());
+  if (r5Tourney.active) parts.push('🎣 Tourney ' + r5Tourney.points + ' pts · ' + Math.ceil(r5Tourney.timer) + 's');
+  if (R5_BOAT_RACE.active) parts.push('🚤 Boat race buoy ' + (R5_BOAT_RACE.cp + 1) + '/3 · ' + Math.ceil(R5_BOAT_RACE.timer) + 's');
+  if (r5School.active) parts.push('✈️ ' + R5_LESSONS[r5School.lesson].name + ' · ' + Math.ceil(r5School.timer) + 's');
+  if (R5_EMPIRE.delivery) parts.push('📦 Parcel ' + Math.ceil(R5_EMPIRE.delivery.timer) + 's');
+  if (r5Heli.active) parts.push('🚁 Heli overhead!');
+  const respLine = r5ResponderLine();
+  if (respLine) parts.push(respLine);
+  if (r5Heat.zone >= 0) parts.push('🔥 ' + R5_HEAT_ZONES[r5Heat.zone].name);
+  if (r5Rivals.race) parts.push('🏁 Drag vs ' + R5_RIVALS[r5Rivals.race.rival].name + ' · ' + Math.ceil(r5Rivals.race.timer) + 's');
+  parts.push('🎟️ Loyalty ' + r5Loyalty.stamps + '/5');
+  parts.push('🏅 ' + r5Achieve.earned.length + '/12');
+  parts.push(r5TerritoryLine());
+  parts.push('💝 Bond ' + r5Bond.bond + '/100');
+  el.textContent = parts.join(' · ');
+}
+function r5MinimapDots(dot) {
+  dot(R5_GARAGE.x, R5_GARAGE.z, '#e86a1e', 4);
+  dot(R5_CASINO.x, R5_CASINO.z, '#ff2a7a', 4);
+  dot(R5_EMPIRE.depot.x, R5_EMPIRE.depot.z, '#f5c518', 4);
+  dot(R5_GYM.x, R5_GYM.z, '#7ac74f', 4);
+  dot(R5_SCHOOL.x, R5_SCHOOL.z, '#2ee6ff', 4);
+  dot(R5_SAFEHOUSE.x, R5_SAFEHOUSE.z, '#ffd23f', 4);
+  dot(R5_BOAT_RACE.flag.x, R5_BOAT_RACE.flag.z, '#ff2a7a', 4);
+  for (const r of R5_RAMPS) dot(r.x, r.z, '#e8b820', 3);
+  for (let i = 0; i < R5_POSTCARDS.length; i++) if (!r5Cards.found.includes(i)) dot(R5_POSTCARDS[i].x, R5_POSTCARDS[i].z, '#ffd23f', 3);
+  for (let i = 0; i < R5_DISTRICTS.length; i++) dot(R5_DISTRICTS[i].x, R5_DISTRICTS[i].z, R5_DISTRICTS[i].color, r5Territory.inf[i] >= 60 ? 6 : 3);
+  if (r5Heli.active && r5Heli.mesh) dot(r5Heli.mesh.position.x, r5Heli.mesh.position.z, '#ff4444', 5);
+  for (const sp of R5_SPIKES) dot(sp.x, sp.z, '#ff2222', 3);
+  if (R5_EMPIRE.delivery) dot(R5_EMPIRE.delivery.x, R5_EMPIRE.delivery.z, '#f5c518', 5);
+  if (r5School.active && r5School.ring && r5School.ring.visible) dot(r5School.ring.position.x, r5School.ring.position.z, '#ffd23f', 5);
+  if (R5_BOAT_RACE.active) dot(R5_BOAT_RACE.cps[R5_BOAT_RACE.cp].x, R5_BOAT_RACE.cps[R5_BOAT_RACE.cp].z, '#ff2a7a', 5);
+  for (let i = 0; i < r5Rivals.cars.length; i++) dot(r5Rivals.cars[i].mesh.position.x, r5Rivals.cars[i].mesh.position.z, '#8a2be2', 4);
+  if (r5Rivals.race) dot(r5Rivals.race.tx, r5Rivals.race.tz, '#ffd23f', 5);
+  if (R5_RESPONDER.active) dot(R5_RESPONDER.targets[R5_RESPONDER.done].x, R5_RESPONDER.targets[R5_RESPONDER.done].z, '#ff7a1a', 5);
+}
+function r5SelfTest() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('r5-garage-spot', !!R5_GARAGE && R5_GARAGE.x === -48, 'garage at -48,84');
+  ok('r5-paints', R5_PAINTS.length === 8, R5_PAINTS.map((p) => p.name).join(', '));
+  ok('r5-wheels', R5_WHEELS.length === 4 && R5_WHEELS[3].size === 0.52, '4 wheel sets');
+  ok('r5-engines', R5_ENGINES.length === 4 && R5_ENGINES[3].boost === 0.25, 'rocket motor +25%');
+  ok('r5-nitro', R5_NITRO.length === 4 && R5_NITRO[3].secs === 8, 'race kit 8s');
+  ok('r5-casino-spot', R5_CASINO.x === 60 && R5_CASINO.z === -84, 'casino built');
+  ok('r5-slots', R5_SLOTS.length === 6, R5_SLOTS.join(''));
+  ok('r5-bj-total', r5BjTotal(['A', 'K']) === 21 && r5BjTotal(['A', 'A', '9']) === 21, 'blackjack ace logic');
+  ok('r5-tackle', R5_TACKLE.length === 4 && R5_TACKLE[3].mult === 2, 'gold rod doubles');
+  ok('r5-tourney-fish', R5_TOURNEY_FISH.length === 4, '4 tourney species');
+  ok('r5-heli', !!r5Heli.mesh && !!r5Heli.light, 'pursuit heli + searchlight');
+  ok('r5-seasons', R5_SEASONS.length === 4 && R5_SEASONS[1].name === 'Summer', 'spring/summer/autumn/winter');
+  ok('r5-empire', R5_EMPIRE.cabPrice === 1500 && R5_EMPIRE.driverWage === 60, 'cab $1500, wage $60');
+  ok('r5-delivery-spots', R5_DELIVERY_SPOTS.length === 6, '6 delivery spots');
+  ok('r5-ramps', R5_RAMPS.length === 6, R5_RAMPS.map((r) => r.label).join(', '));
+  ok('r5-postcards', R5_POSTCARDS.length === 8, '8 postcard spots');
+  ok('r5-lessons', R5_LESSONS.length === 3 && R5_LESSONS[2].reward === 250, '3 flight lessons');
+  ok('r5-school-plane', !!r5School.plane, 'stunt plane parked');
+  ok('r5-gym-plans', R5_GYM_PLANS.length === 5, R5_GYM_PLANS.map((p) => p.name).join(', '));
+  ok('r5-stocks', R5_STOCKS.length === 6 && R5_STOCKS[0].sym === 'BAY', '6 bay companies');
+  ok('r5-districts', R5_DISTRICTS.length === 5, R5_DISTRICTS.map((d) => d.name).join(', '));
+  ok('r5-gifts', R5_GIFTS.length === 4 && R5_GIFTS[3].bond === 40, 'gold locket +40');
+  ok('r5-boat-cps', R5_BOAT_RACE.cps.length === 3 && !!R5_BOAT_RACE.boat, '3 buoys + race boat');
+  ok('r5-furniture', R5_FURNITURE.length === 5 && R5_FURNITURE[4].comfort === 30, '5 furniture pieces');
+  ok('r5-panels', !!document.getElementById('r5GaragePanel') && !!document.getElementById('r5CasinoPanel') && !!document.getElementById('r5StocksPanel') && !!document.getElementById('r5GymPanel') && !!document.getElementById('r5EmpirePanel') && !!document.getElementById('r5HomePanel') && !!document.getElementById('r5BondPanel') && !!document.getElementById('r5StuntPanel') && !!document.getElementById('r5TourneyPanel'), 'all nine R5 panels in the DOM');
+  ok('r5-hud-line', !!document.getElementById('r5Line'), 'R5 HUD line present');
+  ok('r5-empire-income', r5EmpireIncomePerMin() >= 0, '$' + r5EmpireIncomePerMin() + '/min');
+  ok('r5-stocks-value', r5StocksValue() >= 0, '$' + r5StocksValue().toFixed(2));
+  ok('r5-district-at', r5DistrictAt(-60, 60) === 0, 'harbour district resolves');
+  ok('r5-heat-zones', R5_HEAT_ZONES.length === 3 && R5_HEAT_ZONES[0].name === 'North Docks', '3 heat zones');
+  ok('r5-heat-at', r5HeatZoneAt(-60, -90) === 0 && r5HeatZoneAt(0, 0) === -1, 'zone lookup works');
+  ok('r5-responder', !!R5_RESPONDER.hospital && !!R5_RESPONDER.station, 'hospital + fire station shifts');
+  ok('r5-achievements', R5_ACHIEVEMENTS.length === 12, R5_ACHIEVEMENTS.map((a) => a.name).join(', '));
+  ok('r5-achieve-panel', !!document.getElementById('r5AchievePanel'), 'achievements panel in the DOM');
+  ok('r5-dj-lines', R5_DJ_LINES.length === 8, '8 DJ lines');
+  ok('r5-radio-stations', RADIO_STATIONS.length === 5, RADIO_STATIONS.map((s) => s.name).join(', '));
+  ok('r5-rivals', R5_RIVALS.length === 3 && r5Rivals.cars.length === 3, R5_RIVALS.map((r) => r.name).join(', '));
+  ok('r5-rival-wagers', R5_RIVALS[2].wager === 400, 'Dune wagers $400');
+  ok('r5-daily', typeof r5Daily.lastDay === 'number', 'daily bonus armed');
+  ok('r5-loyalty', r5Loyalty.stamps === 0 && typeof r5LoyaltyFree() === 'boolean', 'loyalty card armed');
+  ok('r5-ticker', R5_TICKER.length === 12, '12 ticker lines');
+  ok('r5-forecast', typeof r5Forecast() === 'string' && r5Forecast().includes('Round 5'), 'forecast renders');
+  ok('r5-cash-sane', state.cash >= 0 && state.cash < 100000000, 'cash ' + state.cash);
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+// Two new radio stations for Round 5, added to the existing dial.
+RADIO_STATIONS.push(
+  { name: 'Sunset Jazz 99.9', desc: 'smooth jazz', bpm: 76, bass: [55, 65.41, 49, 55], arp: [220, 277.18, 329.63, 277.18, 246.94, 220] },
+  { name: 'Turbo Pop 107.7', desc: 'synth pop', bpm: 122, bass: [65.41, 49, 55, 73.42], arp: [261.63, 329.63, 392, 493.88, 392, 329.63] },
+);
+// Build every Round 5 place in the world and restore saved Round 5 progress.
+r5GarageBuild(); r5CasinoBuild(); r5HeliBuild(); r5EmpireBuild(); r5StuntBuild();
+r5CardsBuild(); r5SchoolBuild(); r5GymBuild(); r5BoatRaceBuild(); r5HomeBuild();
+r5GarageLoad(); r5TourneyLoad(); r5EmpireLoad(); r5StuntLoad(); r5CardsLoad();
+r5CardsApplyFound(); r5SchoolLoad(); r5GymLoad(); r5StocksLoad(); r5TerritoryLoad();
+r5BondLoad(); r5BoatRaceLoad(); r5HomeLoad();
+document.getElementById('r5GarageClose').addEventListener('click', r5GarageClose);
+document.getElementById('r5CasinoClose').addEventListener('click', r5CasinoClose);
+document.getElementById('r5CasinoSpin').addEventListener('click', r5CasinoSpin);
+document.getElementById('r5CasinoDeal').addEventListener('click', r5CasinoDeal);
+document.getElementById('r5CasinoHit').addEventListener('click', r5CasinoHit);
+document.getElementById('r5CasinoStand').addEventListener('click', r5CasinoStand);
+document.getElementById('r5TourneyClose').addEventListener('click', r5TourneyClose);
+document.getElementById('r5EmpireClose').addEventListener('click', r5EmpireClose);
+document.getElementById('r5StuntClose').addEventListener('click', r5StuntClose);
+document.getElementById('r5GymClose').addEventListener('click', r5GymClose);
+document.getElementById('r5StocksClose').addEventListener('click', r5StocksClose);
+document.getElementById('r5BondClose').addEventListener('click', r5BondClose);
+document.getElementById('r5HomeClose').addEventListener('click', r5HomeClose);
+document.getElementById('r5AchieveClose').addEventListener('click', r5AchieveClose);
+document.getElementById('phoneBtnAchieve').addEventListener('click', () => { togglePhone(); r5AchieveOpen(); });
+document.getElementById('phoneBtnStocks').addEventListener('click', () => { togglePhone(); r5StocksOpen(); });
+document.getElementById('phoneBtnBond').addEventListener('click', () => { togglePhone(); r5BondOpen(); });
+document.getElementById('phoneBtnTourney').addEventListener('click', () => { togglePhone(); r5TourneyOpen(); });
+document.getElementById('phoneBtnStunts').addEventListener('click', () => { togglePhone(); r5StuntOpen(); });
+window.__r5exports = {
+  garage: r5Garage, casino: r5Casino, tourney: r5Tourney, heli: r5Heli, spikes: R5_SPIKES,
+  season: r5Season, seasons: R5_SEASONS, empire: R5_EMPIRE, stunt: r5Stunt, cards: r5Cards,
+  school: r5School, gym: r5Gym, stocks: r5Stocks, territory: r5Territory, bond: r5Bond,
+  boatRace: R5_BOAT_RACE, home: r5Home,
+  openGarage: r5GarageOpen, openCasino: r5CasinoOpen, openEmpire: r5EmpireOpen,
+  openGym: r5GymOpen, openStocks: r5StocksOpen, openBond: r5BondOpen, openHome: r5HomeOpen,
+  openStunt: r5StuntOpen, openTourney: r5TourneyOpen,
+  spin: r5CasinoSpin, deal: r5CasinoDeal, hit: r5CasinoHit, stand: r5CasinoStand,
+  startBoatRace: r5BoatRaceStart, startSchool: r5SchoolStart, startDelivery: r5EmpireStartDelivery,
+  collectCard: r5CardsCollect, buyCab: r5EmpireBuyCab, hireDriver: r5EmpireHireDriver,
+  buyRod: r5TourneyBuyRod, train: r5GymTrain, buyStock: r5StocksBuy, sellStock: r5StocksSell,
+  gift: r5BondGift, date: r5BondDate, fastTravel: r5HomeFastTravel,
+  selftest: r5SelfTest, update: updateR5, hudLine: r5HudLine,
+};
+
+// ---------- Round 5, part seventeen: wanted-heat zones ----------
+// Three corners of the bay run hotter than the rest. Inside a heat zone the
+// police notice crimes faster and wanted decays slower; outside them the bay
+// is calmer. The HUD warns you when you cross into one.
+const R5_HEAT_ZONES = [
+  { name: 'North Docks', x: -60, z: -90, r: 42, heat: 2, desc: 'smugglers, fences and sharp eyes' },
+  { name: 'Casino Row', x: 60, z: -84, r: 36, heat: 1, desc: 'private security on every corner' },
+  { name: 'Airport Perimeter', x: -190, z: -40, r: 48, heat: 1, desc: 'federal eyes on the runway' },
+];
+const r5Heat = { zone: -1, warned: false };
+function r5HeatZoneAt(x, z) {
+  for (let i = 0; i < R5_HEAT_ZONES.length; i++) {
+    const zn = R5_HEAT_ZONES[i];
+    if (Math.hypot(x - zn.x, z - zn.z) < zn.r) return i;
+  }
+  return -1;
+}
+function r5HeatUpdate(dt) {
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const z = r5HeatZoneAt(px, pz);
+  if (z !== r5Heat.zone) {
+    r5Heat.zone = z;
+    if (z >= 0) {
+      const zn = R5_HEAT_ZONES[z];
+      toast('🔥 HEAT ZONE — ' + zn.name + ': ' + zn.desc + '. The law watches closer here.');
+      speakLine('This is ' + zn.name + '. ' + zn.desc + '. Keep it clean, or keep it quick.');
+      beep(520, 0.2, 'sawtooth', 0.12);
+    } else {
+      toast('You are out of the heat zones — the bay breathes easier here.');
+    }
+  }
+  // Inside a heat zone, wanted decays slower and crimes sting more.
+  if (z >= 0 && state.wanted > 0) {
+    state.cleanTimer = Math.max(0, state.cleanTimer - dt * 0.4);
+  }
+}
+function r5HeatBonusWanted(n) {
+  // Extra wanted from a crime committed inside a heat zone.
+  if (r5Heat.zone >= 0) return n + R5_HEAT_ZONES[r5Heat.zone].heat;
+  return n;
+}
+
+// ---------- Round 5, part eighteen: responder night shifts ----------
+// The hospital and fire station offer night shifts that the old day jobs do
+// not cover: ride the ambulance to three patients, or drive the fire truck to
+// two fires, before the shift clock runs out. Pay is $220 a shift.
+const R5_RESPONDER = {
+  hospital: { x: 132, z: -60 }, station: { x: -132, z: 60 },
+  active: false, kind: '', targets: [], done: 0, timer: 0, shifts: 0, store: 'solmar-bay-r5-responder',
+};
+function r5ResponderNear() {
+  if (state.inCar) return '';
+  if (Math.hypot(playerState.x - R5_RESPONDER.hospital.x, playerState.z - R5_RESPONDER.hospital.z) < 6) return 'medic';
+  if (Math.hypot(playerState.x - R5_RESPONDER.station.x, playerState.z - R5_RESPONDER.station.z) < 6) return 'fire';
+  return '';
+}
+function r5ResponderSave() {
+  try { localStorage.setItem(R5_RESPONDER.store, JSON.stringify({ shifts: R5_RESPONDER.shifts })); } catch (e) {}
+}
+function r5ResponderLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(R5_RESPONDER.store) || 'null');
+    if (s) R5_RESPONDER.shifts = s.shifts || 0;
+  } catch (e) {}
+}
+function r5ResponderStart(kind) {
+  if (R5_RESPONDER.active) { toast('A shift is already running.'); return false; }
+  const spots = kind === 'medic'
+    ? [{ x: 40, z: 40 }, { x: -40, z: -40 }, { x: 90, z: -90 }]
+    : [{ x: -90, z: 90 }, { x: 60, z: -20 }];
+  R5_RESPONDER.active = true; R5_RESPONDER.kind = kind;
+  R5_RESPONDER.targets = spots.map((s) => ({ x: s.x + rr(-8, 8), z: s.z + rr(-8, 8), done: false }));
+  R5_RESPONDER.done = 0; R5_RESPONDER.timer = 180;
+  const first = R5_RESPONDER.targets[0];
+  setBeacon(first.x, first.z);
+  if (kind === 'medic') {
+    toast('🚑 Night shift: three patients need the ambulance. 180 seconds — $220.');
+    speakLine('Night shift at the hospital. Three patients, one ambulance, no excuses.');
+  } else {
+    toast('🚒 Night shift: two fires need the truck. 180 seconds — $220.');
+    speakLine('Night shift at the fire station. Two fires, one truck. Move.');
+  }
+  beep(880, 0.2, 'sine', 0.2);
+  return true;
+}
+function r5ResponderUpdate(dt) {
+  if (!R5_RESPONDER.active) return;
+  R5_RESPONDER.timer -= dt;
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const cur = R5_RESPONDER.targets[R5_RESPONDER.done];
+  if (cur && Math.hypot(px - cur.x, pz - cur.z) < 7) {
+    cur.done = true; R5_RESPONDER.done++;
+    if (R5_RESPONDER.done >= R5_RESPONDER.targets.length) {
+      R5_RESPONDER.active = false;
+      R5_RESPONDER.shifts++;
+      state.cash += 220;
+      beacon.visible = false;
+      toast('✅ Shift complete! $220 — the bay sleeps safer tonight. (' + R5_RESPONDER.shifts + ' shifts done)');
+      speakLine('Shift complete. Two hundred twenty dollars, and the bay is still standing.');
+      chime(); addSkill('stamina', 20);
+      r5ResponderSave(); saveGame(); updateHUD();
+      return;
+    }
+    const next = R5_RESPONDER.targets[R5_RESPONDER.done];
+    setBeacon(next.x, next.z);
+    toast((R5_RESPONDER.kind === 'medic' ? '🚑 Patient reached — ' : '🚒 Fire out — ') + R5_RESPONDER.done + '/' + R5_RESPONDER.targets.length + '. Next one marked.');
+    beep(990, 0.15, 'sine', 0.15);
+  }
+  if (R5_RESPONDER.timer <= 0) {
+    R5_RESPONDER.active = false;
+    beacon.visible = false;
+    toast('⏰ Shift over — too slow. The station covers the rest.');
+  }
+}
+function r5ResponderLine() {
+  if (!R5_RESPONDER.active) return '';
+  return (R5_RESPONDER.kind === 'medic' ? '🚑 Medic shift ' : '🚒 Fire shift ') + R5_RESPONDER.done + '/' + R5_RESPONDER.targets.length + ' · ' + Math.ceil(R5_RESPONDER.timer) + 's';
+}
+
+// ---------- Round 5, part nineteen: Friday car meets ----------
+// Every Friday night (game day 5 of each week) the garage hosts a car meet at
+// the marina. Bring a tuned car and show it off: paint, wheels and engine
+// each score, and the best car on the night takes $300.
+const r5Meet = { day: 0, doneWeek: -1, score: 0 };
+function r5MeetUpdate(dt) {
+  // Game days are counted from the season clock: a meet happens when the
+  // season day counter hits its fifth day of the week.
+  const weekDay = (r5Season.day + r5Season.idx * 4) % 7;
+  if (weekDay === 5 && r5Meet.doneWeek !== r5Season.idx * 10 + r5Season.day) {
+    const car = state.inCar;
+    const near = Math.hypot(playerState.x - 40, playerState.z - 90) < 25 || (car && Math.hypot(car.mesh.position.x - 40, car.mesh.position.z - 90) < 25);
+    if (near && car && car.r5Tune) {
+      r5Meet.doneWeek = r5Season.idx * 10 + r5Season.day;
+      const tune = car.r5Tune;
+      let score = 0;
+      if (tune.paint >= 0) score += 30;
+      if (tune.wheels > 0) score += tune.wheels * 15;
+      if (tune.engine > 0) score += tune.engine * 25;
+      if (tune.nitro > 0) score += tune.nitro * 10;
+      r5Meet.score = score;
+      if (score >= 80) {
+        state.cash += 300;
+        toast('🏆 CAR MEET! Your tuned ride scored ' + score + ' — best car on the night! $300!');
+        speakLine('Best car at the meet. Three hundred dollars and every head in the marina turned.');
+        chime(); addSkill('driving', 15);
+        saveGame(); updateHUD();
+      } else if (score > 0) {
+        toast('🚗 Car meet: your ride scored ' + score + '. Tune it more at Solmar Customs and come back Friday.');
+      } else {
+        toast('🚗 Friday car meet at the marina — bring a tuned car from Solmar Customs to show off.');
+      }
+    }
+  }
+}
+
+// ---------- Round 5, part twenty: bay achievements ----------
+// Twelve achievements, each with a one-time cash bonus. The panel lists them;
+// the game toasts them the moment they are earned.
+const R5_ACHIEVEMENTS = [
+  { id: 'first-tune', name: 'Fresh Paint', desc: 'Tune a car at Solmar Customs.', reward: 100, check: () => Object.keys(r5Garage.tunes).length > 0 },
+  { id: 'jackpot', name: 'Jackpot', desc: 'Win $500 on the slots.', reward: 150, check: () => r5Casino.won >= 500 },
+  { id: 'angler', name: 'Master Angler', desc: 'Score 200 points in one tournament.', reward: 150, check: () => r5Tourney.best >= 200 },
+  { id: 'fleet', name: 'Fleet Boss', desc: 'Own three cabs with drivers.', reward: 200, check: () => R5_EMPIRE.cabs.length === 3 && R5_EMPIRE.drivers === 3 },
+  { id: 'airtime', name: 'Airtime', desc: 'Fly 30u in one stunt jump.', reward: 150, check: () => r5Stunt.bestDist >= 30 },
+  { id: 'postman', name: 'Postman', desc: 'Collect all eight postcards.', reward: 200, check: () => r5Cards.found.length === 8 },
+  { id: 'pilot', name: 'Licensed Pilot', desc: 'Pass all three flight lessons.', reward: 200, check: () => r5School.passed.every(Boolean) },
+  { id: 'iron', name: 'Iron Bay', desc: 'Train at the gym ten times.', reward: 150, check: () => r5Gym.sessions >= 10 },
+  { id: 'bull', name: 'Bay Bull', desc: 'Hold a stock portfolio worth $1,000.', reward: 200, check: () => r5StocksValue() >= 1000 },
+  { id: 'king', name: 'King of the Bay', desc: 'Run three districts at once.', reward: 300, check: () => R5_DISTRICTS.filter((d, i) => r5Territory.inf[i] >= 60).length >= 3 },
+  { id: 'soulmates', name: 'Soulmates', desc: 'Reach 100 bond with your partner.', reward: 250, check: () => r5Bond.bond >= 100 },
+  { id: 'sailor', name: 'Saltwater Racer', desc: 'Win three boat races.', reward: 200, check: () => R5_BOAT_RACE.wins >= 3 },
+];
+const r5Achieve = { earned: [], checkTimer: 0, store: 'solmar-bay-r5-achieve' };
+function r5AchieveSave() {
+  try { localStorage.setItem(r5Achieve.store, JSON.stringify({ earned: r5Achieve.earned })); } catch (e) {}
+}
+function r5AchieveLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Achieve.store) || 'null');
+    if (s && s.earned) r5Achieve.earned = s.earned;
+  } catch (e) {}
+}
+function r5AchieveUpdate(dt) {
+  r5Achieve.checkTimer += dt;
+  if (r5Achieve.checkTimer < 5) return;
+  r5Achieve.checkTimer = 0;
+  for (const a of R5_ACHIEVEMENTS) {
+    if (r5Achieve.earned.includes(a.id)) continue;
+    let ok = false;
+    try { ok = a.check(); } catch (e) { ok = false; }
+    if (ok) {
+      r5Achieve.earned.push(a.id);
+      state.cash += a.reward;
+      toast('🏅 Achievement: ' + a.name + ' — ' + a.desc + ' Bonus $' + a.reward + '!');
+      speakLine('Achievement unlocked: ' + a.name + '. ' + a.reward + ' dollars for the trophy shelf.');
+      chime(); r5AchieveSave(); saveGame(); updateHUD();
+    }
+  }
+}
+function r5AchieveRender() {
+  const el = document.getElementById('r5AchieveItems');
+  if (!el) return;
+  const cashEl = document.getElementById('r5AchieveCash');
+  if (cashEl) cashEl.textContent = 'Earned: ' + r5Achieve.earned.length + '/12 · Total bonuses paid: $' + r5Achieve.earned.reduce((s, id) => s + (R5_ACHIEVEMENTS.find((a) => a.id === id) || { reward: 0 }).reward, 0);
+  el.innerHTML = '';
+  for (const a of R5_ACHIEVEMENTS) {
+    const got = r5Achieve.earned.includes(a.id);
+    const d = document.createElement('div');
+    d.style.cssText = 'font-size:13px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.15);color:' + (got ? '#7dff9a' : '#cfe8ff');
+    d.textContent = (got ? '🏅 ' : '○ ') + a.name + ' — ' + a.desc + ' ($' + a.reward + ')';
+    el.appendChild(d);
+  }
+}
+function r5AchieveOpen() {
+  const el = document.getElementById('r5AchievePanel');
+  if (!el) return false;
+  el.classList.remove('hidden');
+  r5AchieveRender();
+  return true;
+}
+function r5AchieveClose() {
+  const el = document.getElementById('r5AchievePanel');
+  if (el) el.classList.add('hidden');
+}
+
+// ---------- Round 5, part twenty-one: bay radio DJ chatter ----------
+// The two new stations get a DJ who reads the bay back to you: season, heat,
+// tournament and fleet news, all from the live game state.
+const R5_DJ_LINES = [
+  () => 'Sunset Jazz here — ' + r5SeasonName() + ' in the bay, and the water has never looked better.',
+  () => 'Turbo Pop! The fishing tournament ' + (r5Tourney.active ? 'is ON right now — get to the water!' : 'starts soon. Rods ready.'),
+  () => 'This is the bay report: ' + r5TerritoryLine() + '.',
+  () => 'Your fleet earned $' + R5_EMPIRE.earned.toLocaleString('en-US') + ' so far. Not bad for a taxi empire.',
+  () => 'Bond check: Ryan and Ian are at ' + r5Bond.bond + ' out of 100. The bay ships them, and so do we.',
+  () => 'Heat warning: ' + (r5Heat.zone >= 0 ? 'you are in ' + R5_HEAT_ZONES[r5Heat.zone].name + ' — eyes open.' : 'all clear out there tonight.'),
+  () => 'Stunt fans: best jump so far is ' + r5Stunt.bestDist.toFixed(0) + ' units. Beat it at the yellow ramps.',
+  () => 'Stocks update: BAY Ferries at $' + R5_STOCKS[0].price.toFixed(2) + ', Sands Casino Group at $' + R5_STOCKS[4].price.toFixed(2) + '.',
+];
+let r5DjTimer = 0;
+function r5DjUpdate(dt) {
+  if (state.mode !== 'play') return;
+  r5DjTimer += dt;
+  if (r5DjTimer < 150) return;
+  r5DjTimer = 0;
+  if (state.radio >= 3) {
+    const line = pick(R5_DJ_LINES)();
+    toast('📻 ' + line);
+  }
+}
+
+// ---------- Round 5, part twenty-two: rival street racers ----------
+// Three rivals cruise the bay in tuned cars. Pull up beside one in your own
+// car and press E: they challenge you to a drag race to a nearby landmark.
+// Win and you take their wager; lose and the wager is theirs. Each rival
+// remembers the score and raises the stakes after you beat them.
+const R5_RIVALS = [
+  { name: 'Vex', color: 0x8a2be2, wager: 150, spot: { x: 20, z: 20 }, taunt: 'Too slow for the bay, rookie?' },
+  { name: 'Mara', color: 0x00b8a9, wager: 250, spot: { x: -20, z: -60 }, taunt: 'My grandma shifts faster than you.' },
+  { name: 'Dune', color: 0xd8a05a, wager: 400, spot: { x: 80, z: -20 }, taunt: 'Desert raised, bay tested. Bring it.' },
+];
+const r5Rivals = {
+  cars: [], wins: [0, 0, 0], losses: [0, 0, 0], race: null,
+  store: 'solmar-bay-r5-rivals',
+};
+function r5RivalsBuild() {
+  for (let i = 0; i < R5_RIVALS.length; i++) {
+    const rv = R5_RIVALS[i];
+    const spec = { type: 'muscle', color: rv.color, len: 4.4, w: 2.0, h: 0.6, topSpeed: 30 + i * 3 };
+    const mesh = makeCarMesh(spec);
+    mesh.position.set(rv.spot.x, 0, rv.spot.z);
+    mesh.rotation.y = rng() * Math.PI * 2;
+    scene.add(mesh);
+    const car = { mesh, spec, kind: 'car', speed: 0, steer: 0, stolen: false, r5Rival: i };
+    r5Rivals.cars.push(car);
+    parkedCars.push(car);
+    // A small flag marks each rival's cruising spot.
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.8), new THREE.MeshStandardMaterial({ color: rv.color, side: THREE.DoubleSide }));
+    flag.position.set(rv.spot.x, 3.2, rv.spot.z - 3); scene.add(flag);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+    pole.position.set(rv.spot.x - 0.7, 1.6, rv.spot.z - 3); scene.add(pole);
+  }
+}
+function r5RivalsSave() {
+  try { localStorage.setItem(r5Rivals.store, JSON.stringify({ wins: r5Rivals.wins, losses: r5Rivals.losses })); } catch (e) {}
+}
+function r5RivalsLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Rivals.store) || 'null');
+    if (s) { r5Rivals.wins = s.wins || [0, 0, 0]; r5Rivals.losses = s.losses || [0, 0, 0]; }
+  } catch (e) {}
+}
+function r5RivalsNear() {
+  if (!state.inCar) return -1;
+  for (let i = 0; i < r5Rivals.cars.length; i++) {
+    const c = r5Rivals.cars[i];
+    if (Math.hypot(state.inCar.mesh.position.x - c.mesh.position.x, state.inCar.mesh.position.z - c.mesh.position.z) < 7) return i;
+  }
+  return -1;
+}
+function r5RivalsChallenge(i) {
+  if (r5Rivals.race) { toast('A drag race is already running.'); return false; }
+  const rv = R5_RIVALS[i];
+  const stake = rv.wager + r5Rivals.wins[i] * 100;
+  if (state.cash < stake) { toast(rv.name + ': "Wager is $' + stake + '. Come back when you can cover it."'); return true; }
+  // Destination: a landmark 120-160u away in a random direction.
+  const px = state.inCar.mesh.position.x, pz = state.inCar.mesh.position.z;
+  const a = rng() * Math.PI * 2;
+  const dist = 130 + rng() * 30;
+  const dx = clamp(px + Math.sin(a) * dist, -260, 260);
+  const dz = clamp(pz + Math.cos(a) * dist, -260, 260);
+  r5Rivals.race = { rival: i, stake, tx: dx, tz: dz, timer: 75, ghost: 0 };
+  setBeacon(dx, dz);
+  toast('🏁 DRAG RACE vs ' + rv.name + '! $' + stake + ' on the line — first to the beacon wins! ' + rv.taunt);
+  speakLine(rv.name + ' wants a drag race. ' + stake + ' dollars. First to the beacon takes it.');
+  beep(990, 0.2, 'sine', 0.2);
+  return true;
+}
+function r5RivalsUpdate(dt) {
+  // Rivals cruise slowly around their spots when no race is running.
+  if (!r5Rivals.race) {
+    for (let i = 0; i < r5Rivals.cars.length; i++) {
+      const c = r5Rivals.cars[i];
+      if (c === state.inCar) continue; // never yank a car the player is driving
+      const spot = R5_RIVALS[i].spot;
+      const d = Math.hypot(c.mesh.position.x - spot.x, c.mesh.position.z - spot.z);
+      if (d > 12) {
+        const h = Math.atan2(spot.x - c.mesh.position.x, spot.z - c.mesh.position.z);
+        c.mesh.rotation.y = h;
+        c.mesh.position.x += Math.sin(h) * 4 * dt;
+        c.mesh.position.z += Math.cos(h) * 4 * dt;
+      } else {
+        c.mesh.rotation.y += dt * 0.2;
+      }
+    }
+    return;
+  }
+  const race = r5Rivals.race;
+  race.timer -= dt;
+  const rival = r5Rivals.cars[race.rival];
+  // The rival drives toward the beacon at their top speed, with a little wobble.
+  const dx = race.tx - rival.mesh.position.x, dz = race.tz - rival.mesh.position.z;
+  const dist = Math.hypot(dx, dz);
+  const h = Math.atan2(dx, dz);
+  rival.mesh.rotation.y = h;
+  const rSpeed = (rival.spec.topSpeed || 30) * 0.92 + Math.sin(state.time * 2 + race.rival) * 1.5;
+  rival.mesh.position.x += Math.sin(h) * rSpeed * dt;
+  rival.mesh.position.z += Math.cos(h) * rSpeed * dt;
+  rival.mesh.position.y = groundHeight(rival.mesh.position.x, rival.mesh.position.z);
+  const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
+  const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
+  const myDist = Math.hypot(px - race.tx, pz - race.tz);
+  if (myDist < 8) {
+    r5RivalsEndRace(true, race);
+    return;
+  }
+  if (dist < 8) {
+    r5RivalsEndRace(false, race);
+    return;
+  }
+  if (race.timer <= 0) {
+    // Whoever is closer when the clock dies takes it.
+    r5RivalsEndRace(myDist < dist, race);
+  }
+}
+function r5RivalsEndRace(won, race) {
+  r5Rivals.race = null;
+  beacon.visible = false;
+  const rv = R5_RIVALS[race.rival];
+  if (won) {
+    r5Rivals.wins[race.rival]++;
+    state.cash += race.stake;
+    toast('🏆 You beat ' + rv.name + ' in the drag race — $' + race.stake + '! (' + r5Rivals.wins[race.rival] + ' wins vs ' + rv.name + ')');
+    speakLine('You beat ' + rv.name + '! ' + race.stake + ' dollars, and the whole street saw it.');
+    chime(); addSkill('driving', 18); r5TerritoryGain(5, false);
+  } else {
+    r5Rivals.losses[race.rival]++;
+    state.cash = Math.max(0, state.cash - race.stake);
+    toast('💸 ' + rv.name + ' beat you to the beacon — you lose $' + race.stake + '. (' + rv.taunt + ')');
+    speakLine(rv.name + ' takes the wager. Rematch is always on the table.');
+    beep(160, 0.3, 'sawtooth', 0.12);
+  }
+  r5RivalsSave(); saveGame(); updateHUD();
+}
+
+// ---------- Round 5, part twenty-three: daily bay bonus ----------
+// The first time you play on a new game day, Marisol leaves a $100 welcome
+// bonus on the safehouse step. Small, steady, and it rewards coming back.
+const r5Daily = { lastDay: -1, claimed: 0, store: 'solmar-bay-r5-daily' };
+function r5DailySave() {
+  try { localStorage.setItem(r5Daily.store, JSON.stringify({ lastDay: r5Daily.lastDay, claimed: r5Daily.claimed })); } catch (e) {}
+}
+function r5DailyLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Daily.store) || 'null');
+    if (s) { r5Daily.lastDay = s.lastDay ?? -1; r5Daily.claimed = s.claimed || 0; }
+  } catch (e) {}
+}
+function r5DailyUpdate(dt) {
+  const dayNum = r5Season.idx * 4 + r5Season.day;
+  if (dayNum !== r5Daily.lastDay) {
+    r5Daily.lastDay = dayNum;
+    r5Daily.claimed++;
+    state.cash += 100;
+    toast('🎁 Daily bay bonus: Marisol left $100 on the safehouse step. Day ' + r5Daily.claimed + ' of showing up.');
+    speakLine('A hundred dollars, every day you show up. Marisol takes care of her own.');
+    chime(); r5DailySave(); saveGame(); updateHUD();
+  }
+}
+
+// ---------- Round 5, part twenty-four: garage loyalty ----------
+// Every fifth tune at Solmar Customs is free. The garage stamps your card
+// and the bay's best mechanics remember a loyal customer.
+const r5Loyalty = { stamps: 0, freeUsed: 0, store: 'solmar-bay-r5-loyalty' };
+function r5LoyaltySave() {
+  try { localStorage.setItem(r5Loyalty.store, JSON.stringify({ stamps: r5Loyalty.stamps, freeUsed: r5Loyalty.freeUsed })); } catch (e) {}
+}
+function r5LoyaltyLoad() {
+  try {
+    const s = JSON.parse(localStorage.getItem(r5Loyalty.store) || 'null');
+    if (s) { r5Loyalty.stamps = s.stamps || 0; r5Loyalty.freeUsed = s.freeUsed || 0; }
+  } catch (e) {}
+}
+function r5LoyaltyStamp() {
+  r5Loyalty.stamps++;
+  if (r5Loyalty.stamps >= 5) {
+    r5Loyalty.stamps = 0;
+    r5Loyalty.freeUsed++;
+    toast('🎟️ Loyalty card full — your next tune at Solmar Customs is FREE!');
+    speakLine('Five tunes, one free. The garage looks after its regulars.');
+    chime();
+  } else {
+    toast('🎟️ Loyalty stamp ' + r5Loyalty.stamps + '/5 at Solmar Customs.');
+  }
+  r5LoyaltySave();
+}
+function r5LoyaltyFree() {
+  return r5Loyalty.freeUsed > 0;
+}
+function r5LoyaltyRedeem() {
+  if (r5Loyalty.freeUsed <= 0) return false;
+  r5Loyalty.freeUsed--;
+  r5LoyaltySave();
+  return true;
+}
+
+// ---------- Round 5, part twenty-five: bay news ticker + forecast ----------
+// A news ticker runs across the toast line every few minutes with live bay
+// news, and the phone's stats screen gains a Round 5 forecast: the season,
+// the next tournament, the fleet's earnings, the stock portfolio and the
+// strongest district, all read from the live game state.
+const R5_TICKER = [
+  () => 'Bay news: ' + r5SeasonName() + ' continues, and the ' + R5_SEASONS[r5Season.idx].fest + ' is still paying visitors.',
+  () => 'Bay news: the fishing tournament ' + (r5Tourney.active ? 'is running right now — ' + r5Tourney.points + ' points on the board.' : 'starts in ' + Math.ceil(r5Tourney.nextIn) + ' seconds. Rods ready.'),
+  () => 'Bay news: your taxi fleet has earned $' + R5_EMPIRE.earned.toLocaleString('en-US') + ' in total. The depot thanks you.',
+  () => 'Bay news: ' + r5TerritoryLine() + '. Influence is earned, never given.',
+  () => 'Bay news: the stock market values your portfolio at $' + r5StocksValue().toFixed(2) + '. Dividends land at dawn.',
+  () => 'Bay news: Ryan and Ian are at ' + r5Bond.bond + ' bond out of 100. The bay ships them.',
+  () => 'Bay news: best stunt jump so far is ' + r5Stunt.bestDist.toFixed(0) + ' units. The yellow ramps are waiting.',
+  () => 'Bay news: ' + r5Cards.found.length + ' of 8 postcards collected. The full set pays $500.',
+  () => 'Bay news: ' + r5BoatRace.wins + ' boat races won, best time ' + (R5_BOAT_RACE.best ? R5_BOAT_RACE.best.toFixed(1) + 's' : 'unset') + '.',
+  () => 'Bay news: ' + r5Achieve.earned.length + ' of 12 achievements earned. The trophy shelf grows.',
+  () => 'Bay news: the pursuit helicopter is ' + (r5Heli.active ? 'overhead right now — lose the heat!' : 'parked. Enjoy the quiet.'),
+  () => 'Bay news: ' + (r5Season.front ? 'a ' + r5Season.front.name + ' is over the bay — wind ' + r5Season.wind + '.' : 'clear skies and a calm sea over Solmar Bay.'),
+];
+let r5TickerTimer = 0;
+function r5TickerUpdate(dt) {
+  if (state.mode !== 'play') return;
+  r5TickerTimer += dt;
+  if (r5TickerTimer < 180) return;
+  r5TickerTimer = 0;
+  toast('📰 ' + pick(R5_TICKER)());
+}
+function r5Forecast() {
+  // One block of text for the phone stats screen: everything Round 5 in a
+  // single glance, all numbers live from the game state.
+  const lines = [];
+  lines.push('Round 5 — ' + r5SeasonLine());
+  lines.push('Tournament: ' + (r5Tourney.active ? r5Tourney.points + ' pts, ' + Math.ceil(r5Tourney.timer) + 's left' : 'next in ' + Math.ceil(r5Tourney.nextIn) + 's') + ' · Best ' + r5Tourney.best + ' pts');
+  lines.push('Fleet: ' + R5_EMPIRE.cabs.length + ' cabs, ' + R5_EMPIRE.drivers + ' drivers, $' + r5EmpireIncomePerMin() + '/min, earned $' + R5_EMPIRE.earned.toLocaleString('en-US'));
+  lines.push('Stocks: $' + r5StocksValue().toFixed(2) + ' held · Bond ' + r5Bond.bond + '/100');
+  lines.push(r5TerritoryLine());
+  lines.push('Postcards ' + r5Cards.found.length + '/8 · Jumps ' + r5Stunt.jumps + ' · Boat wins ' + R5_BOAT_RACE.wins);
+  lines.push('Rivals: ' + R5_RIVALS.map((r, i) => r.name + ' ' + r5Rivals.wins[i] + '-' + r5Rivals.losses[i]).join(', '));
+  lines.push('Achievements ' + r5Achieve.earned.length + '/12 · Loyalty ' + r5Loyalty.stamps + '/5 · Daily bonuses ' + r5Daily.claimed);
+  lines.push('Heat: ' + (r5Heat.zone >= 0 ? R5_HEAT_ZONES[r5Heat.zone].name : 'none') + ' · Heli: ' + (r5Heli.active ? 'overhead' : 'parked'));
+  return lines.join('<br>');
+}
+function r5ForecastUpdate() {
+  // The forecast is rendered into the phone stats panel whenever it is open.
+  const el = document.getElementById('phoneStats');
+  if (!el || el.style.display !== 'block') return;
+  const marker = '<br>— Round 5 —<br>';
+  const html = el.innerHTML;
+  const base = html.includes(marker) ? html.slice(0, html.indexOf(marker)) : html;
+  el.innerHTML = base + marker + r5Forecast();
+}
+// Late Round 5 exports: these systems are defined after the main exports
+// block above, so they are attached here, once every const exists.
+// (Their build/load calls live here too, for the same reason.)
+r5RivalsBuild(); r5ResponderLoad(); r5AchieveLoad(); r5RivalsLoad(); r5DailyLoad(); r5LoyaltyLoad();
+Object.assign(window.__r5exports, {
+  heat: r5Heat, heatZones: R5_HEAT_ZONES, responder: R5_RESPONDER, meet: r5Meet,
+  achievements: R5_ACHIEVEMENTS, achieved: r5Achieve,
+  rivals: r5Rivals, rivalDefs: R5_RIVALS, daily: r5Daily, loyalty: r5Loyalty,
+  ticker: R5_TICKER, forecast: r5Forecast,
+  openAchievements: r5AchieveOpen, startResponder: r5ResponderStart,
+  challengeRival: r5RivalsChallenge, nearRival: r5RivalsNear,
+});
+
 function setupShot() {
   if (!state.shot) return;
   rng = mulberry32(seedParam); // re-seed for the shot (textures already built; logic uses it)
@@ -6261,6 +8594,7 @@ function animate() {
     updateDartChamp(dt);
     if (!state.inCar) updatePlayer(dt);
     if (state.inCar) updateCar(dt);
+    updateR5(dt);
     updateTraffic(dt);
     updatePeds(dt);
     updatePolice(dt);
@@ -6298,3 +8632,4 @@ setupShot();
 animate();
 window.__solmar = { state, buildingCount, playerState, parkedCars, camera, scene, police, policeBikes, roadblocks, extraVehicles, helis, boats, planes, traffic, buses, BUS_STOPS, CHARS, RADIO_STATIONS, WEAPONS, weaponPickups, vestPickups, ambientPlanes, movingBoats, hunters, AIRPORTS, RACE_CPS, RACE_START, animals, SHOPS, HEIST_STAGES, HEIST_REWARD, groundHeight, chute, heist, ownedProperties, skills, skillLevel, packages, packagesFound: () => packagesFound, golf, streetEvent: () => streetEvent, fireJob: () => fireJob, medicJob: () => medicJob, busJob: () => busJob, taxiJob: () => taxiJob, charMission: () => charMission, onRiver, fish, race, taxiActive: () => !!taxiCall, speak: speakLine, damage: damagePlayer, startRace, togglePhone, openShop, startHeist, startCharMission, startDriverJob, startGolf, collectPassiveIncome, spawnStreetEvent, togglePhotoMode, takePhoto, toggleScope, showStory };
 if (window.__r4exports) Object.assign(window.__solmar, window.__r4exports);
+if (window.__r5exports) { window.__solmar.r5 = window.__r5exports; window.__solmar.r5selftest = r5SelfTest; }

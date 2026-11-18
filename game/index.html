@@ -70,6 +70,19 @@
   .shopItem { display: flex; justify-content: space-between; padding: 9px 10px; font-size: 14px; font-weight: bold; color: #08222f; background: #7fb2e8; border: 0; border-radius: 8px; cursor: pointer; text-align: left; }
   .shopItem:hover { background: #a8ccf0; }
   .shopItem:disabled { opacity: 0.45; cursor: default; }
+  #dartsPanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 300px; background: rgba(20,10,16,0.97); border: 2px solid #ff2a7a; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  #dartsPanel.hidden { display: none; }
+  #dartsPanel h3 { margin: 0 0 8px; color: #ff9ad5; font-size: 17px; }
+  #boardPanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; background: rgba(10,22,34,0.97); border: 2px solid #2ee6ff; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  #boardPanel.hidden { display: none; }
+  #boardPanel h3 { margin: 0 0 8px; color: #2ee6ff; font-size: 17px; }
+  #leagueLine { font-size: 12px; color: #ffd23f; margin-top: 4px; }
+  #marketPanel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; background: rgba(20,16,8,0.97); border: 2px solid #ffd23f; border-radius: 14px; padding: 14px; color: #fff; font-size: 14px; pointer-events: auto; z-index: 7; }
+  #marketPanel.hidden { display: none; }
+  #marketPanel h3 { margin: 0 0 8px; color: #ffd23f; font-size: 17px; }
+</style>
+  #diveOverlay.hidden { display: none; }
+  #diveLine { font-size: 13px; color: #2ee6ff; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -88,6 +101,9 @@
     <div id="radio" style="font-size:13px;color:#bfe6ff">♪ Solmar FM 88.5</div>
     <div id="weapon" style="font-size:13px;color:#ffe27a">Pistol · ∞</div>
     <div id="packages" style="font-size:13px;color:#ffd23f">📦 0/50</div>
+    <div id="leagueLine">League S1 R1/5</div>
+    <div id="isleLine">🏝 Coral Cay shells 0/6</div>
+    <div id="diveLine"></div>
   </div>
   <canvas id="minimap" width="180" height="180"></canvas>
   <div id="objective" class="panel"><b id="objTitle">Solmar Bay</b><div class="sub" id="objText">Welcome to the bay.</div></div>
@@ -111,6 +127,24 @@
     <div id="shopItems"></div>
     <button class="phoneBtn" id="shopClose" style="margin-top:10px">Close (Esc)</button>
   </div>
+  <div id="dartsPanel" class="hidden">
+    <h3>🎯 Darts — The Pink Neon Bar</h3>
+    <div id="dartsInfo" style="font-size:13px;color:#ffd7ec"></div>
+    <div id="dartsAim" style="font-size:12px;color:#cfe8ff;margin-top:4px"></div>
+    <div style="font-size:12px;color:#cfe8ff;margin-top:6px">Arrow keys aim (the hand sways) · Enter throws · K closes. Turn of 3 darts: 60+ pays $120, 100+ pays $250, 140+ pays $400.</div>
+  </div>
+  <div id="marketPanel" class="hidden">
+    <h3 id="marketTitle">🏮 Coral Cay Market</h3>
+    <div id="marketCash" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="marketItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="marketClose" style="margin-top:10px">Close (E)</button>
+  </div>
+  <div id="boardPanel" class="hidden">
+    <h3>📌 Job Board — pick a job</h3>
+    <div id="boardStatus" style="font-size:13px;color:#7dff9a;margin-bottom:8px"></div>
+    <div id="boardItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    <button class="phoneBtn" id="boardClose" style="margin-top:10px">Close (Z)</button>
+  </div>
   <div id="phone" class="hidden">
     <h3>📱 Phone — <span id="phoneChar">Ian</span></h3>
     <div id="phoneMsg">Marisol: Ian, I got work. Check your objective.</div>
@@ -120,8 +154,9 @@
     <div id="phoneStats"></div>
     <div style="font-size:11px;color:#9fc3e8;margin-top:6px">Press U to close. Game keeps running.</div>
   </div>
-  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car / jack traffic / shop &nbsp;·&nbsp; F punch / fish &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; 1–8 weapons &nbsp;·&nbsp; V scope &nbsp;·&nbsp; R radio &nbsp;·&nbsp; C switch character &nbsp;·&nbsp; N character mission &nbsp;·&nbsp; B driver job &nbsp;·&nbsp; T race &nbsp;·&nbsp; U phone &nbsp;·&nbsp; G golf &nbsp;·&nbsp; O photo mode &nbsp;·&nbsp; J bail out &nbsp;·&nbsp; Shift fly up (heli) &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
+  <div id="hint" class="panel">WASD move &nbsp;·&nbsp; Mouse look &nbsp;·&nbsp; E enter car / jack traffic / shop &nbsp;·&nbsp; F punch / fish &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; 1–8 weapons &nbsp;·&nbsp; V scope &nbsp;·&nbsp; R radio &nbsp;·&nbsp; C switch character &nbsp;·&nbsp; N character mission &nbsp;·&nbsp; B driver job &nbsp;·&nbsp; T race &nbsp;·&nbsp; U phone &nbsp;·&nbsp; G golf &nbsp;·&nbsp; O photo mode &nbsp;·&nbsp; J bail out &nbsp;·&nbsp; L Marisol chain &nbsp;·&nbsp; X photo / dive &nbsp;·&nbsp; K darts &nbsp;·&nbsp; Z job board &nbsp;·&nbsp; Shift fly up (heli) &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M mute</div>
 </div>
+<div id="diveOverlay" class="hidden"></div>
 <div id="photoBar" class="hidden">📷 PHOTO MODE — WASD move camera · Q/E up/down · drag to look · <b>Enter</b> take photo · O to exit</div>
 <div id="start" class="screen">
   <h1>SOLMAR BAY</h1>

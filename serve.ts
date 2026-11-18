@@ -40,7 +40,35 @@ const MIME: Record<string, string> = {
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   if (url.pathname === '/health') {
-    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 4 });
+    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 5 });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
+  if (url.pathname === '/r5-features.json') {
+    const features = [
+      { id: 'garage', what: 'paint, wheels, engine and nitro tuning for any car', key: 'E or Y at Solmar Customs' },
+      { id: 'casino', what: 'slots and blackjack for in-game cash only', key: 'E or I at the Solmar Sands' },
+      { id: 'fishing-tournament', what: 'two-minute tournaments, points per catch, tackle shop', key: 'automatic; tackle on the phone' },
+      { id: 'pursuit-heli', what: 'police helicopter with a searchlight at 3 stars, spike strips at 4', key: 'automatic at high wanted' },
+      { id: 'seasons', what: 'spring, summer, autumn, winter, four days each, with weather fronts', key: 'automatic' },
+      { id: 'taxi-empire', what: 'buy up to 3 cabs, hire drivers, earn per minute, parcel runs', key: 'E at the yellow depot' },
+      { id: 'stunt-jumps', what: 'six ramps, airtime and distance scored, local leaderboard', key: 'drive fast over a yellow ramp' },
+      { id: 'postcards', what: 'eight golden postcards at scenic spots, $60 each, $500 for the set', key: 'E at a floating card' },
+      { id: 'flight-school', what: 'three lessons in a stunt plane at Solmar Intl', key: 'E at the flight school' },
+      { id: 'gym', what: 'five training plans that bank real skill XP, $30 a session', key: 'E at Bay Iron' },
+      { id: 'stocks', what: 'six bay companies, prices move every minute, dividends at dawn', key: 'Stocks on the phone' },
+      { id: 'districts', what: 'five districts, influence pays $40 a minute above 60', key: 'work anywhere' },
+      { id: 'bond', what: 'gifts and sunset date nights for Ryan and Ian', key: 'Gifts and dates on the phone' },
+      { id: 'boat-races', what: 'three-buoy marina race, 150 seconds, up to $450', key: 'E at the pink marina flag' },
+      { id: 'safehouse', what: 'furniture comfort that heals, fast travel for $25 a hop', key: 'E at the harbour safehouse' },
+      { id: 'heat-zones', what: 'three zones where the law watches closer', key: 'automatic' },
+      { id: 'responder-shifts', what: 'ambulance and fire truck night shifts, $220 a shift', key: 'E at the hospital or fire station' },
+      { id: 'car-meets', what: 'Friday marina meets, best tuned car wins $300', key: 'Fridays at the marina' },
+      { id: 'achievements', what: 'twelve achievements with one-time cash bonuses', key: 'Achievements on the phone' },
+      { id: 'dj-chatter', what: 'live bay news on the two new radio stations', key: 'R to stations 4 and 5' },
+    ];
+    const body = JSON.stringify({ round: 5, features }, null, 2);
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
     response.end(body);
     return;
@@ -59,6 +87,15 @@ createServer((request, response) => {
       { id: 'keeper-quest', what: 'three fish for the lighthouse keeper', key: 'E near the lighthouse' },
     ];
     const body = JSON.stringify({ round: 4, features }, null, 2);
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
+  if (url.pathname === '/r5-health') {
+    // A second health endpoint that also reports the Round 5 feature count,
+    // so a smoke test can confirm the Round 5 build without loading the game.
+    const features = 24;
+    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 5, roundFiveSystems: features });
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
     response.end(body);
     return;

@@ -45,6 +45,47 @@ createServer((request, response) => {
     response.end(body);
     return;
   }
+  if (url.pathname === '/r6-features.json') {
+    const features = [
+      { id: 'metro', what: 'four underground stations, metro card $40, fare $5, fare-dodging heat', key: 'E at a station' },
+      { id: 'food-truck', what: 'buy a truck, five menus, six pitches, tips, health rating', key: 'E at a pitch flag' },
+      { id: 'surfing', what: 'three surf breaks, board shop, rescue swims, competitions', key: 'E at the surf shop or a buoy' },
+      { id: 'skate-park', what: 'tricks, combos, competitions, sponsor deals', key: 'E at Concrete Wave Park' },
+      { id: 'stunt-career', what: 'stunt-double gigs, film shoots, star meter', key: 'E at Solmar Studios' },
+      { id: 'nightclub', what: 'buy the club, book DJs, door and VIP income, vibe meter', key: 'E at The Bluefin' },
+      { id: 'tattoo-parlor', what: 'get inked for stat boosts, tattoo clients, flash book', key: 'E at Ink & Salt' },
+      { id: 'street-art', what: 'six murals, spray cans, crew rep, tagging heat', key: 'E at a mural wall' },
+      { id: 'horse-ranch', what: 'buy and train horses, ranch races, stable income', key: 'E at Rancho del Sol' },
+      { id: 'golf', what: 'nine-hole course, tournaments, caddy tips, mini-golf', key: 'E at Solmar Greens' },
+      { id: 'bowling', what: 'leagues, perfect-game bonus, snack bar', key: 'E at Strike Lanes' },
+      { id: 'arcade', what: 'five retro cabinets, high scores, tokens, prize shelf', key: 'E at Neon Palace' },
+      { id: 'library', what: 'twelve rare books, reading boosts, book club', key: 'E at Solmar Library' },
+      { id: 'museum', what: 'exhibits, guided tours, artifact hunts, night event', key: 'E at the Bay Museum' },
+      { id: 'carnival', what: 'Ferris wheel, bumper cars, ring toss, fireworks show', key: 'E at the Solmar Fair' },
+      { id: 'zoo', what: 'animal encounters, feeding, safari photos', key: 'E at the zoo gate' },
+      { id: 'photo-studio', what: 'portrait sessions, photo contests, gallery sales', key: 'E at Lightbox Studio' },
+      { id: 'wedding', what: 'Ryan and Ian wedding storyline, five vendor quests, ceremony', key: 'E at a vendor or the chapel' },
+      { id: 'band', what: 'form a band, gigs at four venues, album sales, fans', key: 'E at a venue stage' },
+      { id: 'busking', what: 'five street pitches, hat tips, crowd meter', key: 'E at a pitch' },
+      { id: 'real-estate', what: 'buy rundown flats, renovate, flip for profit', key: 'E at a flat' },
+      { id: 'pawn-shop', what: 'ten antiques, haggling, appraisal', key: 'E at Old Tom\'s' },
+      { id: 'firefighter', what: 'fire-truck callouts, hose play, station upgrades', key: 'E at the fire station' },
+      { id: 'paramedic', what: 'ambulance callouts, triage, hospital reputation', key: 'E at the hospital' },
+    ];
+    const body = JSON.stringify({ round: 6, features }, null, 2);
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
+  if (url.pathname === '/r6-health') {
+    // A second health endpoint that also reports the Round 6 feature count,
+    // so a smoke test can confirm the Round 6 build without loading the game.
+    const features = 24;
+    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 6, roundSixSystems: features });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
   if (url.pathname === '/r5-features.json') {
     const features = [
       { id: 'garage', what: 'paint, wheels, engine and nitro tuning for any car', key: 'E or Y at Solmar Customs' },

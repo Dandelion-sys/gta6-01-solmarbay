@@ -1381,6 +1381,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyE' && r5ResponderNear()) { r5ResponderStart(r5ResponderNear()); return; }
   if (e.code === 'KeyE' && state.inCar && r5RivalsNear() >= 0) { r5RivalsChallenge(r5RivalsNear()); return; }
   if (e.code === 'KeyE' && r5CardsNear() >= 0) { r5CardsCollect(r5CardsNear()); return; }
+  if (e.code === 'KeyE' && r6KeyE()) return;
   if (e.code === 'KeyY' && r5GarageOpen()) return;
   if (e.code === 'KeyI' && r5CasinoOpen()) return;
   if (e.code === 'KeyE') tryEnterExitVehicle();
@@ -2193,6 +2194,7 @@ function updateHUD() {
   const raceEl = document.getElementById('raceInfo');
   if (raceEl) raceEl.textContent = heist.active ? '💰 HEIST — stage ' + (heist.stage + 1) + '/' + HEIST_STAGES.length + ' · ' + Math.max(0, Math.ceil(heist.timer)) + 's left' : race.active ? '🏁 RACE — checkpoint ' + race.cp + '/' + RACE_CPS.length + ' · ' + Math.max(0, Math.ceil(race.timer)) + 's left' : '';
   r5HudLine();
+  r6HudLine();
 }
 function drawMinimap() {
   const W = 180, scale = W / 620;
@@ -2254,6 +2256,7 @@ function drawMinimap() {
   if (streetEvent) dot(streetEvent.ped.x, streetEvent.ped.z, '#ff8c1a', 5);
   if (golf.active) dot(100, -160, '#2ecc71', 5);
   r5MinimapDots(dot);
+  r6MinimapDots(dot);
   // Feature 37: fire station (F) + hospital (H) + bus stops (B)
   mm.fillStyle = '#c0392b'; mm.fillRect((-132 + 310) * scale - 4, (60 + 310) * scale - 4, 8, 8);
   mm.fillStyle = '#fff'; mm.font = 'bold 7px Arial'; mm.fillText('F', (-132 + 310) * scale - 2.5, (60 + 310) * scale + 2.5);
@@ -8514,6 +8517,2775 @@ function setupShot() {
   setTimeout(() => { renderer.render(scene, camera); window.__shotReady = true; }, 600);
 }
 
+// ---------- Round 6, part one: shared helpers, shot props, metro, food truck ----------
+// Every Round 6 line below was composed fresh in this session. The helpers
+// here are the only shared code: distance checks from the player (on foot or
+// in a vehicle), safe cash moves, and one dynamic panel all 24 systems reuse
+// instead of stamping a separate DOM panel per system.
+function r6PlayerPos() {
+  if (state.inCar && state.inCar.mesh) return { x: state.inCar.mesh.position.x, z: state.inCar.mesh.position.z };
+  return { x: playerState.x, z: playerState.z };
+}
+function r6DistTo(x, z) {
+  const p = r6PlayerPos();
+  return Math.hypot(p.x - x, p.z - z);
+}
+function r6Near(x, z, r) { return r6DistTo(x, z) < r; }
+function r6Spend(amount) {
+  if (state.cash < amount) { toast('Not enough cash — need $' + amount + '.'); return false; }
+  state.cash -= amount; r6Ledger.spent += amount; r6LedgerSave(); updateHUD(); return true;
+}
+function r6Earn(amount, msg) {
+  state.cash += amount; chime(); if (msg) toast(msg + ' +$' + amount);
+  r6Ledger.earned += amount; r6Ledger.jobs++; r6LedgerSave();
+  saveGame(); updateHUD();
+}
+function r6Clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function r6Pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+const R6_STORE = 'solmar-r6-';
+function r6Save(key, obj) {
+  try { localStorage.setItem(R6_STORE + key, JSON.stringify(obj)); } catch (e) {}
+}
+function r6Load(key, fallback) {
+  try { const s = JSON.parse(localStorage.getItem(R6_STORE + key) || 'null'); return s === null ? fallback : s; } catch (e) { return fallback; }
+}
+// One dynamic panel for all Round 6 systems: title, body lines, action buttons.
+function r6ShowPanel(title, lines, buttons) {
+  const panel = document.getElementById('r6Panel');
+  const body = document.getElementById('r6PanelBody');
+  document.getElementById('r6PanelTitle').textContent = title;
+  body.innerHTML = '';
+  for (const line of lines) {
+    const div = document.createElement('div');
+    div.textContent = line;
+    div.style.margin = '3px 0';
+    body.appendChild(div);
+  }
+  const row = document.createElement('div');
+  row.style.marginTop = '10px';
+  for (const b of buttons) {
+    const btn = document.createElement('button');
+    btn.className = 'r6btn';
+    btn.textContent = b.label;
+    if (b.disabled) btn.disabled = true;
+    btn.addEventListener('click', () => { b.fn(); });
+    row.appendChild(btn);
+  }
+  body.appendChild(row);
+  panel.classList.remove('hidden');
+}
+function r6ClosePanel() { document.getElementById('r6Panel').classList.add('hidden'); }
+function r6PanelButton(label, fn, disabled) { return { label, fn, disabled: !!disabled }; }
+
+// Visible props for the four deterministic screenshots. Each one sits inside
+// a shot framing so the regenerated screenshots differ from Round 5: carnival
+// fireworks high over the title skyline, a food truck and billboards downtown
+// for the drive shot, a striped police roadblock for the chase shot, and gold
+// mission crates with a tall banner at the airport beacon for the mission shot.
+const R6_SHOT_PROPS = { fireworks: [], truck: null, roadblock: [], missionCrates: [] };
+function r6ShotPropsBuild() {
+  const burstCols = [0xff5a5a, 0xffd23f, 0x2ee6ff, 0xff9ad5, 0x7dff9a];
+  for (let b = 0; b < 3; b++) {
+    const bx = -30 + b * 32, by = 58 + b * 7, bz = -14 + b * 18;
+    for (let i = 0; i < 9; i++) {
+      const ang = (i / 9) * Math.PI * 2;
+      const spark = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 8), new THREE.MeshBasicMaterial({ color: burstCols[(b + i) % burstCols.length] }));
+      spark.position.set(bx + Math.cos(ang) * 5.5, by + Math.sin(ang) * 4.2, bz + Math.sin(ang * 2) * 2.5);
+      scene.add(spark); R6_SHOT_PROPS.fireworks.push(spark);
+    }
+    const core = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 10), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    core.position.set(bx, by, bz); scene.add(core); R6_SHOT_PROPS.fireworks.push(core);
+  }
+  // Food truck parked downtown, in the drive shot's line of sight.
+  const truck = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.4, 2.2), new THREE.MeshStandardMaterial({ color: 0xff7a2a, roughness: 0.5 }));
+  body.position.y = 1.5; truck.add(body);
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 2.1), new THREE.MeshStandardMaterial({ color: 0xffe27a, roughness: 0.5 }));
+  cab.position.set(2.9, 1.1, 0); truck.add(cab);
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.15, 2.8), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, roughness: 0.6 }));
+  awning.position.set(-0.4, 2.9, 0); truck.add(awning);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95 });
+  for (const [wx, wz] of [[-1.6, 1.15], [1.8, 1.15], [-1.6, -1.15], [1.8, -1.15]]) {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.3, 10), wheelMat);
+    w.rotation.x = Math.PI / 2; w.position.set(wx, 0.42, wz); truck.add(w);
+  }
+  truck.position.set(-6, 0, 22); truck.rotation.y = 0.35; scene.add(truck);
+  R6_SHOT_PROPS.truck = truck;
+  // Two glowing billboards flanking the downtown drive route.
+  for (const [bx, bz, col] of [[-24, 30, 0xff2a7a], [4, 34, 0x2ee6ff]]) {
+    addBox(1, 11, 1, 0x3a3a44, bx, 5.5, bz);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(8, 3.4, 0.4), new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.55 }));
+    board.position.set(bx, 12, bz); scene.add(board);
+  }
+  // Striped police roadblock across the chase road at x -66..-54, z 13.
+  const stripeMatA = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
+  const stripeMatB = new THREE.MeshStandardMaterial({ color: 0xff2222, roughness: 0.7 });
+  for (let i = 0; i < 4; i++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(3, 1.1, 0.5), i % 2 === 0 ? stripeMatA : stripeMatB);
+    bar.position.set(-66 + i * 3.4, 0.75, 13); scene.add(bar); R6_SHOT_PROPS.roadblock.push(bar);
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.5, 0.3), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+    leg.position.set(-66 + i * 3.4, 0.25, 13); scene.add(leg);
+  }
+  for (const [cx, cz] of [[-67, 15.5], [-53, 15.5], [-60, 11]]) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1, 8), new THREE.MeshStandardMaterial({ color: 0xff7a1a, roughness: 0.8 }));
+    cone.position.set(cx, 0.5, cz); scene.add(cone); R6_SHOT_PROPS.roadblock.push(cone);
+  }
+  // Gold mission crates and a tall banner beside the airport beacon.
+  for (let i = 0; i < 3; i++) {
+    const crate = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), new THREE.MeshStandardMaterial({ color: 0xd8a020, roughness: 0.6, metalness: 0.4 }));
+    crate.position.set(-196 + i * 2.1, 0.8, -46 + (i % 2) * 2.4); crate.rotation.y = i * 0.5; scene.add(crate);
+    R6_SHOT_PROPS.missionCrates.push(crate);
+  }
+  addBox(0.5, 14, 0.5, 0x2a2a33, -192, 7, -48);
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(3.4, 2, 0.2), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.5 }));
+  banner.position.set(-192, 12.4, -48); scene.add(banner);
+}
+
+// ---------- Round 6 system 1: Solmar Metro ----------
+// Four underground stations under the bay. Buy a metro card once, ride cheap;
+// ride without a ticket and the inspectors may catch you — wanted +1.
+const R6_METRO_STATIONS = [
+  { name: 'Marina Metro', x: 44, z: 52, color: 0x2ee6ff, desc: 'under the marina promenade' },
+  { name: 'Old Town Metro', x: -28, z: 8, color: 0xffd23f, desc: 'beneath the old plaza' },
+  { name: 'Casino Row Metro', x: 62, z: -82, color: 0xff2a7a, desc: 'below the neon strip' },
+  { name: 'North Docks Metro', x: -62, z: -88, color: 0x7dff9a, desc: 'under the container yard' },
+];
+const R6_METRO_CARD_PRICE = 40;
+const R6_METRO_FARE = 5;
+let r6Metro = { card: false, rides: 0, dodged: 0, caught: 0, riding: null, timer: 0, from: -1, to: -1 };
+function r6MetroBuild() {
+  for (const st of R6_METRO_STATIONS) {
+    addBox(7, 1.2, 5, 0x3a3f4a, st.x, 0.6, st.z);
+    addBox(6, 3.2, 0.6, 0x22262e, st.x, 1.6, st.z - 2.6);
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(5.4, 1.1, 0.3), new THREE.MeshStandardMaterial({ color: st.color, emissive: st.color, emissiveIntensity: 0.6 }));
+    sign.position.set(st.x, 3.6, st.z - 2.4); scene.add(sign);
+    for (let s = 0; s < 3; s++) addBox(5.6, 0.35, 0.8, 0x8a8f96, st.x, 0.3 + s * 0.35, st.z + 1.2 + s * 0.7);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff6c0 }));
+    lamp.position.set(st.x + 3.4, 2.6, st.z + 2); scene.add(lamp);
+  }
+}
+function r6MetroNear() {
+  for (let i = 0; i < R6_METRO_STATIONS.length; i++) if (r6Near(R6_METRO_STATIONS[i].x, R6_METRO_STATIONS[i].z, 8)) return i;
+  return -1;
+}
+function r6MetroFareDue() { return r6Metro.card ? 0 : R6_METRO_FARE; }
+function r6MetroOpen() {
+  const at = r6MetroNear();
+  if (at < 0) return false;
+  const st = R6_METRO_STATIONS[at];
+  const lines = [
+    st.name + ' — ' + st.desc + '.',
+    'Metro card: ' + (r6Metro.card ? 'owned (rides free)' : 'not owned — $' + R6_METRO_CARD_PRICE),
+    'Fare without a card: $' + R6_METRO_FARE + ' a ride. Rides taken: ' + r6Metro.rides + '.',
+    'Fare dodges: ' + r6Metro.dodged + ' (caught ' + r6Metro.caught + ' times).',
+    'Pick a destination — the train leaves at once.',
+  ];
+  const buttons = [];
+  if (!r6Metro.card) buttons.push(r6PanelButton('Buy metro card — $' + R6_METRO_CARD_PRICE, () => { if (r6Spend(R6_METRO_CARD_PRICE)) { r6Metro.card = true; r6MetroSave(); r6MetroOpen(); } }));
+  for (let i = 0; i < R6_METRO_STATIONS.length; i++) {
+    if (i === at) continue;
+    const dest = R6_METRO_STATIONS[i];
+    buttons.push(r6PanelButton('Ride to ' + dest.name + (r6MetroFareDue() ? ' — $' + R6_METRO_FARE : ' — free'), () => { r6MetroRide(at, i); }));
+  }
+  buttons.push(r6PanelButton('Dodge the fare (risky)', () => { r6MetroDodge(at); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🚇 ' + st.name, lines, buttons);
+  return true;
+}
+function r6MetroRide(from, to) {
+  if (!r6Metro.card && !r6Spend(R6_METRO_FARE)) return;
+  r6Metro.riding = true; r6Metro.from = from; r6Metro.to = to; r6Metro.timer = 2;
+  r6ClosePanel();
+  toast('Metro departing — ' + R6_METRO_STATIONS[to].name + ' in 2 seconds.');
+}
+function r6MetroDodge(from) {
+  const dest = (from + 1 + Math.floor(Math.random() * 3)) % R6_METRO_STATIONS.length;
+  r6Metro.dodged++;
+  if (Math.random() < 0.3) {
+    r6Metro.caught++;
+    state.wanted = Math.min(5, state.wanted + 1);
+    toast('Inspector caught you dodging the fare! Wanted up.');
+    r6MetroSave(); updateHUD(); return;
+  }
+  r6Metro.riding = true; r6Metro.from = from; r6Metro.to = dest; r6Metro.timer = 2;
+  r6ClosePanel();
+  toast('You slipped past the barrier — train to ' + R6_METRO_STATIONS[dest].name + '.');
+}
+function r6MetroUpdate(dt) {
+  if (!r6Metro.riding) return;
+  r6Metro.timer -= dt;
+  if (r6Metro.timer > 0) return;
+  r6Metro.riding = false; r6Metro.rides++;
+  const dest = R6_METRO_STATIONS[r6Metro.to];
+  if (state.inCar) { state.inCar = null; }
+  playerState.x = dest.x + 4; playerState.z = dest.z + 4;
+  if (player) player.visible = true;
+  toast('Arrived at ' + dest.name + '.');
+  r6MetroSave(); updateHUD();
+}
+function r6MetroSave() { r6Save('metro', { card: r6Metro.card, rides: r6Metro.rides, dodged: r6Metro.dodged, caught: r6Metro.caught }); }
+function r6MetroLoad() {
+  const s = r6Load('metro', null);
+  if (s) { r6Metro.card = !!s.card; r6Metro.rides = s.rides || 0; r6Metro.dodged = s.dodged || 0; r6Metro.caught = s.caught || 0; }
+}
+
+// ---------- Round 6 system 2: food truck ----------
+// Buy a truck, cook five menus, park at six pitches around the bay. Hungry
+// crowds pay the menu price plus tips; a five-star health rating doubles tips.
+const R6_FOOD_MENUS = [
+  { name: 'Bay Fish Tacos', price: 14, cost: 4, prep: 6, desc: 'crispy fish, lime slaw, warm tortilla' },
+  { name: 'Smoky Rib Stack', price: 22, cost: 8, prep: 10, desc: 'slow ribs, charred corn, pickles' },
+  { name: 'Sunset Noodle Bowl', price: 16, cost: 5, prep: 8, desc: 'chilli noodles, egg, spring onion' },
+  { name: 'Marina Veggie Wrap', price: 12, cost: 3, prep: 5, desc: 'grilled veg, hummus, flatbread' },
+  { name: 'Golden Fried Shrimp', price: 19, cost: 7, prep: 9, desc: 'crisp shrimp, garlic butter, rice' },
+];
+const R6_FOOD_PITCHES = [
+  { name: 'Marina Promenade', x: 40, z: 44, crowd: 5 },
+  { name: 'Old Plaza', x: -24, z: 4, crowd: 4 },
+  { name: 'Beachfront', x: 96, z: 120, crowd: 5 },
+  { name: 'Casino Row', x: 58, z: -76, crowd: 3 },
+  { name: 'North Docks Gate', x: -58, z: -80, crowd: 3 },
+  { name: 'Airport Forecourt', x: -176, z: -28, crowd: 4 },
+];
+const R6_FOOD_TRUCK_PRICE = 2500;
+let r6Food = { owned: false, menu: 0, served: 0, tips: 0, rating: 3, hygiene: 0, serveTimer: 0, pitch: -1 };
+function r6FoodBuild() {
+  for (const p of R6_FOOD_PITCHES) {
+    addBox(5, 0.4, 5, 0x9a8a6a, p.x, 0.2, p.z);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3, 8), new THREE.MeshStandardMaterial({ color: 0x666666 }));
+    post.position.set(p.x + 2.4, 1.5, p.z + 2.2); scene.add(post);
+    const flag = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.1), new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0xaa4400, emissiveIntensity: 0.5 }));
+    flag.position.set(p.x + 2.4, 3.2, p.z + 2.2); scene.add(flag);
+  }
+}
+function r6FoodPitchNear() {
+  for (let i = 0; i < R6_FOOD_PITCHES.length; i++) if (r6Near(R6_FOOD_PITCHES[i].x, R6_FOOD_PITCHES[i].z, 9)) return i;
+  return -1;
+}
+function r6FoodOpen() {
+  const pitch = r6FoodPitchNear();
+  if (pitch < 0) return false;
+  if (!r6Food.owned) {
+    r6ShowPanel('🚚 Solmar Food Truck', [
+      'A used truck with a working grill — $' + R6_FOOD_TRUCK_PRICE + '.',
+      'Five menus, six pitches, tips on top of every sale.',
+      'Keep the hygiene rating high and tips double at five stars.',
+    ], [
+      r6PanelButton('Buy the truck — $' + R6_FOOD_TRUCK_PRICE, () => { if (r6Spend(R6_FOOD_TRUCK_PRICE)) { r6Food.owned = true; r6FoodSave(); r6FoodOpen(); } }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  const menu = R6_FOOD_MENUS[r6Food.menu];
+  const lines = [
+    'Truck owned. Served: ' + r6Food.served + ' · Tips banked: $' + r6Food.tips + '.',
+    'Health rating: ' + '★'.repeat(r6Food.rating) + '☆'.repeat(5 - r6Food.rating) + ' (hygiene checks: ' + r6Food.hygiene + ').',
+    'Menu now: ' + menu.name + ' — sells $' + menu.price + ', costs $' + menu.cost + ' to cook.',
+    pitch >= 0 ? 'Parked at ' + R6_FOOD_PITCHES[pitch].name + ' (crowd ' + R6_FOOD_PITCHES[pitch].crowd + '/5). Customers arrive on their own.' : 'Drive to a pitch (orange flag) to start serving.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_FOOD_MENUS.length; i++) buttons.push(r6PanelButton((i === r6Food.menu ? '✓ ' : '') + R6_FOOD_MENUS[i].name + ' $' + R6_FOOD_MENUS[i].price, () => { r6Food.menu = i; r6FoodSave(); r6FoodOpen(); }));
+  buttons.push(r6PanelButton('Hygiene check — $60', () => { if (r6Spend(60)) { r6Food.rating = Math.min(5, r6Food.rating + 1); r6Food.hygiene++; r6FoodSave(); toast('Health inspector smiles. Rating up!'); r6FoodOpen(); } }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🚚 Food Truck', lines, buttons);
+  return true;
+}
+function r6FoodServeTick() {
+  const pitch = r6FoodPitchNear();
+  if (pitch < 0) { r6Food.pitch = -1; return; }
+  r6Food.pitch = pitch;
+  const menu = R6_FOOD_MENUS[r6Food.menu];
+  const tipMult = r6Food.rating >= 5 ? 2 : 1;
+  const tip = Math.floor((2 + Math.random() * 4) * tipMult);
+  const profit = menu.price - menu.cost + tip;
+  r6Food.served++; r6Food.tips += tip;
+  r6Earn(profit, 'Sold ' + menu.name + ' at ' + R6_FOOD_PITCHES[pitch].name + ' (tip $' + tip + ').');
+  if (r6Food.served % 12 === 0 && r6Food.rating < 5) { r6Food.rating++; toast('Word of mouth grows — health rating up!'); }
+  r6FoodSave();
+}
+function r6FoodUpdate(dt) {
+  if (!r6Food.owned) return;
+  r6Food.serveTimer -= dt;
+  if (r6Food.serveTimer > 0) return;
+  if (r6FoodPitchNear() >= 0) {
+    const pitch = R6_FOOD_PITCHES[r6FoodPitchNear()];
+    r6Food.serveTimer = 14 - pitch.crowd * 1.5;
+    r6FoodServeTick();
+  } else r6Food.serveTimer = 2;
+}
+function r6FoodSave() { r6Save('food', { owned: r6Food.owned, menu: r6Food.menu, served: r6Food.served, tips: r6Food.tips, rating: r6Food.rating, hygiene: r6Food.hygiene }); }
+function r6FoodLoad() {
+  const s = r6Load('food', null);
+  if (s) { r6Food.owned = !!s.owned; r6Food.menu = s.menu || 0; r6Food.served = s.served || 0; r6Food.tips = s.tips || 0; r6Food.rating = s.rating || 3; r6Food.hygiene = s.hygiene || 0; }
+}
+// ---------- Round 6 system 3: surfing + lifeguard ----------
+// Three surf breaks off the east beach. Buy a board, paddle out, ride the
+// wave for points; lifeguard rescues pay too, and the monthly comp pays $450.
+const R6_SURF_BREAKS = [
+  { name: 'Sunset Point', x: 218, z: 60, wave: 3, desc: 'long gentle rollers, good for learners' },
+  { name: 'Coral Barrel', x: 224, z: 130, wave: 5, desc: 'fast hollow barrels over the reef' },
+  { name: 'North Swell', x: 206, z: -40, wave: 4, desc: 'heavy winter swell, experts only' },
+];
+const R6_SURF_BOARDS = [
+  { name: 'Foam Learner', price: 120, speed: 1, desc: 'soft, slow, forgiving' },
+  { name: 'Funboard 7ft', price: 320, speed: 2, desc: 'steady all-rounder' },
+  { name: 'Shortboard Pro', price: 650, speed: 3, desc: 'sharp turns, fast drops' },
+  { name: 'Barrel Hunter', price: 950, speed: 4, desc: 'built for hollow tubes' },
+];
+let r6Surf = { board: -1, skill: 0, rides: 0, best: 0, rescues: 0, compWins: 0, compTimer: 180, rescueTimer: 45, rescueAt: -1 };
+function r6SurfBuild() {
+  addBox(8, 4, 6, 0x2e6fb0, 96, 2, 108);
+  addBox(8.6, 0.5, 6.6, 0xffd23f, 96, 4.3, 108);
+  const shopSign = new THREE.Mesh(new THREE.BoxGeometry(6, 1.2, 0.3), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, emissive: 0x2288aa, emissiveIntensity: 0.6 }));
+  shopSign.position.set(96, 3.4, 104.8); scene.add(shopSign);
+  for (let i = 0; i < 3; i++) {
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.6, 0.15), new THREE.MeshStandardMaterial({ color: [0xff5a5a, 0xffd23f, 0x7dff9a][i], roughness: 0.4 }));
+    board.position.set(93 + i * 2.4, 1.6, 104.9); board.rotation.z = 0.15; scene.add(board);
+  }
+  for (const br of R6_SURF_BREAKS) {
+    const buoy = new THREE.Mesh(new THREE.SphereGeometry(0.9, 10, 10), new THREE.MeshStandardMaterial({ color: 0xff7a2a, emissive: 0xaa4400, emissiveIntensity: 0.4 }));
+    buoy.position.set(br.x, 0.6, br.z); scene.add(buoy);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(4, 0.25, 8, 24), new THREE.MeshBasicMaterial({ color: 0x2ee6ff }));
+    ring.rotation.x = Math.PI / 2; ring.position.set(br.x, 0.3, br.z); scene.add(ring);
+  }
+  const tower = new THREE.Mesh(new THREE.BoxGeometry(3, 1.6, 3), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+  tower.position.set(102, 4.4, 116); scene.add(tower);
+  for (const [lx, lz] of [[101, 115], [103, 115], [101, 117], [103, 117]]) addBox(0.3, 3.6, 0.3, 0x8a6a3a, lx, 1.8, lz);
+  addBox(1.2, 0.8, 1.2, 0xff2222, 102, 5.6, 116);
+}
+function r6SurfBreakNear() {
+  for (let i = 0; i < R6_SURF_BREAKS.length; i++) if (r6DistTo(R6_SURF_BREAKS[i].x, R6_SURF_BREAKS[i].z) < 9) return i;
+  return -1;
+}
+function r6SurfShopNear() { return r6Near(96, 108, 9); }
+function r6SurfScore(brk) {
+  const board = r6Surf.board >= 0 ? R6_SURF_BOARDS[r6Surf.board] : { speed: 0 };
+  return Math.round((brk.wave * 12 + board.speed * 14 + r6Surf.skill * 2 + Math.random() * 18));
+}
+function r6SurfOpen() {
+  if (r6SurfBreakNear() >= 0) {
+    const brk = R6_SURF_BREAKS[r6SurfBreakNear()];
+    r6ShowPanel('🏄 ' + brk.name, [
+      brk.desc + ' (wave ' + brk.wave + '/5).',
+      'Your board: ' + (r6Surf.board >= 0 ? R6_SURF_BOARDS[r6Surf.board].name : 'none — buy one at the surf shop first') + '.',
+      'Skill: ' + r6Surf.skill + ' · Best ride: ' + r6Surf.best + ' pts · Rides: ' + r6Surf.rides + '.',
+      'Rescues done: ' + r6Surf.rescues + ' · Comp wins: ' + r6Surf.compWins + '.',
+    ], [
+      r6PanelButton('Catch this wave', () => { r6SurfRide(r6SurfBreakNear()); }, r6Surf.board < 0),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6SurfShopNear()) return false;
+  const lines = [
+    'Solmar Surf Shop — boards from $120 to $950.',
+    'Your board: ' + (r6Surf.board >= 0 ? R6_SURF_BOARDS[r6Surf.board].name : 'none') + ' · Skill ' + r6Surf.skill + '.',
+    'Next surf comp in ' + Math.ceil(r6Surf.compTimer) + 's — winner takes $450.',
+    'Swimmers sometimes get in trouble near the breaks; rescue pays $90.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_SURF_BOARDS.length; i++) {
+    const b = R6_SURF_BOARDS[i];
+    buttons.push(r6PanelButton((i === r6Surf.board ? '✓ ' : '') + b.name + ' — $' + b.price + ' (' + b.desc + ')', () => { if (i !== r6Surf.board && r6Spend(b.price)) { r6Surf.board = i; r6SurfSave(); } r6SurfOpen(); }));
+  }
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🏄 Solmar Surf Shop', lines, buttons);
+  return true;
+}
+function r6SurfRide(brkIdx) {
+  if (brkIdx < 0 || r6Surf.board < 0) return;
+  const brk = R6_SURF_BREAKS[brkIdx];
+  const score = r6SurfScore(brk);
+  r6Surf.rides++; r6Surf.skill = Math.min(50, r6Surf.skill + 1);
+  if (score > r6Surf.best) r6Surf.best = score;
+  const pay = Math.round(score * 0.9);
+  r6Earn(pay, 'Rode ' + brk.name + ' for ' + score + ' pts.');
+  if (score >= 95 && r6Surf.compTimer < 9999) toast('That ride would win most comps — enter one at the shop!');
+  r6SurfSave();
+}
+function r6SurfRescue() {
+  r6Surf.rescueAt = Math.floor(Math.random() * R6_SURF_BREAKS.length);
+  const brk = R6_SURF_BREAKS[r6Surf.rescueAt];
+  toast('🏊 Swimmer in trouble at ' + brk.name + '! Paddle out and press E.');
+}
+function r6SurfUpdate(dt) {
+  r6Surf.compTimer -= dt;
+  if (r6Surf.compTimer <= 0) {
+    r6Surf.compTimer = 240;
+    if (r6Surf.board >= 0 && r6Surf.best >= 70) { r6Surf.compWins++; r6Earn(450, '🏆 Won the Sunset Point surf comp!'); }
+    else toast('Surf comp at Sunset Point — best ride 70+ pts wins $450.');
+    r6SurfSave();
+  }
+  r6Surf.rescueTimer -= dt;
+  if (r6Surf.rescueTimer <= 0) { r6Surf.rescueTimer = 75; r6SurfRescue(); }
+  if (r6Surf.rescueAt >= 0 && r6SurfBreakNear() === r6Surf.rescueAt) {
+    r6Surf.rescues++; r6Surf.rescueAt = -1; r6Surf.rescueTimer = 75;
+    r6Earn(90, 'Lifeguard rescue at the break!');
+    r6SurfSave();
+  }
+}
+function r6SurfSave() { r6Save('surf', { board: r6Surf.board, skill: r6Surf.skill, rides: r6Surf.rides, best: r6Surf.best, rescues: r6Surf.rescues, compWins: r6Surf.compWins }); }
+function r6SurfLoad() {
+  const s = r6Load('surf', null);
+  if (s) { r6Surf.board = s.board ?? -1; r6Surf.skill = s.skill || 0; r6Surf.rides = s.rides || 0; r6Surf.best = s.best || 0; r6Surf.rescues = s.rescues || 0; r6Surf.compWins = s.compWins || 0; }
+}
+
+// ---------- Round 6 system 4: skate / BMX park ----------
+// A concrete bowl park with eight tricks. Chain tricks into combos; a 500+
+// combo draws a sponsor, and the weekend comp pays $380 to the winner.
+const R6_SKATE_TRICKS = [
+  { name: 'Kickflip', pts: 40, risk: 0.1, desc: 'board spins under your feet' },
+  { name: 'Grind the Rail', pts: 55, risk: 0.15, desc: 'slide the coping, sparks fly' },
+  { name: 'Air the Bowl', pts: 70, risk: 0.2, desc: 'launch out of the deep end' },
+  { name: 'Manual Balance', pts: 30, risk: 0.08, desc: 'two wheels, pure balance' },
+  { name: '360 Spin', pts: 65, risk: 0.18, desc: 'full rotation in the air' },
+  { name: 'Wall Ride', pts: 50, risk: 0.14, desc: 'ride straight up the wall' },
+  { name: 'Tail Whip', pts: 80, risk: 0.25, desc: 'BMX frame spins around you' },
+  { name: 'Backflip Drop', pts: 120, risk: 0.35, desc: 'the crowd-holder, high risk' },
+];
+const R6_SKATE_PARK = { x: -84, z: 96, name: 'Concrete Wave Park' };
+let r6Skate = { combo: 0, best: 0, tricks: 0, sponsor: '', compWins: 0, compTimer: 200, bails: 0 };
+function r6SkateBuild() {
+  addBox(26, 1, 20, 0x9aa0a8, R6_SKATE_PARK.x, 0.5, R6_SKATE_PARK.z);
+  addBox(26, 2.4, 2, 0x7a8088, R6_SKATE_PARK.x, 1.2, R6_SKATE_PARK.z - 9);
+  addBox(2, 2.4, 20, 0x7a8088, R6_SKATE_PARK.x - 12, 1.2, R6_SKATE_PARK.z);
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(5, 4, 1.6, 16), new THREE.MeshStandardMaterial({ color: 0x6a7078, roughness: 0.9 }));
+  bowl.position.set(R6_SKATE_PARK.x + 5, 1.2, R6_SKATE_PARK.z + 4); scene.add(bowl);
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.8, roughness: 0.3 });
+  for (const [rx, rz] of [[-4, 0], [2, -4]]) {
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 7, 8), railMat);
+    rail.rotation.z = Math.PI / 2; rail.position.set(R6_SKATE_PARK.x + rx, 1.6, R6_SKATE_PARK.z + rz); scene.add(rail);
+  }
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(5, 0.4, 4), new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.7 }));
+  ramp.position.set(R6_SKATE_PARK.x - 6, 1.4, R6_SKATE_PARK.z + 5); ramp.rotation.x = -0.4; scene.add(ramp);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(8, 1.3, 0.3), new THREE.MeshStandardMaterial({ color: 0xff5a5a, emissive: 0x881111, emissiveIntensity: 0.5 }));
+  sign.position.set(R6_SKATE_PARK.x, 4.6, R6_SKATE_PARK.z - 10.4); scene.add(sign);
+}
+function r6SkateNear() { return r6Near(R6_SKATE_PARK.x, R6_SKATE_PARK.z, 13); }
+function r6SkateOpen() {
+  if (!r6SkateNear()) return false;
+  const lines = [
+    R6_SKATE_PARK.name + ' — concrete bowl, rails, one big ramp.',
+    'Combo now: ' + r6Skate.combo + ' pts · Best combo: ' + r6Skate.best + ' · Tricks landed: ' + r6Skate.tricks + '.',
+    'Bails: ' + r6Skate.bails + ' · Sponsor: ' + (r6Skate.sponsor || 'none yet — land a 500+ combo') + '.',
+    'Weekend comp in ' + Math.ceil(r6Skate.compTimer) + 's — best combo wins $380.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_SKATE_TRICKS.length; i++) {
+    const t = R6_SKATE_TRICKS[i];
+    buttons.push(r6PanelButton(t.name + ' +' + t.pts + ' (' + Math.round(t.risk * 100) + '% bail)', () => { r6SkateTrick(i); }));
+  }
+  buttons.push(r6PanelButton('Bank the combo (cash out)', () => { r6SkateBank(); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🛹 ' + R6_SKATE_PARK.name, lines, buttons);
+  return true;
+}
+function r6SkateTrick(i) {
+  const t = R6_SKATE_TRICKS[i];
+  if (Math.random() < t.risk) {
+    r6Skate.bails++; r6Skate.combo = 0;
+    toast('Bailed on the ' + t.name + '! Combo lost.');
+    r6SkateSave(); r6SkateOpen(); return;
+  }
+  r6Skate.combo += t.pts; r6Skate.tricks++;
+  if (r6Skate.combo > r6Skate.best) r6Skate.best = r6Skate.combo;
+  if (r6Skate.combo >= 500 && !r6Skate.sponsor) {
+    r6Skate.sponsor = 'Palm Deck Co.';
+    toast('🛹 Palm Deck Co. saw that combo — you have a sponsor! $60 a day.');
+  }
+  r6SkateSave(); r6SkateOpen();
+}
+function r6SkateBank() {
+  if (r6Skate.combo <= 0) { toast('No combo to bank yet.'); return; }
+  const pay = Math.round(r6Skate.combo * 0.4);
+  r6Skate.combo = 0;
+  r6Earn(pay, 'Cashed in the combo at the park shop.');
+  r6SkateSave(); r6SkateOpen();
+}
+function r6SkateUpdate(dt) {
+  r6Skate.compTimer -= dt;
+  if (r6Skate.compTimer <= 0) {
+    r6Skate.compTimer = 260;
+    if (r6Skate.best >= 400) { r6Skate.compWins++; r6Earn(380, '🏆 Won the weekend skate comp!'); }
+    else toast('Weekend skate comp — best combo 400+ takes $380.');
+    r6SkateSave();
+  }
+}
+function r6SkateSave() { r6Save('skate', { combo: r6Skate.combo, best: r6Skate.best, tricks: r6Skate.tricks, sponsor: r6Skate.sponsor, compWins: r6Skate.compWins, bails: r6Skate.bails }); }
+function r6SkateLoad() {
+  const s = r6Load('skate', null);
+  if (s) { r6Skate.combo = s.combo || 0; r6Skate.best = s.best || 0; r6Skate.tricks = s.tricks || 0; r6Skate.sponsor = s.sponsor || ''; r6Skate.compWins = s.compWins || 0; r6Skate.bails = s.bails || 0; }
+}
+
+// ---------- Round 6 system 5: movie studio stunt career ----------
+// Solmar Studios hires stunt doubles. Three gig types, a star meter that
+// opens bigger films, and a weekly shoot that pays $520 at 80+ stars.
+const R6_STUNT_GIGS = [
+  { name: 'Falling off a Roof', pay: 160, risk: 2, desc: 'a 3-storey drop onto the airbag' },
+  { name: 'Car Rollover', pay: 240, risk: 3, desc: 'flip the stunt coupe, walk away smiling' },
+  { name: 'Burning Building Run', pay: 320, risk: 4, desc: 'sprint through the fire set in a suit' },
+  { name: 'Harbour Jet-Ski Chase', pay: 280, risk: 3, desc: 'jump the wake at full throttle' },
+];
+const R6_STUDIO = { x: 128, z: -128, name: 'Solmar Studios' };
+let r6Stunt = { stars: 0, gigs: 0, injured: 0, shoots: 0, shootTimer: 220, film: 'Bay Breakers' };
+function r6StuntBuild() {
+  addBox(22, 9, 16, 0x5a4a6a, R6_STUDIO.x, 4.5, R6_STUDIO.z);
+  addBox(23, 1, 17, 0x3a2a4a, R6_STUDIO.x, 9.5, R6_STUDIO.z);
+  const gate = new THREE.Mesh(new THREE.BoxGeometry(10, 1.6, 0.4), new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xaa8800, emissiveIntensity: 0.6 }));
+  gate.position.set(R6_STUDIO.x, 5.4, R6_STUDIO.z + 8.2); scene.add(gate);
+  addBox(1, 6, 1, 0x2a2a33, R6_STUDIO.x - 5, 3, R6_STUDIO.z + 8);
+  addBox(1, 6, 1, 0x2a2a33, R6_STUDIO.x + 5, 3, R6_STUDIO.z + 8);
+  const bag = new THREE.Mesh(new THREE.BoxGeometry(5, 1.2, 4), new THREE.MeshStandardMaterial({ color: 0xff7a2a, roughness: 0.9 }));
+  bag.position.set(R6_STUDIO.x - 8, 0.6, R6_STUDIO.z + 12); scene.add(bag);
+  const crane = new THREE.Mesh(new THREE.BoxGeometry(0.6, 12, 0.6), new THREE.MeshStandardMaterial({ color: 0x8a8f96, metalness: 0.6 }));
+  crane.position.set(R6_STUDIO.x + 12, 6, R6_STUDIO.z + 6); scene.add(crane);
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(9, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x8a8f96, metalness: 0.6 }));
+  boom.position.set(R6_STUDIO.x + 8, 11.8, R6_STUDIO.z + 6); scene.add(boom);
+}
+function r6StuntNear() { return r6Near(R6_STUDIO.x, R6_STUDIO.z + 12, 11); }
+function r6StuntOpen() {
+  if (!r6StuntNear()) return false;
+  const lines = [
+    R6_STUDIO.name + ' — now shooting "' + r6Stunt.film + '".',
+    'Star meter: ' + r6Stunt.stars + '/100 · Gigs done: ' + r6Stunt.gigs + ' · Injuries: ' + r6Stunt.injured + '.',
+    'Weekly shoot in ' + Math.ceil(r6Stunt.shootTimer) + 's — 80+ stars pays $520.',
+    'Bigger stars unlock bigger gigs. Getting hurt costs a day of work.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_STUNT_GIGS.length; i++) {
+    const g = R6_STUNT_GIGS[i];
+    const locked = r6Stunt.stars < i * 20;
+    buttons.push(r6PanelButton(g.name + ' — $' + g.pay + (locked ? ' (needs ' + i * 20 + '★)' : ''), () => { r6StuntGig(i); }, locked));
+  }
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🎬 ' + R6_STUDIO.name, lines, buttons);
+  return true;
+}
+function r6StuntGig(i) {
+  const g = R6_STUNT_GIGS[i];
+  r6Stunt.gigs++;
+  if (Math.random() < g.risk * 0.05) {
+    r6Stunt.injured++;
+    state.health = Math.max(20, state.health - 15);
+    toast('Ouch — the ' + g.name + ' went wrong. Rest up, star.');
+    r6StuntSave(); updateHUD(); r6StuntOpen(); return;
+  }
+  r6Stunt.stars = Math.min(100, r6Stunt.stars + 4 + g.risk);
+  r6Earn(g.pay, 'Stunt done: ' + g.name + ' (' + r6Stunt.stars + '★).');
+  r6StuntSave(); r6StuntOpen();
+}
+function r6StuntUpdate(dt) {
+  r6Stunt.shootTimer -= dt;
+  if (r6Stunt.shootTimer <= 0) {
+    r6Stunt.shootTimer = 300;
+    if (r6Stunt.stars >= 80) { r6Stunt.shoots++; r6Earn(520, '🎬 Weekly shoot on "' + r6Stunt.film + '" — lead double!'); }
+    else toast('Weekly shoot at the studio — reach 80 stars for the $520 lead-double slot.');
+    r6StuntSave();
+  }
+}
+function r6StuntSave() { r6Save('stunt', { stars: r6Stunt.stars, gigs: r6Stunt.gigs, injured: r6Stunt.injured, shoots: r6Stunt.shoots, film: r6Stunt.film }); }
+function r6StuntLoad() {
+  const s = r6Load('stunt', null);
+  if (s) { r6Stunt.stars = s.stars || 0; r6Stunt.gigs = s.gigs || 0; r6Stunt.injured = s.injured || 0; r6Stunt.shoots = s.shoots || 0; r6Stunt.film = s.film || 'Bay Breakers'; }
+}
+
+// ---------- Round 6 system 6: nightclub ownership ----------
+// Buy The Bluefin club, book DJs, mind the door and the VIP room. The vibe
+// meter decides the night's take; a full house at 90+ vibe pays $600.
+const R6_CLUB_DJS = [
+  { name: 'DJ Reef', fee: 120, vibe: 18, desc: 'deep house, steady hands' },
+  { name: 'Luna Waves', fee: 220, vibe: 30, desc: 'sunset disco, big crowd' },
+  { name: 'Bass Marisol', fee: 350, vibe: 45, desc: 'hard bass, the room shakes' },
+  { name: 'DJ Solmar', fee: 500, vibe: 60, desc: 'the bay legend himself' },
+];
+const R6_CLUB = { x: 78, z: -60, name: 'The Bluefin', price: 8000 };
+let r6Club = { owned: false, vibe: 40, nights: 0, dj: -1, door: 0, vip: 0, upgrades: 0, nightTimer: 120 };
+function r6ClubBuild() {
+  addBox(18, 8, 14, 0x1a1a2e, R6_CLUB.x, 4, R6_CLUB.z);
+  addBox(19, 1, 15, 0x2ee6ff, R6_CLUB.x, 8.5, R6_CLUB.z);
+  const neon = new THREE.Mesh(new THREE.BoxGeometry(9, 1.5, 0.3), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, emissive: 0x2ee6ff, emissiveIntensity: 0.9 }));
+  neon.position.set(R6_CLUB.x, 6.2, R6_CLUB.z + 7.2); scene.add(neon);
+  const door = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 0.4), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
+  door.position.set(R6_CLUB.x, 2, R6_CLUB.z + 7.1); scene.add(door);
+  for (let i = 0; i < 4; i++) {
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), new THREE.MeshBasicMaterial({ color: [0xff2a7a, 0x2ee6ff, 0xffd23f, 0x7dff9a][i] }));
+    orb.position.set(R6_CLUB.x - 6 + i * 4, 9.6, R6_CLUB.z + 3); scene.add(orb);
+  }
+  addBox(4, 1, 3, 0x8a2be2, R6_CLUB.x + 11, 0.5, R6_CLUB.z + 4);
+}
+function r6ClubNear() { return r6Near(R6_CLUB.x, R6_CLUB.z + 8, 10); }
+function r6ClubOpen() {
+  if (!r6ClubNear()) return false;
+  if (!r6Club.owned) {
+    r6ShowPanel('🌃 ' + R6_CLUB.name, [
+      'A dark room with a good sound system and a better location — $' + R6_CLUB.price + '.',
+      'Book a DJ, open the doors, keep the vibe up. Nights pay by vibe.',
+      'Upgrades: better lights, better bar, better sound.',
+    ], [
+      r6PanelButton('Buy the club — $' + R6_CLUB.price, () => { if (r6Spend(R6_CLUB.price)) { r6Club.owned = true; r6ClubSave(); r6ClubOpen(); } }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  const lines = [
+    'Vibe: ' + r6Club.vibe + '/100 · Nights run: ' + r6Club.nights + ' · Upgrades: ' + r6Club.upgrades + '/3.',
+    'Tonight\'s DJ: ' + (r6Club.dj >= 0 ? R6_CLUB_DJS[r6Club.dj].name : 'none booked') + ' · Next night in ' + Math.ceil(r6Club.nightTimer) + 's.',
+    'Door take so far: $' + r6Club.door + ' · VIP room: $' + r6Club.vip + '.',
+    'Full house at 90+ vibe pays $600 a night.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_CLUB_DJS.length; i++) {
+    const d = R6_CLUB_DJS[i];
+    buttons.push(r6PanelButton((i === r6Club.dj ? '✓ ' : '') + d.name + ' — $' + d.fee + ' (+' + d.vibe + ' vibe)', () => { if (r6Spend(d.fee)) { r6Club.dj = i; r6Club.vibe = r6Clamp(r6Club.vibe + d.vibe, 0, 100); r6ClubSave(); r6ClubOpen(); } }));
+  }
+  buttons.push(r6PanelButton('Upgrade the club — $900', () => { if (r6Club.upgrades < 3 && r6Spend(900)) { r6Club.upgrades++; r6Club.vibe = r6Clamp(r6Club.vibe + 10, 0, 100); r6ClubSave(); r6ClubOpen(); } }, r6Club.upgrades >= 3));
+  buttons.push(r6PanelButton('Open the doors tonight', () => { r6ClubNight(); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🌃 ' + R6_CLUB.name, lines, buttons);
+  return true;
+}
+function r6ClubNight() {
+  const base = 60 + r6Club.vibe * 3 + r6Club.upgrades * 40;
+  const vipPay = r6Club.vibe >= 70 ? 120 : 0;
+  r6Club.nights++; r6Club.door += base; r6Club.vip += vipPay;
+  r6Club.vibe = r6Clamp(r6Club.vibe - 12 + (r6Club.dj >= 0 ? 8 : 0), 5, 100);
+  r6Earn(base + vipPay, 'Club night done — door $' + base + (vipPay ? ', VIP $' + vipPay : '') + '.');
+  r6ClubSave(); r6ClubOpen();
+}
+function r6ClubUpdate(dt) {
+  if (!r6Club.owned) return;
+  r6Club.nightTimer -= dt;
+  if (r6Club.nightTimer <= 0) {
+    r6Club.nightTimer = 150;
+    if (r6Club.vibe >= 90) { r6Club.nights++; r6Earn(600, '🌃 Full house at The Bluefin — the bay is dancing!'); }
+    else toast('The Bluefin hums along — book a bigger DJ to fill the room.');
+    r6ClubSave();
+  }
+}
+function r6ClubSave() { r6Save('club', { owned: r6Club.owned, vibe: r6Club.vibe, nights: r6Club.nights, dj: r6Club.dj, door: r6Club.door, vip: r6Club.vip, upgrades: r6Club.upgrades }); }
+function r6ClubLoad() {
+  const s = r6Load('club', null);
+  if (s) { r6Club.owned = !!s.owned; r6Club.vibe = s.vibe ?? 40; r6Club.nights = s.nights || 0; r6Club.dj = s.dj ?? -1; r6Club.door = s.door || 0; r6Club.vip = s.vip || 0; r6Club.upgrades = s.upgrades || 0; }
+}
+// ---------- Round 6 system 7: tattoo parlor ----------
+// Ink by Ines. Each tattoo gives a small permanent stat boost; taking walk-in
+// clients pays, and the flash book (12 designs) pays $350 when complete.
+const R6_TATTOOS = [
+  { name: 'Bay Wave', price: 90, boost: 'stamina', amt: 5, desc: 'a curling wave on the forearm' },
+  { name: 'Palm Anchor', price: 140, boost: 'driving', amt: 5, desc: 'an anchor tangled in palm fronds' },
+  { name: 'Sunset Compass', price: 180, boost: 'stamina', amt: 8, desc: 'a compass rose at golden hour' },
+  { name: 'Shark Tooth', price: 220, boost: 'shooting', amt: 6, desc: 'a single sharp tooth, black ink' },
+  { name: 'Coral Rose', price: 260, boost: 'driving', amt: 8, desc: 'a rose grown out of coral' },
+  { name: 'Full Sleeve', price: 700, boost: 'shooting', amt: 12, desc: 'the whole arm, bay scenes end to end' },
+];
+const R6_TATTOO_SHOP = { x: -52, z: -28, name: 'Ink & Salt' };
+let r6Tattoo = { owned: [], clients: 0, earned: 0, flashDone: 0 };
+function r6TattooBuild() {
+  addBox(9, 4.5, 7, 0x2a2a33, R6_TATTOO_SHOP.x, 2.25, R6_TATTOO_SHOP.z);
+  addBox(9.6, 0.6, 7.6, 0xff2a7a, R6_TATTOO_SHOP.x, 4.8, R6_TATTOO_SHOP.z);
+  const needle = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.05, 3.4, 8), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.8 }));
+  needle.position.set(R6_TATTOO_SHOP.x + 3, 6.4, R6_TATTOO_SHOP.z - 2); needle.rotation.z = 0.5; scene.add(needle);
+  const chair = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.8, 1.2), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.4 }));
+  chair.position.set(R6_TATTOO_SHOP.x - 2, 1, R6_TATTOO_SHOP.z + 4.5); scene.add(chair);
+  for (let i = 0; i < 4; i++) {
+    const flash = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.4, 0.1), new THREE.MeshStandardMaterial({ color: [0xffd23f, 0x2ee6ff, 0xff9ad5, 0x7dff9a][i], roughness: 0.7 }));
+    flash.position.set(R6_TATTOO_SHOP.x - 3 + i * 2.2, 2.6, R6_TATTOO_SHOP.z - 3.6); scene.add(flash);
+  }
+}
+function r6TattooNear() { return r6Near(R6_TATTOO_SHOP.x, R6_TATTOO_SHOP.z, 9); }
+function r6TattooOpen() {
+  if (!r6TattooNear()) return false;
+  const lines = [
+    R6_TATTOO_SHOP.name + ' — Ines inks by appointment and walk-in.',
+    'Your ink: ' + (r6Tattoo.owned.length ? r6Tattoo.owned.map((i) => R6_TATTOOS[i].name).join(', ') : 'clean skin') + '.',
+    'Clients inked: ' + r6Tattoo.clients + ' · Earned inking: $' + r6Tattoo.earned + ' · Flash book: ' + r6Tattoo.flashDone + '/12.',
+    'Each tattoo boosts a skill a little, forever.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_TATTOOS.length; i++) {
+    const t = R6_TATTOOS[i];
+    const has = r6Tattoo.owned.includes(i);
+    buttons.push(r6PanelButton((has ? '✓ ' : '') + t.name + ' — $' + t.price + ' (+' + t.amt + ' ' + t.boost + ')', () => { r6TattooGet(i); }, has));
+  }
+  buttons.push(r6PanelButton('Take a walk-in client ($70)', () => { r6TattooClient(); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🖋️ ' + R6_TATTOO_SHOP.name, lines, buttons);
+  return true;
+}
+function r6TattooGet(i) {
+  if (r6Tattoo.owned.includes(i)) return;
+  const t = R6_TATTOOS[i];
+  if (!r6Spend(t.price)) return;
+  r6Tattoo.owned.push(i);
+  if (skills && typeof skills[t.boost] === 'number') skills[t.boost] = Math.min(100, skills[t.boost] + t.amt);
+  r6TattooSave(); saveGame();
+  toast('Inked: ' + t.name + ' (+' + t.amt + ' ' + t.boost + ').');
+  r6TattooOpen();
+}
+function r6TattooClient() {
+  r6Tattoo.clients++; r6Tattoo.flashDone = Math.min(12, r6Tattoo.flashDone + 1);
+  r6Tattoo.earned += 70;
+  r6Earn(70, 'Inked a walk-in client at ' + R6_TATTOO_SHOP.name + '.');
+  if (r6Tattoo.flashDone === 12) { r6Earn(350, 'Flash book complete — every design inked at least once!'); }
+  r6TattooSave(); r6TattooOpen();
+}
+function r6TattooSave() { r6Save('tattoo', { owned: r6Tattoo.owned, clients: r6Tattoo.clients, earned: r6Tattoo.earned, flashDone: r6Tattoo.flashDone }); }
+function r6TattooLoad() {
+  const s = r6Load('tattoo', null);
+  if (s) { r6Tattoo.owned = s.owned || []; r6Tattoo.clients = s.clients || 0; r6Tattoo.earned = s.earned || 0; r6Tattoo.flashDone = s.flashDone || 0; }
+}
+
+// ---------- Round 6 system 8: street art crew ----------
+// The Gulls paint the bay. Six mural walls, spray cans to buy, crew rep that
+// opens bigger walls, and tagging heat — the police notice fresh paint.
+const R6_MURALS = [
+  { name: 'Harbour Whale', x: -40, z: 60, size: 3, rep: 0, desc: 'a blue whale across the harbour wall' },
+  { name: 'Neon Palm', x: 52, z: -70, size: 2, rep: 10, desc: 'a palm in pink and cyan neon' },
+  { name: 'The Fisher King', x: -70, z: -60, size: 4, rep: 25, desc: 'an old fisherman, four storeys tall' },
+  { name: 'Sunset Gulls', x: 20, z: 90, size: 3, rep: 40, desc: 'gulls over a gold horizon' },
+  { name: 'Airport Sky', x: -160, z: -20, size: 5, rep: 60, desc: 'a jet breaking through painted cloud' },
+  { name: 'Bay Heart', x: 8, z: -12, size: 2, rep: 80, desc: 'the whole bay inside one heart' },
+];
+const R6_SPRAY = [
+  { name: 'Basic Cans', price: 25, cans: 3, desc: 'three colours, decent pressure' },
+  { name: 'Pro Set', price: 60, cans: 8, desc: 'eight colours, fat caps included' },
+  { name: 'Chrome Pack', price: 110, cans: 14, desc: 'fourteen cans, mirror chrome' },
+];
+let r6Art = { cans: 0, rep: 0, done: [], heat: 0, crew: 1 };
+function r6ArtBuild() {
+  for (const m of R6_MURALS) {
+    addBox(10, 7, 1, 0x6a6a72, m.x, 3.5, m.z);
+    const done = r6Art.done.includes(m.name);
+    const paint = new THREE.Mesh(new THREE.BoxGeometry(9, 6, 0.3), new THREE.MeshStandardMaterial({ color: done ? 0xff5a9a : 0x8a8a92, emissive: done ? 0x661133 : 0x000000, emissiveIntensity: done ? 0.4 : 0 }));
+    paint.position.set(m.x, 3.4, m.z - 0.7); scene.add(paint);
+    addBox(1, 1, 1, 0xffd23f, m.x + 5.4, 0.5, m.z + 1);
+  }
+}
+function r6ArtNear() {
+  for (let i = 0; i < R6_MURALS.length; i++) if (r6Near(R6_MURALS[i].x, R6_MURALS[i].z, 10)) return i;
+  return -1;
+}
+function r6ArtOpen() {
+  const at = r6ArtNear();
+  if (at < 0) return false;
+  const m = R6_MURALS[at];
+  const done = r6Art.done.includes(m.name);
+  const locked = r6Art.rep < m.rep;
+  const lines = [
+    m.name + ' — ' + m.desc + '.',
+    'Wall size: ' + m.size + ' · Needs ' + m.rep + ' crew rep · Your rep: ' + r6Art.rep + '.',
+    'Spray cans: ' + r6Art.cans + ' (needs ' + m.size + ') · Tagging heat: ' + r6Art.heat + '.',
+    done ? 'This wall is finished — the Gulls signed it.' : 'Fresh wall. Paint it before the rain does.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_SPRAY.length; i++) {
+    const s = R6_SPRAY[i];
+    buttons.push(r6PanelButton('Buy ' + s.name + ' — $' + s.price + ' (+' + s.cans + ' cans)', () => { if (r6Spend(s.price)) { r6Art.cans += s.cans; r6ArtSave(); r6ArtOpen(); } }));
+  }
+  buttons.push(r6PanelButton('Paint this wall', () => { r6ArtPaint(at); }, done || locked || r6Art.cans < m.size));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🎨 ' + m.name, lines, buttons);
+  return true;
+}
+function r6ArtPaint(i) {
+  const m = R6_MURALS[i];
+  if (r6Art.done.includes(m.name) || r6Art.rep < m.rep || r6Art.cans < m.size) return;
+  r6Art.cans -= m.size;
+  r6Art.done.push(m.name);
+  r6Art.rep += 12 + m.size * 3;
+  r6Art.heat = Math.min(5, r6Art.heat + 1);
+  const pay = 80 + m.size * 60;
+  r6Earn(pay, 'Finished "' + m.name + '" — the crew loves it (rep ' + r6Art.rep + ').');
+  if (r6Art.done.length === R6_MURALS.length) r6Earn(500, 'All six murals done — the bay is a gallery now!');
+  if (r6Art.heat >= 3) { state.wanted = Math.min(5, state.wanted + 1); toast('Tagging heat is high — police are watching the walls.'); }
+  r6ArtSave(); updateHUD(); r6ArtOpen();
+}
+function r6ArtUpdate(dt) {
+  r6Art._t = (r6Art._t || 0) + dt;
+  if (r6Art._t > 60) { r6Art._t = 0; r6Art.heat = Math.max(0, r6Art.heat - 1); }
+}
+function r6ArtSave() { r6Save('art', { cans: r6Art.cans, rep: r6Art.rep, done: r6Art.done, heat: r6Art.heat, crew: r6Art.crew }); }
+function r6ArtLoad() {
+  const s = r6Load('art', null);
+  if (s) { r6Art.cans = s.cans || 0; r6Art.rep = s.rep || 0; r6Art.done = s.done || []; r6Art.heat = s.heat || 0; r6Art.crew = s.crew || 1; }
+}
+
+// ---------- Round 6 system 9: horse ranch ----------
+// Rancho del Sol, out west past the farmland. Buy horses, train them daily,
+// race them on the ranch track, and stable income trickles in per horse.
+const R6_HORSES = [
+  { name: 'Marina', price: 900, speed: 3, desc: 'calm bay mare, steady gallop' },
+  { name: 'Comet', price: 1600, speed: 4, desc: 'a chestnut with a fast start' },
+  { name: 'Storm King', price: 2800, speed: 5, desc: 'black stallion, track record holder' },
+  { name: 'Daisy', price: 600, speed: 2, desc: 'gentle, good for beginners' },
+];
+const R6_RANCH = { x: -150, z: 150, name: 'Rancho del Sol' };
+let r6Ranch = { horses: [], trained: 0, raceWins: 0, income: 0, raceTimer: 170 };
+function r6RanchBuild() {
+  addBox(14, 5, 10, 0x8a5a2a, R6_RANCH.x, 2.5, R6_RANCH.z);
+  addBox(15, 0.8, 11, 0x6a3a1a, R6_RANCH.x, 5.4, R6_RANCH.z);
+  const barnDoor = new THREE.Mesh(new THREE.BoxGeometry(4, 3.6, 0.3), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 }));
+  barnDoor.position.set(R6_RANCH.x, 1.8, R6_RANCH.z - 5.1); scene.add(barnDoor);
+  for (let i = 0; i < 6; i++) addBox(0.25, 1.1, 0.25, 0xd8c8a8, R6_RANCH.x - 12 + i * 4.8, 0.55, R6_RANCH.z + 12);
+  addBox(24, 0.25, 0.25, 0xd8c8a8, R6_RANCH.x, 1.15, R6_RANCH.z + 12);
+  for (let i = 0; i < 3; i++) {
+    const horse = new THREE.Group();
+    const bodyH = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1, 0.8), new THREE.MeshStandardMaterial({ color: [0x6a3a1a, 0x2a2a2a, 0xc8a060][i], roughness: 0.8 }));
+    bodyH.position.y = 1.2; horse.add(bodyH);
+    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1, 0.6), new THREE.MeshStandardMaterial({ color: [0x6a3a1a, 0x2a2a2a, 0xc8a060][i], roughness: 0.8 }));
+    neck.position.set(1.3, 1.8, 0); neck.rotation.z = -0.5; horse.add(neck);
+    horse.position.set(R6_RANCH.x - 8 + i * 8, 0, R6_RANCH.z + 16);
+    scene.add(horse);
+  }
+  const trough = new THREE.Mesh(new THREE.BoxGeometry(3, 0.7, 1), new THREE.MeshStandardMaterial({ color: 0x4a4a55, roughness: 0.9 }));
+  trough.position.set(R6_RANCH.x + 8, 0.35, R6_RANCH.z + 16); scene.add(trough);
+}
+function r6RanchNear() { return r6Near(R6_RANCH.x, R6_RANCH.z, 14); }
+function r6RanchOpen() {
+  if (!r6RanchNear()) return false;
+  const lines = [
+    R6_RANCH.name + ' — stables, a track, and Tomas the ranch hand.',
+    'Your horses: ' + (r6Ranch.horses.length ? r6Ranch.horses.map((h) => R6_HORSES[h].name).join(', ') : 'none yet') + '.',
+    'Trained: ' + r6Ranch.trained + ' times · Race wins: ' + r6Ranch.raceWins + ' · Stable income banked: $' + r6Ranch.income + '.',
+    'Ranch race in ' + Math.ceil(r6Ranch.raceTimer) + 's — winner takes $420.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_HORSES.length; i++) {
+    const h = R6_HORSES[i];
+    const owned = r6Ranch.horses.includes(i);
+    buttons.push(r6PanelButton((owned ? '✓ ' : '') + h.name + ' — $' + h.price + ' (speed ' + h.speed + ')', () => { if (!owned && r6Spend(h.price)) { r6Ranch.horses.push(i); r6RanchSave(); r6RanchOpen(); } }, owned));
+  }
+  buttons.push(r6PanelButton('Train a horse (+speed, $40)', () => { r6RanchTrain(); }, r6Ranch.horses.length === 0));
+  buttons.push(r6PanelButton('Enter the ranch race', () => { r6RanchRace(); }, r6Ranch.horses.length === 0));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🐎 ' + R6_RANCH.name, lines, buttons);
+  return true;
+}
+function r6RanchTrain() {
+  if (!r6Spend(40)) return;
+  r6Ranch.trained++;
+  toast('Tomas works the horse around the ring. It feels quicker already.');
+  r6RanchSave(); r6RanchOpen();
+}
+function r6RanchRace() {
+  const best = Math.max(...r6Ranch.horses.map((h) => R6_HORSES[h].speed));
+  const myScore = best * 10 + r6Ranch.trained * 2 + Math.random() * 12;
+  const rival = 34 + Math.random() * 14;
+  if (myScore > rival) {
+    r6Ranch.raceWins++;
+    r6Earn(420, '🏇 Won the ranch race!');
+  } else toast('Ranch race lost — ' + Math.round(rival - myScore) + ' lengths behind. Train more.');
+  r6RanchSave(); r6RanchOpen();
+}
+function r6RanchUpdate(dt) {
+  r6Ranch.raceTimer -= dt;
+  if (r6Ranch.raceTimer <= 0) {
+    r6Ranch.raceTimer = 200;
+    if (r6Ranch.horses.length > 0) {
+      const pay = r6Ranch.horses.length * 25;
+      r6Ranch.income += pay;
+      r6Earn(pay, 'Stable income — ' + r6Ranch.horses.length + ' horse(s) boarded at the ranch.');
+    }
+    r6RanchSave();
+  }
+}
+function r6RanchSave() { r6Save('ranch', { horses: r6Ranch.horses, trained: r6Ranch.trained, raceWins: r6Ranch.raceWins, income: r6Ranch.income }); }
+function r6RanchLoad() {
+  const s = r6Load('ranch', null);
+  if (s) { r6Ranch.horses = s.horses || []; r6Ranch.trained = s.trained || 0; r6Ranch.raceWins = s.raceWins || 0; r6Ranch.income = s.income || 0; }
+}
+
+// ---------- Round 6 system 10: golf + mini-golf ----------
+// Solmar Greens: a 9-hole course with a pro, tournaments, caddy tips, and a
+// mini-golf course by the beach for quick rounds with Ian.
+const R6_GOLF_HOLES = [
+  { name: 'Palm Bend', par: 4, dist: 320 },
+  { name: 'Lake Carry', par: 3, dist: 170 },
+  { name: 'Dune Ridge', par: 5, dist: 480 },
+  { name: 'Coral Corner', par: 4, dist: 350 },
+  { name: 'Windmill Pass', par: 3, dist: 150 },
+  { name: 'Harbour View', par: 4, dist: 390 },
+  { name: 'Bunker Field', par: 5, dist: 510 },
+  { name: 'Sunset Nine', par: 4, dist: 360 },
+  { name: 'The Gull', par: 3, dist: 140 },
+];
+const R6_GOLF_COURSE = { x: 100, z: -160, name: 'Solmar Greens' };
+const R6_MINIGOLF = { x: 108, z: 128, name: 'Beach Mini-Golf' };
+let r6Golf = { rounds: 0, best: 99, tourneyWins: 0, caddyTips: 0, miniRounds: 0, tourneyTimer: 240 };
+function r6GolfParTotal() { return R6_GOLF_HOLES.reduce((s, h) => s + h.par, 0); }
+function r6GolfBuild() {
+  addBox(30, 0.4, 22, 0x4a8a3a, R6_GOLF_COURSE.x, 0.2, R6_GOLF_COURSE.z);
+  for (let i = 0; i < 9; i++) {
+    const hx = R6_GOLF_COURSE.x - 12 + (i % 3) * 12;
+    const hz = R6_GOLF_COURSE.z - 8 + Math.floor(i / 3) * 8;
+    const green = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x2ecc71, roughness: 0.9 }));
+    green.position.set(hx, 0.4, hz); scene.add(green);
+    const flag = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.05), new THREE.MeshStandardMaterial({ color: 0xff2222, roughness: 0.7 }));
+    flag.position.set(hx + 0.5, 2.4, hz); scene.add(flag);
+    addBox(0.12, 2.2, 0.12, 0xd8d8d8, hx, 1.4, hz);
+    if (i === 1 || i === 6) {
+      const sand = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 0.25, 10), new THREE.MeshStandardMaterial({ color: 0xe8d5a0, roughness: 1 }));
+      sand.position.set(hx + 3.5, 0.35, hz + 2); scene.add(sand);
+    }
+  }
+  addBox(8, 3, 6, 0xf0ead8, R6_GOLF_COURSE.x + 18, 1.5, R6_GOLF_COURSE.z - 12);
+  addBox(12, 0.4, 10, 0xc86a8a, R6_MINIGOLF.x, 0.2, R6_MINIGOLF.z);
+  for (let i = 0; i < 3; i++) {
+    const wind = new THREE.Mesh(new THREE.ConeGeometry(0.8, 3, 4), new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.8 }));
+    wind.position.set(R6_MINIGOLF.x - 4 + i * 4, 1.8, R6_MINIGOLF.z - 2); scene.add(wind);
+  }
+}
+function r6GolfNear() { return r6Near(R6_GOLF_COURSE.x, R6_GOLF_COURSE.z, 16); }
+function r6MiniNear() { return r6Near(R6_MINIGOLF.x, R6_MINIGOLF.z, 9); }
+function r6GolfOpen() {
+  if (!r6GolfNear() && !r6MiniNear()) return false;
+  if (r6MiniNear() && !r6GolfNear()) {
+    r6ShowPanel('⛳ ' + R6_MINIGOLF.name, [
+      'Nine tiny holes, one windmill, zero pressure.',
+      'Mini rounds played: ' + r6Golf.miniRounds + ' · A round costs $15, a hole-in-one pays $60.',
+      'Ryan and Ian play here on slow afternoons.',
+    ], [
+      r6PanelButton('Play a mini round — $15', () => { r6MiniPlay(); }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  const lines = [
+    R6_GOLF_COURSE.name + ' — 9 holes, par ' + r6GolfParTotal() + ', pro Elsa on the first tee.',
+    'Rounds played: ' + r6Golf.rounds + ' · Best score: ' + (r6Golf.best === 99 ? '—' : r6Golf.best) + ' · Tourney wins: ' + r6Golf.tourneyWins + '.',
+    'Caddy tips banked: $' + r6Golf.caddyTips + ' · Next tournament in ' + Math.ceil(r6Golf.tourneyTimer) + 's.',
+    'A round costs $45. Beat par and the clubhouse pays a $200 bonus.',
+  ];
+  r6ShowPanel('⛳ ' + R6_GOLF_COURSE.name, lines, [
+    r6PanelButton('Play a round — $45', () => { r6GolfPlay(); }),
+    r6PanelButton('Caddy for a member ($35 tip)', () => { r6GolfCaddy(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6GolfPlay() {
+  if (!r6Spend(45)) return;
+  r6Golf.rounds++;
+  const skill = skills && typeof skills.driving === 'number' ? skills.driving : 10;
+  const score = Math.max(27, Math.round(r6GolfParTotal() + (Math.random() * 10 - 4) - skill * 0.05));
+  if (score < r6Golf.best) r6Golf.best = score;
+  if (score <= r6GolfParTotal()) r6Earn(200, '⛳ Beat par at Solmar Greens! Score ' + score + ' (par ' + r6GolfParTotal() + ').');
+  else toast('Round done — ' + score + ' strokes (par ' + r6GolfParTotal() + '). Elsa says: keep your head down.');
+  r6GolfSave(); r6GolfOpen();
+}
+function r6GolfCaddy() {
+  r6Golf.caddyTips += 35;
+  r6Earn(35, 'Caddied 18 holes for a member — good read on the greens.');
+  r6GolfSave(); r6GolfOpen();
+}
+function r6MiniPlay() {
+  if (!r6Spend(15)) return;
+  r6Golf.miniRounds++;
+  if (Math.random() < 0.22) { r6Earn(60, '⛳ Hole-in-one on the windmill hole!'); }
+  else toast('Mini-golf round done — the windmill got you again.');
+  r6GolfSave(); r6GolfOpen();
+}
+function r6GolfUpdate(dt) {
+  r6Golf.tourneyTimer -= dt;
+  if (r6Golf.tourneyTimer <= 0) {
+    r6Golf.tourneyTimer = 280;
+    if (r6Golf.best <= r6GolfParTotal() + 2 && r6Golf.rounds > 0) { r6Golf.tourneyWins++; r6Earn(350, '🏆 Won the Solmar Greens club tournament!'); }
+    else toast('Club tournament at Solmar Greens — play rounds and beat par to win $350.');
+    r6GolfSave();
+  }
+}
+function r6GolfSave() { r6Save('golf6', { rounds: r6Golf.rounds, best: r6Golf.best, tourneyWins: r6Golf.tourneyWins, caddyTips: r6Golf.caddyTips, miniRounds: r6Golf.miniRounds }); }
+function r6GolfLoad() {
+  const s = r6Load('golf6', null);
+  if (s) { r6Golf.rounds = s.rounds || 0; r6Golf.best = s.best ?? 99; r6Golf.tourneyWins = s.tourneyWins || 0; r6Golf.caddyTips = s.caddyTips || 0; r6Golf.miniRounds = s.miniRounds || 0; }
+}
+// ---------- Round 6 system 11: bowling alley ----------
+// Strike Lanes: ten frames, league nights, a perfect game pays $600, and the
+// snack bar sells the best fries on the bay.
+const R6_BOWL_ALLEY = { x: -108, z: -40, name: 'Strike Lanes' };
+let r6Bowl = { games: 0, best: 0, strikes: 0, perfects: 0, leagueWins: 0, leagueTimer: 190, snacks: 0 };
+function r6BowlBuild() {
+  addBox(20, 6, 12, 0x3a2a4a, R6_BOWL_ALLEY.x, 3, R6_BOWL_ALLEY.z);
+  addBox(21, 0.8, 13, 0xffd23f, R6_BOWL_ALLEY.x, 6.4, R6_BOWL_ALLEY.z);
+  for (let i = 0; i < 3; i++) {
+    const lane = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 9), new THREE.MeshStandardMaterial({ color: 0x8a5a2a, roughness: 0.4 }));
+    lane.position.set(R6_BOWL_ALLEY.x - 4 + i * 3.4, 0.7, R6_BOWL_ALLEY.z + 8); scene.add(lane);
+  }
+  for (let i = 0; i < 5; i++) {
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 0.9, 8), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }));
+    pin.position.set(R6_BOWL_ALLEY.x - 4 + (i % 3) * 1, 1.1, R6_BOWL_ALLEY.z + 12 + Math.floor(i / 3) * 0.8); scene.add(pin);
+  }
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.45, 12, 12), new THREE.MeshStandardMaterial({ color: 0x2e6fb0, roughness: 0.3 }));
+  ball.position.set(R6_BOWL_ALLEY.x + 4, 0.9, R6_BOWL_ALLEY.z + 6); scene.add(ball);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(8, 1.4, 0.3), new THREE.MeshStandardMaterial({ color: 0xff5a5a, emissive: 0x881111, emissiveIntensity: 0.5 }));
+  sign.position.set(R6_BOWL_ALLEY.x, 5, R6_BOWL_ALLEY.z - 6.2); scene.add(sign);
+}
+function r6BowlNear() { return r6Near(R6_BOWL_ALLEY.x, R6_BOWL_ALLEY.z, 11); }
+function r6BowlOpen() {
+  if (!r6BowlNear()) return false;
+  const lines = [
+    R6_BOWL_ALLEY.name + ' — twelve lanes, one very loud jukebox.',
+    'Games bowled: ' + r6Bowl.games + ' · Best score: ' + r6Bowl.best + ' · Strikes: ' + r6Bowl.strikes + '.',
+    'Perfect games: ' + r6Bowl.perfects + ' ($600 each) · League wins: ' + r6Bowl.leagueWins + '.',
+    'League night in ' + Math.ceil(r6Bowl.leagueTimer) + 's — top score wins $300.',
+    'A game costs $20. The snack bar sells fries for $8 (they heal 5 health).',
+  ];
+  r6ShowPanel('🎳 ' + R6_BOWL_ALLEY.name, lines, [
+    r6PanelButton('Bowl a game — $20', () => { r6BowlPlay(); }),
+    r6PanelButton('Buy fries — $8 (+5 health)', () => { if (r6Spend(8)) { r6Bowl.snacks++; state.health = Math.min(100, state.health + 5); updateHUD(); toast('Strike Lanes fries. Worth every cent.'); r6BowlSave(); r6BowlOpen(); } }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6BowlPlay() {
+  if (!r6Spend(20)) return;
+  r6Bowl.games++;
+  let score = 0;
+  for (let f = 0; f < 10; f++) {
+    const frame = Math.random();
+    if (frame < 0.22) { score += 30; r6Bowl.strikes++; }
+    else if (frame < 0.55) score += 18;
+    else score += 9 + Math.floor(Math.random() * 7);
+  }
+  if (score > r6Bowl.best) r6Bowl.best = score;
+  if (score >= 280) { r6Bowl.perfects++; r6Earn(600, '🎳 PERFECT GAME at Strike Lanes! ' + score + ' pins!'); }
+  else if (score >= 200) r6Earn(120, 'Bowled ' + score + ' — the league regulars nod approvingly.');
+  else toast('Bowled ' + score + '. The gutter sends its regards.');
+  r6BowlSave(); r6BowlOpen();
+}
+function r6BowlUpdate(dt) {
+  r6Bowl.leagueTimer -= dt;
+  if (r6Bowl.leagueTimer <= 0) {
+    r6Bowl.leagueTimer = 240;
+    if (r6Bowl.best >= 200) { r6Bowl.leagueWins++; r6Earn(300, '🏆 Won league night at Strike Lanes!'); }
+    else toast('League night at Strike Lanes — bowl 200+ in a game to take $300.');
+    r6BowlSave();
+  }
+}
+function r6BowlSave() { r6Save('bowl', { games: r6Bowl.games, best: r6Bowl.best, strikes: r6Bowl.strikes, perfects: r6Bowl.perfects, leagueWins: r6Bowl.leagueWins, snacks: r6Bowl.snacks }); }
+function r6BowlLoad() {
+  const s = r6Load('bowl', null);
+  if (s) { r6Bowl.games = s.games || 0; r6Bowl.best = s.best || 0; r6Bowl.strikes = s.strikes || 0; r6Bowl.perfects = s.perfects || 0; r6Bowl.leagueWins = s.leagueWins || 0; r6Bowl.snacks = s.snacks || 0; }
+}
+
+// ---------- Round 6 system 12: arcade hall ----------
+// Neon Palace: five retro cabinets, tokens, high scores on the wall, and a
+// prize shelf where tickets turn into plush toys and cash.
+const R6_ARCADE_CABS = [
+  { name: 'Bay Blaster', price: 2, top: 9800, desc: 'shoot the gulls, dodge the buoys' },
+  { name: 'Turbo Taxi', price: 2, top: 12400, desc: 'deliver fares through rush hour' },
+  { name: 'Palm Fighter', price: 3, top: 7600, desc: 'two buttons, one champion' },
+  { name: 'Deep Dive', price: 2, top: 15100, desc: 'dodge sharks, grab the pearls' },
+  { name: 'Disco Dance', price: 3, top: 20300, desc: 'step on the beat, own the floor' },
+];
+const R6_ARCADE = { x: 30, z: -60, name: 'Neon Palace' };
+let r6Arcade = { tokens: 0, tickets: 0, scores: {}, plays: 0, prizes: 0 };
+function r6ArcadeBuild() {
+  addBox(16, 6, 10, 0x1a1a2e, R6_ARCADE.x, 3, R6_ARCADE.z);
+  const neon = new THREE.Mesh(new THREE.BoxGeometry(10, 1.4, 0.3), new THREE.MeshStandardMaterial({ color: 0xff2a7a, emissive: 0xff2a7a, emissiveIntensity: 0.8 }));
+  neon.position.set(R6_ARCADE.x, 5.2, R6_ARCADE.z - 5.2); scene.add(neon);
+  for (let i = 0; i < 5; i++) {
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.8, 2.6, 1.2), new THREE.MeshStandardMaterial({ color: [0xff2a7a, 0x2ee6ff, 0xffd23f, 0x7dff9a, 0x8a2be2][i], roughness: 0.5 }));
+    cab.position.set(R6_ARCADE.x - 6 + i * 3, 1.3, R6_ARCADE.z + 6.5); scene.add(cab);
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.9, 0.1), new THREE.MeshBasicMaterial({ color: 0x0a2a3a }));
+    screen.position.set(R6_ARCADE.x - 6 + i * 3, 1.9, R6_ARCADE.z + 5.9); scene.add(screen);
+  }
+  addBox(5, 3, 1.5, 0x8a5a2a, R6_ARCADE.x + 9, 1.5, R6_ARCADE.z + 4);
+  for (let i = 0; i < 3; i++) {
+    const toy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), new THREE.MeshStandardMaterial({ color: [0xff5a5a, 0xffd23f, 0x2ee6ff][i], roughness: 0.7 }));
+    toy.position.set(R6_ARCADE.x + 7.6 + i * 1.4, 3.4, R6_ARCADE.z + 4); scene.add(toy);
+  }
+}
+function r6ArcadeNear() { return r6Near(R6_ARCADE.x, R6_ARCADE.z, 10); }
+function r6ArcadeOpen() {
+  if (!r6ArcadeNear()) return false;
+  const lines = [
+    R6_ARCADE.name + ' — five cabinets, one prize shelf, zero mercy.',
+    'Tokens: ' + r6Arcade.tokens + ' · Tickets: ' + r6Arcade.tickets + ' · Plays: ' + r6Arcade.plays + ' · Prizes won: ' + r6Arcade.prizes + '.',
+    'Beat a cabinet top score for $150. 100 tickets trade for $80 at the prize shelf.',
+    'Tokens cost $5 each at the change machine.',
+  ];
+  const buttons = [r6PanelButton('Buy 5 tokens — $25', () => { if (r6Spend(25)) { r6Arcade.tokens += 5; r6ArcadeSave(); r6ArcadeOpen(); } })];
+  for (let i = 0; i < R6_ARCADE_CABS.length; i++) {
+    const cab = R6_ARCADE_CABS[i];
+    const best = r6Arcade.scores[cab.name] || 0;
+    buttons.push(r6PanelButton(cab.name + ' — ' + cab.price + ' token(s) · best ' + best + ' / top ' + cab.top, () => { r6ArcadePlay(i); }, r6Arcade.tokens < cab.price));
+  }
+  buttons.push(r6PanelButton('Trade 100 tickets — $80', () => { if (r6Arcade.tickets >= 100) { r6Arcade.tickets -= 100; r6Arcade.prizes++; r6Earn(80, 'Traded tickets for a prize at the shelf.'); r6ArcadeSave(); r6ArcadeOpen(); } else toast('Need 100 tickets — you have ' + r6Arcade.tickets + '.'); }, r6Arcade.tickets < 100));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🕹️ ' + R6_ARCADE.name, lines, buttons);
+  return true;
+}
+function r6ArcadePlay(i) {
+  const cab = R6_ARCADE_CABS[i];
+  if (r6Arcade.tokens < cab.price) return;
+  r6Arcade.tokens -= cab.price; r6Arcade.plays++;
+  const score = Math.floor(Math.random() * cab.top * 1.25);
+  const best = r6Arcade.scores[cab.name] || 0;
+  const ticketsWon = Math.floor(score / 400);
+  r6Arcade.tickets += ticketsWon;
+  if (score > best) r6Arcade.scores[cab.name] = score;
+  if (score > cab.top) r6Earn(150, '🕹️ NEW TOP SCORE on ' + cab.name + ': ' + score + '!');
+  else toast(cab.name + ': ' + score + ' pts (+' + ticketsWon + ' tickets). Top is ' + cab.top + '.');
+  r6ArcadeSave(); r6ArcadeOpen();
+}
+function r6ArcadeSave() { r6Save('arcade', { tokens: r6Arcade.tokens, tickets: r6Arcade.tickets, scores: r6Arcade.scores, plays: r6Arcade.plays, prizes: r6Arcade.prizes }); }
+function r6ArcadeLoad() {
+  const s = r6Load('arcade', null);
+  if (s) { r6Arcade.tokens = s.tokens || 0; r6Arcade.tickets = s.tickets || 0; r6Arcade.scores = s.scores || {}; r6Arcade.plays = s.plays || 0; r6Arcade.prizes = s.prizes || 0; }
+}
+
+// ---------- Round 6 system 13: library + rare books ----------
+// The old library on Library Row. Twelve rare books hide in the stacks; each
+// one read grants a lasting boost, and the Thursday book club pays $120.
+const R6_RARE_BOOKS = [
+  { name: 'Tides of Solmar', boost: 'driving', amt: 4, shelf: 'A3' },
+  { name: 'The Salt Merchant', boost: 'stamina', amt: 4, shelf: 'B1' },
+  { name: 'Charts of the Bay', boost: 'driving', amt: 5, shelf: 'C2' },
+  { name: 'A Gull\'s Atlas', boost: 'shooting', amt: 4, shelf: 'A1' },
+  { name: 'The Lighthouse Log', boost: 'stamina', amt: 5, shelf: 'D4' },
+  { name: 'Coral Economies', boost: 'driving', amt: 4, shelf: 'B3' },
+  { name: 'Harbour Nights', boost: 'shooting', amt: 5, shelf: 'C1' },
+  { name: 'The Ferry Captain', boost: 'stamina', amt: 6, shelf: 'A2' },
+  { name: 'Palm Wine Recipes', boost: 'driving', amt: 3, shelf: 'D2' },
+  { name: 'Storms of the Keys', boost: 'shooting', amt: 6, shelf: 'B2' },
+  { name: 'The Mapmaker\'s Wife', boost: 'stamina', amt: 5, shelf: 'C4' },
+  { name: 'Solmar: A History', boost: 'driving', amt: 7, shelf: 'D1' },
+];
+const R6_LIBRARY = { x: -16, z: -44, name: 'Solmar Library' };
+let r6Library = { read: [], club: 0, clubTimer: 150, quiet: 0 };
+function r6LibraryBuild() {
+  addBox(16, 8, 12, 0xd8c8a8, R6_LIBRARY.x, 4, R6_LIBRARY.z);
+  addBox(17, 1, 13, 0x8a2a2a, R6_LIBRARY.x, 8.5, R6_LIBRARY.z);
+  for (let i = 0; i < 4; i++) addBox(1.2, 5, 0.6, 0xf0ead8, R6_LIBRARY.x - 6 + i * 4, 2.5, R6_LIBRARY.z - 6.2);
+  const steps = new THREE.Mesh(new THREE.BoxGeometry(10, 0.6, 3), new THREE.MeshStandardMaterial({ color: 0x9a8a6a, roughness: 0.9 }));
+  steps.position.set(R6_LIBRARY.x, 0.3, R6_LIBRARY.z - 7.5); scene.add(steps);
+  for (let i = 0; i < 3; i++) {
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(3, 2.4, 0.8), new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.9 }));
+    shelf.position.set(R6_LIBRARY.x - 4 + i * 4, 1.6, R6_LIBRARY.z + 7); scene.add(shelf);
+  }
+}
+function r6LibraryNear() { return r6Near(R6_LIBRARY.x, R6_LIBRARY.z, 10); }
+function r6LibraryOpen() {
+  if (!r6LibraryNear()) return false;
+  const lines = [
+    R6_LIBRARY.name + ' — librarian Agnes keeps the quiet, and the rare books.',
+    'Rare books read: ' + r6Library.read.length + '/12 · Book club sessions: ' + r6Library.club + '.',
+    'Next book club in ' + Math.ceil(r6Library.clubTimer) + 's — attendance pays $120.',
+    'Each rare book grants a permanent skill boost when read.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_RARE_BOOKS.length; i++) {
+    const b = R6_RARE_BOOKS[i];
+    const read = r6Library.read.includes(i);
+    buttons.push(r6PanelButton((read ? '✓ ' : '') + b.name + ' — shelf ' + b.shelf + ' (+' + b.amt + ' ' + b.boost + ')', () => { r6LibraryRead(i); }, read));
+  }
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('📚 ' + R6_LIBRARY.name, lines, buttons);
+  return true;
+}
+function r6LibraryRead(i) {
+  if (r6Library.read.includes(i)) return;
+  const b = R6_RARE_BOOKS[i];
+  r6Library.read.push(i);
+  if (skills && typeof skills[b.boost] === 'number') skills[b.boost] = Math.min(100, skills[b.boost] + b.amt);
+  toast('Read "' + b.name + '" (+' + b.amt + ' ' + b.boost + '). ' + (12 - r6Library.read.length) + ' rare books left.');
+  if (r6Library.read.length === 12) r6Earn(400, 'Read every rare book in the library — Agnes frames your card!');
+  r6LibrarySave(); saveGame(); r6LibraryOpen();
+}
+function r6LibraryUpdate(dt) {
+  r6Library.clubTimer -= dt;
+  if (r6Library.clubTimer <= 0) {
+    r6Library.clubTimer = 200;
+    r6Library.club++;
+    r6Earn(120, '📚 Book club at the library — lively debate about "Tides of Solmar".');
+    r6LibrarySave();
+  }
+}
+function r6LibrarySave() { r6Save('library', { read: r6Library.read, club: r6Library.club }); }
+function r6LibraryLoad() {
+  const s = r6Load('library', null);
+  if (s) { r6Library.read = s.read || []; r6Library.club = s.club || 0; }
+}
+
+// ---------- Round 6 system 14: museum ----------
+// The Bay Museum: four exhibit halls, guided tours you can run for tips, an
+// artifact hunt across the city, and a night-at-the-museum event.
+const R6_MUSEUM_EXHIBITS = [
+  { name: 'The First Ferry', hall: 'Maritime', desc: 'the 1936 ferry bell, still shiny' },
+  { name: 'Coral Crown', hall: 'Natural History', desc: 'a crown of pink coral, found in 1958' },
+  { name: 'The Old Cannon', hall: 'Harbour Defence', desc: 'fired once, at a whale, missed' },
+  { name: 'Gull in Gold', hall: 'Bay Art', desc: 'a golden gull, the museum mascot' },
+];
+const R6_MUSEUM_ARTIFACTS = [
+  { name: 'Brass Compass', x: 60, z: 40 },
+  { name: 'Porcelain Shard', x: -36, z: -20 },
+  { name: 'Silver Anchor Pin', x: 120, z: 60 },
+  { name: 'Old Ferry Ticket', x: -120, z: 80 },
+];
+const R6_MUSEUM = { x: 12, z: -72, name: 'Bay Museum' };
+let r6Museum = { tours: 0, tips: 0, artifacts: [], nightWins: 0, nightTimer: 210 };
+function r6MuseumBuild() {
+  addBox(20, 9, 14, 0xf0ead8, R6_MUSEUM.x, 4.5, R6_MUSEUM.z);
+  addBox(22, 1.2, 16, 0x2a4a6a, R6_MUSEUM.x, 9.6, R6_MUSEUM.z);
+  for (let i = 0; i < 4; i++) addBox(1.4, 7, 1.4, 0xd8c8a8, R6_MUSEUM.x - 7.5 + i * 5, 3.5, R6_MUSEUM.z - 7.4);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(4, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2a6a8a, roughness: 0.6 }));
+  dome.position.set(R6_MUSEUM.x, 10.2, R6_MUSEUM.z); scene.add(dome);
+  for (let i = 0; i < 4; i++) {
+    const caseM = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 1.2), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, roughness: 0.2, metalness: 0.3 }));
+    caseM.position.set(R6_MUSEUM.x - 6 + i * 4, 1, R6_MUSEUM.z + 8.5); scene.add(caseM);
+  }
+}
+function r6MuseumNear() { return r6Near(R6_MUSEUM.x, R6_MUSEUM.z, 11); }
+function r6MuseumArtifactNear() {
+  for (let i = 0; i < R6_MUSEUM_ARTIFACTS.length; i++) {
+    if (r6Museum.artifacts.includes(i)) continue;
+    if (r6Near(R6_MUSEUM_ARTIFACTS[i].x, R6_MUSEUM_ARTIFACTS[i].z, 6)) return i;
+  }
+  return -1;
+}
+function r6MuseumOpen() {
+  if (r6MuseumArtifactNear() >= 0) {
+    const a = R6_MUSEUM_ARTIFACTS[r6MuseumArtifactNear()];
+    r6ShowPanel('🏺 Artifact found!', ['A ' + a.name + ' — one of the museum\'s lost pieces.', 'Hand it to curator Dr. Okafor at the Bay Museum for $110.'], [
+      r6PanelButton('Pocket the ' + a.name, () => { r6Museum.artifacts.push(r6MuseumArtifactNear()); r6Earn(110, 'Returned a lost artifact to the museum.'); r6MuseumSave(); r6ClosePanel(); }),
+      r6PanelButton('Leave it', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6MuseumNear()) return false;
+  const lines = [
+    R6_MUSEUM.name + ' — curator Dr. Okafor, four halls, one golden gull.',
+    'Tours given: ' + r6Museum.tours + ' · Tour tips banked: $' + r6Museum.tips + '.',
+    'Artifacts returned: ' + r6Museum.artifacts.length + '/4 · Night events won: ' + r6Museum.nightWins + '.',
+    'Night at the museum in ' + Math.ceil(r6Museum.nightTimer) + 's — a quiz night paying $250.',
+  ];
+  const buttons = [];
+  for (const ex of R6_MUSEUM_EXHIBITS) buttons.push(r6PanelButton('Tour: ' + ex.name + ' (' + ex.hall + ')', () => { r6MuseumTour(ex); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🏛️ ' + R6_MUSEUM.name, lines, buttons);
+  return true;
+}
+function r6MuseumTour(ex) {
+  r6Museum.tours++;
+  const tip = 25 + Math.floor(Math.random() * 30);
+  r6Museum.tips += tip;
+  r6Earn(tip, 'Guided a tour of "' + ex.name + '" — ' + ex.desc + '.');
+  r6MuseumSave(); r6MuseumOpen();
+}
+function r6MuseumUpdate(dt) {
+  r6Museum.nightTimer -= dt;
+  if (r6Museum.nightTimer <= 0) {
+    r6Museum.nightTimer = 260;
+    if (r6Museum.tours >= 3) { r6Museum.nightWins++; r6Earn(250, '🏛️ Night at the museum — quiz champion, by one question!'); }
+    else toast('Night at the museum — give 3 tours first to join the $250 quiz night.');
+    r6MuseumSave();
+  }
+}
+function r6MuseumSave() { r6Save('museum', { tours: r6Museum.tours, tips: r6Museum.tips, artifacts: r6Museum.artifacts, nightWins: r6Museum.nightWins }); }
+function r6MuseumLoad() {
+  const s = r6Load('museum', null);
+  if (s) { r6Museum.tours = s.tours || 0; r6Museum.tips = s.tips || 0; r6Museum.artifacts = s.artifacts || []; r6Museum.nightWins = s.nightWins || 0; }
+}
+// ---------- Round 6 system 15: carnival / fairground ----------
+// The Solmar Fair rolls into the south field: a Ferris wheel, bumper cars,
+// ring toss, and a fireworks show every evening that pays $200 to watch from
+// the best seat in the house.
+const R6_FAIR = { x: 40, z: 190, name: 'Solmar Fair' };
+let r6Fair = { rides: 0, rings: 0, ringWins: 0, bumpWins: 0, shows: 0, showTimer: 130 };
+function r6FairBuild() {
+  const wheel = new THREE.Group();
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(11, 0.5, 8, 28), new THREE.MeshStandardMaterial({ color: 0xff2a7a, metalness: 0.5, roughness: 0.4 }));
+  wheel.add(rim);
+  for (let i = 0; i < 8; i++) {
+    const ang = (i / 8) * Math.PI * 2;
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.35, 21, 0.35), new THREE.MeshStandardMaterial({ color: 0xffd23f, metalness: 0.4 }));
+    spoke.rotation.z = ang; wheel.add(spoke);
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.4, 1.4), new THREE.MeshStandardMaterial({ color: [0xff5a5a, 0x2ee6ff, 0x7dff9a, 0xffd23f][i % 4], roughness: 0.5 }));
+    cabin.position.set(Math.cos(ang) * 11, Math.sin(ang) * 11, 0); wheel.add(cabin);
+  }
+  wheel.position.set(R6_FAIR.x - 14, 13, R6_FAIR.z - 6);
+  scene.add(wheel);
+  addBox(1.2, 13, 1.2, 0x3a3a44, R6_FAIR.x - 14, 6.5, R6_FAIR.z - 4);
+  addBox(1.2, 13, 1.2, 0x3a3a44, R6_FAIR.x - 14, 6.5, R6_FAIR.z - 8);
+  addBox(12, 0.5, 10, 0x2a2a33, R6_FAIR.x + 6, 0.25, R6_FAIR.z + 2);
+  for (let i = 0; i < 4; i++) {
+    const car = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 1.2), new THREE.MeshStandardMaterial({ color: [0xff5a5a, 0x2ee6ff, 0xffd23f, 0x7dff9a][i], roughness: 0.4 }));
+    car.position.set(R6_FAIR.x + 2 + (i % 2) * 6, 0.8, R6_FAIR.z - 1 + Math.floor(i / 2) * 5); scene.add(car);
+  }
+  const tent = new THREE.Mesh(new THREE.ConeGeometry(5, 4.5, 8), new THREE.MeshStandardMaterial({ color: 0xff5a5a, roughness: 0.8 }));
+  tent.position.set(R6_FAIR.x + 12, 4.5, R6_FAIR.z - 10); scene.add(tent);
+  addBox(8, 2.5, 8, 0xf0ead8, R6_FAIR.x + 12, 1.25, R6_FAIR.z - 10);
+  for (let i = 0; i < 5; i++) {
+    const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.2, 8), new THREE.MeshStandardMaterial({ color: 0x2ee6ff, roughness: 0.3 }));
+    bottle.position.set(R6_FAIR.x + 2 + i * 1.1, 1, R6_FAIR.z + 10); scene.add(bottle);
+  }
+  const stage = new THREE.Mesh(new THREE.BoxGeometry(10, 1, 6), new THREE.MeshStandardMaterial({ color: 0x8a2be2, roughness: 0.7 }));
+  stage.position.set(R6_FAIR.x - 10, 0.5, R6_FAIR.z + 12); scene.add(stage);
+}
+function r6FairNear() { return r6Near(R6_FAIR.x, R6_FAIR.z, 18); }
+function r6FairOpen() {
+  if (!r6FairNear()) return false;
+  const lines = [
+    R6_FAIR.name + ' — Ferris wheel, bumper cars, ring toss, fireworks at dusk.',
+    'Wheel rides: ' + r6Fair.rides + ' · Ring toss wins: ' + r6Fair.ringWins + '/' + r6Fair.rings + ' · Bumper wins: ' + r6Fair.bumpWins + '.',
+    'Fireworks shows watched: ' + r6Fair.shows + ' · Next show in ' + Math.ceil(r6Fair.showTimer) + 's.',
+    'Ride the wheel $12, ring toss $10 for 3 rings, bumper cars $15 a round.',
+  ];
+  r6ShowPanel('🎡 ' + R6_FAIR.name, lines, [
+    r6PanelButton('Ride the Ferris wheel — $12', () => { if (r6Spend(12)) { r6Fair.rides++; toast('The wheel turns slowly over the bay lights. Beautiful.'); r6FairSave(); r6FairOpen(); } }),
+    r6PanelButton('Ring toss — $10 (3 rings)', () => { r6FairRing(); }),
+    r6PanelButton('Bumper cars — $15', () => { r6FairBump(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6FairRing() {
+  if (!r6Spend(10)) return;
+  r6Fair.rings++;
+  const hits = Math.floor(Math.random() * 4);
+  if (hits >= 2) { r6Fair.ringWins++; r6Earn(45, 'Ring toss: ' + hits + '/3 rings on the bottle!'); }
+  else toast('Ring toss: ' + hits + '/3. The bottles mock you.');
+  r6FairSave(); r6FairOpen();
+}
+function r6FairBump() {
+  if (!r6Spend(15)) return;
+  if (Math.random() < 0.5) { r6Fair.bumpWins++; r6Earn(40, 'Bumper cars: last car spinning wins $40!'); }
+  else toast('Bumper cars: spun out by a kid in a pink car. Humbling.');
+  r6FairSave(); r6FairOpen();
+}
+function r6FairUpdate(dt) {
+  r6Fair.showTimer -= dt;
+  if (r6Fair.showTimer <= 0) {
+    r6Fair.showTimer = 180;
+    if (r6FairNear()) { r6Fair.shows++; r6Earn(200, '🎆 Fireworks over the fair — you caught the whole show from the front row!'); }
+    else toast('Fireworks over the Solmar Fair — get to the fairground for the $200 front-row show.');
+    r6FairSave();
+  }
+}
+function r6FairSave() { r6Save('fair', { rides: r6Fair.rides, rings: r6Fair.rings, ringWins: r6Fair.ringWins, bumpWins: r6Fair.bumpWins, shows: r6Fair.shows }); }
+function r6FairLoad() {
+  const s = r6Load('fair', null);
+  if (s) { r6Fair.rides = s.rides || 0; r6Fair.rings = s.rings || 0; r6Fair.ringWins = s.ringWins || 0; r6Fair.bumpWins = s.bumpWins || 0; r6Fair.shows = s.shows || 0; }
+}
+
+// ---------- Round 6 system 16: zoo ----------
+// Solmar Zoo, north-east past the palms. Six enclosures, feeding times, and a
+// safari photo challenge — snap the rare white gull for $300.
+const R6_ZOO_ANIMALS = [
+  { name: 'Bay Otters', x: 150, z: -100, food: 'fish', desc: 'three otters, always juggling shells' },
+  { name: 'Flamingo Flock', x: 162, z: -88, food: 'shrimp', desc: 'pink, loud, standing on one leg' },
+  { name: 'Island Monkeys', x: 138, z: -88, food: 'bananas', desc: 'clever hands, quicker feet' },
+  { name: 'Tortoise Twins', x: 150, z: -76, food: 'lettuce', desc: '120 years old between them' },
+  { name: 'Parrot Row', x: 166, z: -76, food: 'seeds', desc: 'they know your name already' },
+  { name: 'White Gull', x: 156, z: -112, food: 'crab', desc: 'the zoo\'s rare white gull, one of a kind' },
+];
+const R6_ZOO = { x: 152, z: -92, name: 'Solmar Zoo', entry: 30 };
+let r6Zoo = { fed: [], photos: 0, visits: 0, gullShot: false };
+function r6ZooBuild() {
+  addBox(34, 0.4, 30, 0x7a9a5a, R6_ZOO.x, 0.2, R6_ZOO.z);
+  addBox(6, 4, 4, 0xf0ead8, R6_ZOO.x, 2, R6_ZOO.z + 16);
+  const gateSign = new THREE.Mesh(new THREE.BoxGeometry(7, 1.2, 0.3), new THREE.MeshStandardMaterial({ color: 0x7dff9a, emissive: 0x228833, emissiveIntensity: 0.5 }));
+  gateSign.position.set(R6_ZOO.x, 4.4, R6_ZOO.z + 14); scene.add(gateSign);
+  for (const a of R6_ZOO_ANIMALS) {
+    addBox(7, 1.4, 7, 0x9a8a6a, a.x, 0.7, a.z);
+    const critter = new THREE.Mesh(new THREE.SphereGeometry(0.8, 10, 10), new THREE.MeshStandardMaterial({ color: a.name === 'Flamingo Flock' ? 0xff9ad5 : a.name === 'White Gull' ? 0xffffff : 0x8a5a2a, roughness: 0.8 }));
+    critter.position.set(a.x, 1.6, a.z); scene.add(critter);
+    const water = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x2a8ab0, roughness: 0.2 }));
+    water.position.set(a.x + 2, 1.5, a.z + 1.5); scene.add(water);
+  }
+}
+function r6ZooNear() { return r6Near(R6_ZOO.x, R6_ZOO.z, 18); }
+function r6ZooAnimalNear() {
+  for (let i = 0; i < R6_ZOO_ANIMALS.length; i++) if (r6Near(R6_ZOO_ANIMALS[i].x, R6_ZOO_ANIMALS[i].z, 7)) return i;
+  return -1;
+}
+function r6ZooOpen() {
+  const at = r6ZooAnimalNear();
+  if (at >= 0) {
+    const a = R6_ZOO_ANIMALS[at];
+    const fed = r6Zoo.fed.includes(at);
+    r6ShowPanel('🦩 ' + a.name, [
+      a.desc + '.',
+      'Favourite food: ' + a.food + ' — feeding costs $15.',
+      fed ? 'Already fed today. They remember you.' : 'Hungry. A keeper\'s bucket is right there.',
+      a.name === 'White Gull' && !r6Zoo.gullShot ? 'Safari photo challenge: photograph the white gull for $300.' : '',
+    ], [
+      r6PanelButton('Feed them — $15', () => { if (!fed && r6Spend(15)) { r6Zoo.fed.push(at); r6Earn(25, 'Fed the ' + a.name + ' — the keeper tips you.'); r6ZooSave(); r6ClosePanel(); } }, fed),
+      a.name === 'White Gull' && !r6Zoo.gullShot ? r6PanelButton('📸 Photograph the white gull', () => { r6Zoo.gullShot = true; r6Zoo.photos++; r6Earn(300, '📸 Safari shot: the rare white gull, wings wide!'); r6ZooSave(); r6ClosePanel(); }) : r6PanelButton('📸 Snap a photo (+$20)', () => { r6Zoo.photos++; r6Earn(20, 'Snapped the ' + a.name + ' for the safari album.'); r6ZooSave(); r6ClosePanel(); }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6ZooNear()) return false;
+  const lines = [
+    R6_ZOO.name + ' — six enclosures, feeding times all afternoon.',
+    'Visits: ' + r6Zoo.visits + ' · Animals fed: ' + r6Zoo.fed.length + '/6 · Safari photos: ' + r6Zoo.photos + '.',
+    'Entry is $' + R6_ZOO.entry + ' — feeding pays back $25 a time.',
+    'Feed all six animals in one day for a $150 keeper bonus.',
+  ];
+  r6ShowPanel('🦁 ' + R6_ZOO.name, lines, [
+    r6PanelButton('Enter the zoo — $' + R6_ZOO.entry, () => { if (r6Spend(R6_ZOO.entry)) { r6Zoo.visits++; r6ZooSave(); toast('Welcome to Solmar Zoo. The otters are expecting you.'); r6ClosePanel(); } }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6ZooUpdate(dt) {
+  r6Zoo._t = (r6Zoo._t || 0) + dt;
+  if (r6Zoo._t > 120) {
+    r6Zoo._t = 0;
+    if (r6Zoo.fed.length === 6) { r6Zoo.fed = []; r6Earn(150, '🦁 Fed every animal today — the keepers pay a bonus!'); r6ZooSave(); }
+    else if (r6Zoo.fed.length > 0) r6Zoo.fed = [];
+  }
+}
+function r6ZooSave() { r6Save('zoo', { fed: r6Zoo.fed, photos: r6Zoo.photos, visits: r6Zoo.visits, gullShot: r6Zoo.gullShot }); }
+function r6ZooLoad() {
+  const s = r6Load('zoo', null);
+  if (s) { r6Zoo.fed = s.fed || []; r6Zoo.photos = s.photos || 0; r6Zoo.visits = s.visits || 0; r6Zoo.gullShot = !!s.gullShot; }
+}
+
+// ---------- Round 6 system 17: photography studio ----------
+// Lightbox Studio on Marina Row. Portrait sessions, a weekly photo contest,
+// and a gallery wall where your prints sell while you sleep.
+const R6_PHOTO_THEMES = [
+  { name: 'Golden Hour Portraits', pay: 90, desc: 'couples at the marina, warm light' },
+  { name: 'Harbour Workers', pay: 110, desc: 'weathered faces, honest work' },
+  { name: 'Neon Nights', pay: 130, desc: 'Casino Row after dark, all glow' },
+  { name: 'Wild Bay', pay: 150, desc: 'gulls, waves, the far keys' },
+];
+const R6_PHOTO_STUDIO = { x: 56, z: 30, name: 'Lightbox Studio' };
+let r6Photo = { sessions: 0, contestWins: 0, gallery: 0, sold: 0, contestTimer: 230 };
+function r6PhotoBuild() {
+  addBox(10, 5, 8, 0x22222e, R6_PHOTO_STUDIO.x, 2.5, R6_PHOTO_STUDIO.z);
+  addBox(10.6, 0.5, 8.6, 0x2ee6ff, R6_PHOTO_STUDIO.x, 5.3, R6_PHOTO_STUDIO.z);
+  const backdrop = new THREE.Mesh(new THREE.BoxGeometry(4, 3.4, 0.2), new THREE.MeshStandardMaterial({ color: 0xf0ead8, roughness: 0.9 }));
+  backdrop.position.set(R6_PHOTO_STUDIO.x - 2, 2, R6_PHOTO_STUDIO.z + 4.2); scene.add(backdrop);
+  for (const [lx, lz] of [[-4, -3], [4, -3]]) {
+    const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3, 8), new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.6 }));
+    stand.position.set(R6_PHOTO_STUDIO.x + lx, 1.5, R6_PHOTO_STUDIO.z + lz); scene.add(stand);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.5, 8, 8), new THREE.MeshBasicMaterial({ color: 0xfff6c0 }));
+    lamp.position.set(R6_PHOTO_STUDIO.x + lx, 3.2, R6_PHOTO_STUDIO.z + lz); scene.add(lamp);
+  }
+  for (let i = 0; i < 3; i++) {
+    const print = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.8, 0.1), new THREE.MeshStandardMaterial({ color: [0xff9ad5, 0x2ee6ff, 0xffd23f][i], roughness: 0.6 }));
+    print.position.set(R6_PHOTO_STUDIO.x - 2.4 + i * 2.4, 2.8, R6_PHOTO_STUDIO.z - 4.1); scene.add(print);
+  }
+}
+function r6PhotoNear() { return r6Near(R6_PHOTO_STUDIO.x, R6_PHOTO_STUDIO.z, 9); }
+function r6PhotoOpen() {
+  if (!r6PhotoNear()) return false;
+  const lines = [
+    R6_PHOTO_STUDIO.name + ' — portraits, prints, and a gallery wall.',
+    'Sessions shot: ' + r6Photo.sessions + ' · Contest wins: ' + r6Photo.contestWins + ' · Prints on the wall: ' + r6Photo.gallery + ' · Prints sold: ' + r6Photo.sold + '.',
+    'Weekly photo contest in ' + Math.ceil(r6Photo.contestTimer) + 's — best theme wins $280.',
+    'Hang a print ($40) and it may sell for $95 while you are out.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R6_PHOTO_THEMES.length; i++) {
+    const t = R6_PHOTO_THEMES[i];
+    buttons.push(r6PanelButton('Shoot: ' + t.name + ' — $' + t.pay, () => { r6PhotoShoot(i); }));
+  }
+  buttons.push(r6PanelButton('Hang a print in the gallery — $40', () => { if (r6Spend(40)) { r6Photo.gallery++; r6PhotoSave(); toast('Print hung. Fingers crossed for a buyer.'); r6PhotoOpen(); } }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('📷 ' + R6_PHOTO_STUDIO.name, lines, buttons);
+  return true;
+}
+function r6PhotoShoot(i) {
+  const t = R6_PHOTO_THEMES[i];
+  r6Photo.sessions++;
+  r6Earn(t.pay, 'Shot "' + t.name + '" — ' + t.desc + '.');
+  r6PhotoSave(); r6PhotoOpen();
+}
+function r6PhotoUpdate(dt) {
+  r6Photo.contestTimer -= dt;
+  if (r6Photo.contestTimer <= 0) {
+    r6Photo.contestTimer = 260;
+    if (r6Photo.sessions >= 3) { r6Photo.contestWins++; r6Earn(280, '📷 Won the weekly photo contest!'); }
+    else toast('Weekly photo contest at Lightbox — shoot 3 sessions to enter for $280.');
+    r6PhotoSave();
+  }
+  r6Photo._sell = (r6Photo._sell || 0) + dt;
+  if (r6Photo._sell > 90 && r6Photo.gallery > 0 && Math.random() < 0.5) {
+    r6Photo._sell = 0; r6Photo.gallery--; r6Photo.sold++;
+    r6Earn(95, 'A gallery print sold while you were out!');
+    r6PhotoSave();
+  }
+}
+function r6PhotoSave() { r6Save('photo6', { sessions: r6Photo.sessions, contestWins: r6Photo.contestWins, gallery: r6Photo.gallery, sold: r6Photo.sold }); }
+function r6PhotoLoad() {
+  const s = r6Load('photo6', null);
+  if (s) { r6Photo.sessions = s.sessions || 0; r6Photo.contestWins = s.contestWins || 0; r6Photo.gallery = s.gallery || 0; r6Photo.sold = s.sold || 0; }
+}
+
+// ---------- Round 6 system 18: wedding planner ----------
+// Ryan and Ian are getting married. Five vendor quests lead to the ceremony
+// at the little white chapel — and the guests bring gift money.
+const R6_WEDDING_VENDORS = [
+  { name: 'Florist Rosa', cost: 300, task: 'Pick the sunset bouquets', x: 24, z: 20 },
+  { name: 'Baker Milo', cost: 350, task: 'Taste the three-tier cake', x: -8, z: 44 },
+  { name: 'Tailor Ana', cost: 400, task: 'Fit Ian\'s dress and Ryan\'s suit', x: -32, z: -8 },
+  { name: 'Photographer Dee', cost: 250, task: 'Scout the golden-hour spots', x: 56, z: 30 },
+  { name: 'Chapel Keeper', cost: 500, task: 'Book the little white chapel', x: 0, z: -96 },
+];
+const R6_CHAPEL = { x: 0, z: -96, name: 'Little White Chapel' };
+let r6Wedding = { vendors: [], planned: 0, married: false, gifts: 0 };
+function r6WeddingBuild() {
+  addBox(8, 6, 7, 0xffffff, R6_CHAPEL.x, 3, R6_CHAPEL.z);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(6, 3.5, 4), new THREE.MeshStandardMaterial({ color: 0x8a2a2a, roughness: 0.8 }));
+  roof.position.set(R6_CHAPEL.x, 7.8, R6_CHAPEL.z); roof.rotation.y = Math.PI / 4; scene.add(roof);
+  addBox(1, 5, 1, 0xd8c8a8, R6_CHAPEL.x + 3, 2.5, R6_CHAPEL.z + 4);
+  addBox(1, 5, 1, 0xd8c8a8, R6_CHAPEL.x - 3, 2.5, R6_CHAPEL.z + 4);
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 8, 16, Math.PI), new THREE.MeshStandardMaterial({ color: 0xff9ad5, roughness: 0.7 }));
+  arch.position.set(R6_CHAPEL.x, 3, R6_CHAPEL.z + 5.5); scene.add(arch);
+  for (let i = 0; i < 5; i++) {
+    const v = R6_WEDDING_VENDORS[i];
+    const stall = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.2, 1.4), new THREE.MeshStandardMaterial({ color: [0xff9ad5, 0xffd23f, 0x2ee6ff, 0x7dff9a, 0xffffff][i], roughness: 0.7 }));
+    stall.position.set(v.x, 0.6, v.z); scene.add(stall);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.6, 8), new THREE.MeshStandardMaterial({ color: 0x8a6a3a }));
+    pole.position.set(v.x + 1.4, 1.3, v.z); scene.add(pole);
+  }
+}
+function r6WeddingNear() {
+  for (let i = 0; i < R6_WEDDING_VENDORS.length; i++) if (r6Near(R6_WEDDING_VENDORS[i].x, R6_WEDDING_VENDORS[i].z, 7)) return i;
+  if (r6Near(R6_CHAPEL.x, R6_CHAPEL.z, 9)) return 5;
+  return -1;
+}
+function r6WeddingOpen() {
+  const at = r6WeddingNear();
+  if (at < 0) return false;
+  if (at === 5) {
+    const ready = r6Wedding.vendors.length === 5;
+    r6ShowPanel('💒 ' + R6_CHAPEL.name, [
+      'The little white chapel at the north end of the bay.',
+      ready ? 'Every vendor is booked. Ryan and Ian can say yes today.' : 'Vendors booked: ' + r6Wedding.vendors.length + '/5. Visit each vendor around the bay first.',
+      r6Wedding.married ? 'Married! The guests brought $' + r6Wedding.gifts + ' in gift money.' : '',
+    ], [
+      r6PanelButton('💍 Hold the ceremony!', () => { r6WeddingCeremony(); }, !ready || r6Wedding.married),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  const v = R6_WEDDING_VENDORS[at];
+  const done = r6Wedding.vendors.includes(at);
+  r6ShowPanel('💐 ' + v.name, [
+    v.task + '.',
+    'Booking fee: $' + v.cost + '.',
+    done ? 'Booked — see you at the chapel.' : 'Not booked yet.',
+    'Vendors booked: ' + r6Wedding.vendors.length + '/5.',
+  ], [
+    r6PanelButton('Book ' + v.name + ' — $' + v.cost, () => { if (!done && r6Spend(v.cost)) { r6Wedding.vendors.push(at); r6Wedding.planned++; r6WeddingSave(); toast(v.name + ' is booked! ' + (5 - r6Wedding.vendors.length) + ' to go.'); r6WeddingOpen(); } }, done),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6WeddingCeremony() {
+  if (r6Wedding.vendors.length < 5 || r6Wedding.married) return;
+  r6Wedding.married = true;
+  r6Wedding.gifts = 600;
+  r6Earn(600, '💒 Ryan and Ian are married! Guests showered the couple with $600 in gifts.');
+  r6WeddingSave(); r6ClosePanel();
+}
+function r6WeddingSave() { r6Save('wedding', { vendors: r6Wedding.vendors, planned: r6Wedding.planned, married: r6Wedding.married, gifts: r6Wedding.gifts }); }
+function r6WeddingLoad() {
+  const s = r6Load('wedding', null);
+  if (s) { r6Wedding.vendors = s.vendors || []; r6Wedding.planned = s.planned || 0; r6Wedding.married = !!s.married; r6Wedding.gifts = s.gifts || 0; }
+}
+// ---------- Round 6 system 19: band career ----------
+// Form a band with Ryan on guitar and Ian on vocals. Four venues, gig fees
+// that grow with fans, album sales at dawn, and a headline slot at $800.
+const R6_BAND_VENUES = [
+  { name: 'Marina Bar', x: 44, z: 40, fee: 120, fans: 0, desc: 'a small stage, a loyal crowd' },
+  { name: 'The Bluefin', x: 78, z: -60, fee: 260, fans: 40, desc: 'the club stage, bigger room' },
+  { name: 'Fairground Stage', x: 40, z: 190, fee: 400, fans: 120, desc: 'open air, fair crowds' },
+  { name: 'Bay Arena', x: -60, z: -140, fee: 800, fans: 300, desc: 'the big room, headline slot' },
+];
+const R6_BAND_SONGS = [
+  { name: 'Sunset Over Solmar', tempo: 96 },
+  { name: 'Harbour Lights', tempo: 112 },
+  { name: 'Gull Song', tempo: 128 },
+  { name: 'The Long Ferry Home', tempo: 84 },
+];
+let r6Band = { formed: false, fans: 0, gigs: 0, albums: 0, albumSales: 0, setlist: [0, 1], rehearsed: 0 };
+function r6BandBuild() {
+  for (const v of R6_BAND_VENUES) {
+    if (v.name === 'Bay Arena') {
+      addBox(24, 10, 18, 0x2a2a33, v.x, 5, v.z);
+      const roofA = new THREE.Mesh(new THREE.BoxGeometry(25, 1, 19), new THREE.MeshStandardMaterial({ color: 0xff2a7a, roughness: 0.6 }));
+      roofA.position.set(v.x, 10.5, v.z); scene.add(roofA);
+    }
+    const stage = new THREE.Mesh(new THREE.BoxGeometry(8, 1.2, 5), new THREE.MeshStandardMaterial({ color: 0x3a3a44, roughness: 0.8 }));
+    stage.position.set(v.x, 0.6, v.z); scene.add(stage);
+    const amp = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 1), new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 }));
+    amp.position.set(v.x - 3, 2, v.z); scene.add(amp);
+    const mic = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.2, 8), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.7 }));
+    mic.position.set(v.x + 1, 2.3, v.z - 1); scene.add(mic);
+  }
+}
+function r6BandNear() {
+  for (let i = 0; i < R6_BAND_VENUES.length; i++) if (r6Near(R6_BAND_VENUES[i].x, R6_BAND_VENUES[i].z, 10)) return i;
+  return -1;
+}
+function r6BandOpen() {
+  const at = r6BandNear();
+  if (at < 0) return false;
+  const v = R6_BAND_VENUES[at];
+  if (!r6Band.formed) {
+    r6ShowPanel('🎸 Form a band', [
+      'Ryan on guitar, Ian on vocals — the bay needs a band.',
+      'Forming costs $200 for rehearsal room time and a borrowed drum kit.',
+      'Gigs pay by venue, fans grow with every show, albums sell at dawn.',
+    ], [
+      r6PanelButton('Form the band — $200', () => { if (r6Spend(200)) { r6Band.formed = true; r6BandSave(); r6BandOpen(); } }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  const locked = r6Band.fans < v.fans;
+  const lines = [
+    v.name + ' — ' + v.desc + '.',
+    'Fans: ' + r6Band.fans + ' · Gigs played: ' + r6Band.gigs + ' · Albums out: ' + r6Band.albums + ' · Album sales: $' + r6Band.albumSales + '.',
+    'Setlist: ' + r6Band.setlist.map((i) => R6_BAND_SONGS[i].name).join(' + ') + ' · Rehearsals: ' + r6Band.rehearsed + '.',
+    'This venue pays $' + v.fee + ' a gig' + (locked ? ' — needs ' + v.fans + ' fans' : '') + '.',
+  ];
+  const buttons = [];
+  buttons.push(r6PanelButton('Play a gig here — $' + v.fee, () => { r6BandGig(at); }, locked));
+  buttons.push(r6PanelButton('Rehearse the setlist ($30)', () => { if (r6Spend(30)) { r6Band.rehearsed++; r6Band.fans += 4; r6BandSave(); toast('Tight rehearsal. The harmonies are getting there.'); r6BandOpen(); } }));
+  for (let i = 0; i < R6_BAND_SONGS.length; i++) {
+    buttons.push(r6PanelButton((r6Band.setlist.includes(i) ? '✓ ' : '') + R6_BAND_SONGS[i].name + ' (' + R6_BAND_SONGS[i].tempo + ' bpm)', () => {
+      if (r6Band.setlist.includes(i)) r6Band.setlist = r6Band.setlist.filter((s) => s !== i);
+      else if (r6Band.setlist.length < 3) r6Band.setlist.push(i);
+      r6BandSave(); r6BandOpen();
+    }));
+  }
+  buttons.push(r6PanelButton('Record an album — $500', () => { if (r6Spend(500)) { r6Band.albums++; r6BandSave(); toast('Album recorded! It sells at dawn while you sleep.'); r6BandOpen(); } }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🎸 ' + v.name, lines, buttons);
+  return true;
+}
+function r6BandGig(i) {
+  const v = R6_BAND_VENUES[i];
+  if (r6Band.fans < v.fans) return;
+  r6Band.gigs++;
+  r6Band.fans += 12 + r6Band.rehearsed;
+  r6Earn(v.fee, '🎸 Gig at ' + v.name + ' — the crowd sang along to "' + R6_BAND_SONGS[r6Band.setlist[0]].name + '"!');
+  r6BandSave(); r6BandOpen();
+}
+function r6BandUpdate(dt) {
+  r6Band._dawn = (r6Band._dawn || 0) + dt;
+  if (r6Band._dawn > 150 && r6Band.albums > 0) {
+    r6Band._dawn = 0;
+    const sales = r6Band.albums * (20 + Math.floor(r6Band.fans / 10));
+    r6Band.albumSales += sales;
+    r6Earn(sales, 'Album sales at dawn — ' + r6Band.albums + ' album(s) on the shelves.');
+    r6BandSave();
+  }
+}
+function r6BandSave() { r6Save('band', { formed: r6Band.formed, fans: r6Band.fans, gigs: r6Band.gigs, albums: r6Band.albums, albumSales: r6Band.albumSales, setlist: r6Band.setlist, rehearsed: r6Band.rehearsed }); }
+function r6BandLoad() {
+  const s = r6Load('band', null);
+  if (s) { r6Band.formed = !!s.formed; r6Band.fans = s.fans || 0; r6Band.gigs = s.gigs || 0; r6Band.albums = s.albums || 0; r6Band.albumSales = s.albumSales || 0; r6Band.setlist = s.setlist || [0, 1]; r6Band.rehearsed = s.rehearsed || 0; }
+}
+
+// ---------- Round 6 system 20: busking ----------
+// Five street pitches. Play, gather a crowd, and the hat fills with tips.
+// A full crowd meter at the marina pitch pays a $150 street-star bonus.
+const R6_BUSK_PITCHES = [
+  { name: 'Marina Promenade', x: 36, z: 48, crowd: 5 },
+  { name: 'Old Plaza Fountain', x: -20, z: 12, crowd: 4 },
+  { name: 'Casino Row Corner', x: 56, z: -72, crowd: 3 },
+  { name: 'Beach Boardwalk', x: 92, z: 116, crowd: 5 },
+  { name: 'Airport Arrivals', x: -172, z: -24, crowd: 3 },
+];
+let r6Busk = { tips: 0, sessions: 0, crowd: 0, best: 0, hat: 0, pitch: -1, playTimer: 0 };
+function r6BuskBuild() {
+  for (const p of R6_BUSK_PITCHES) {
+    addBox(3, 0.3, 3, 0x8a7a5a, p.x, 0.15, p.z);
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.25, 10), new THREE.MeshStandardMaterial({ color: 0x3a2410, roughness: 0.9 }));
+    hat.position.set(p.x + 1.2, 0.4, p.z + 0.8); scene.add(hat);
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.4, 0.05), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 }));
+    stand.position.set(p.x - 1.2, 1, p.z); stand.rotation.y = 0.4; scene.add(stand);
+  }
+}
+function r6BuskNear() {
+  for (let i = 0; i < R6_BUSK_PITCHES.length; i++) if (r6Near(R6_BUSK_PITCHES[i].x, R6_BUSK_PITCHES[i].z, 6)) return i;
+  return -1;
+}
+function r6BuskOpen() {
+  const at = r6BuskNear();
+  if (at < 0) return false;
+  const p = R6_BUSK_PITCHES[at];
+  const lines = [
+    p.name + ' — a street pitch (crowd ' + p.crowd + '/5).',
+    'Crowd meter: ' + r6Busk.crowd + '/100 · Best crowd: ' + r6Busk.best + ' · Sessions: ' + r6Busk.sessions + '.',
+    'Tips banked: $' + r6Busk.tips + ' · Hat now: $' + r6Busk.hat + '.',
+    'Play a song to gather a crowd. A full crowd at the marina pays $150.',
+  ];
+  r6ShowPanel('🎵 Busking — ' + p.name, lines, [
+    r6PanelButton('Play a song', () => { r6BuskPlay(at); }),
+    r6PanelButton('Collect the hat', () => { if (r6Busk.hat > 0) { r6Earn(r6Busk.hat, 'Collected the hat.'); r6Busk.hat = 0; r6BuskSave(); r6BuskOpen(); } else toast('The hat is empty — play first.'); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6BuskPlay(at) {
+  const p = R6_BUSK_PITCHES[at];
+  r6Busk.sessions++; r6Busk.pitch = at;
+  const gain = p.crowd * 4 + Math.floor(Math.random() * 8) + (r6Band.formed ? 6 : 0);
+  r6Busk.crowd = Math.min(100, r6Busk.crowd + gain);
+  if (r6Busk.crowd > r6Busk.best) r6Busk.best = r6Busk.crowd;
+  const tip = Math.round(r6Busk.crowd * 0.4) + 3;
+  r6Busk.hat += tip; r6Busk.tips += tip;
+  if (r6Busk.crowd >= 100 && at === 0) { r6Earn(150, '🎵 Street star! A full crowd at the marina — the hat overflows!'); r6Busk.crowd = 40; }
+  else toast('Played a song — crowd ' + r6Busk.crowd + '/100, hat +$' + tip + '.');
+  r6BuskSave(); r6BuskOpen();
+}
+function r6BuskUpdate(dt) {
+  r6Busk.playTimer += dt;
+  if (r6Busk.playTimer > 45) { r6Busk.playTimer = 0; r6Busk.crowd = Math.max(0, r6Busk.crowd - 8); }
+}
+function r6BuskSave() { r6Save('busk', { tips: r6Busk.tips, sessions: r6Busk.sessions, crowd: r6Busk.crowd, best: r6Busk.best, hat: r6Busk.hat }); }
+function r6BuskLoad() {
+  const s = r6Load('busk', null);
+  if (s) { r6Busk.tips = s.tips || 0; r6Busk.sessions = s.sessions || 0; r6Busk.crowd = s.crowd || 0; r6Busk.best = s.best || 0; r6Busk.hat = s.hat || 0; }
+}
+
+// ---------- Round 6 system 21: real estate flipping ----------
+// Four rundown flats around the bay. Buy cheap, renovate in three stages,
+// sell for a profit — or keep one and rent it out for $45 a day.
+const R6_FLATS = [
+  { name: 'Harbour Flat 2B', x: -44, z: 56, buy: 2200, renov: 3, sellBase: 3600, desc: 'damp walls, great view' },
+  { name: 'Old Town Loft', x: -12, z: 16, buy: 3100, renov: 3, sellBase: 5100, desc: 'high ceilings, broken stairs' },
+  { name: 'Beach Studio', x: 88, z: 108, buy: 2600, renov: 3, sellBase: 4300, desc: 'sand in the floorboards' },
+  { name: 'Docks Cottage', x: -72, z: -72, buy: 1800, renov: 3, sellBase: 3000, desc: 'small, solid, needs love' },
+];
+const R6_RENOV_STAGE = [
+  { name: 'Patch & Paint', cost: 300, desc: 'new paint, fixed leaks' },
+  { name: 'Kitchen & Bath', cost: 600, desc: 'new fittings, tiled floor' },
+  { name: 'Full Dress', cost: 900, desc: 'furniture, lights, curb appeal' },
+];
+let r6Estate = { owned: [], stage: {}, flipped: 0, profit: 0, rent: 0, rentTimer: 0 };
+function r6EstateBuild() {
+  for (const f of R6_FLATS) {
+    const stage = (r6Estate.stage[f.name] || 0);
+    const col = stage === 0 ? 0x6a6a72 : stage === 1 ? 0x9a8a6a : stage === 2 ? 0xd8c8a8 : 0xffd23f;
+    addBox(8, 5, 7, col, f.x, 2.5, f.z);
+    addBox(8.6, 0.6, 7.6, 0x3a2a2a, f.x, 5.3, f.z);
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 0.2), new THREE.MeshStandardMaterial({ color: 0xff5a5a, emissive: 0x661111, emissiveIntensity: 0.5 }));
+    sign.position.set(f.x, 4.2, f.z - 3.6); scene.add(sign);
+  }
+}
+function r6EstateNear() {
+  for (let i = 0; i < R6_FLATS.length; i++) if (r6Near(R6_FLATS[i].x, R6_FLATS[i].z, 9)) return i;
+  return -1;
+}
+function r6EstateOpen() {
+  const at = r6EstateNear();
+  if (at < 0) return false;
+  const f = R6_FLATS[at];
+  const owned = r6Estate.owned.includes(f.name);
+  const stage = r6Estate.stage[f.name] || 0;
+  const sellPrice = f.sellBase + stage * 500;
+  const lines = [
+    f.name + ' — ' + f.desc + '.',
+    owned ? 'You own it. Renovation stage ' + stage + '/3.' : 'For sale: $' + f.buy + ' (sells from $' + f.sellBase + ' once renovated).',
+    'Flips done: ' + r6Estate.flipped + ' · Flip profit banked: $' + r6Estate.profit + ' · Rent banked: $' + r6Estate.rent + '.',
+    stage < 3 ? 'Next stage: ' + R6_RENOV_STAGE[stage].name + ' — $' + R6_RENOV_STAGE[stage].cost + ' (' + R6_RENOV_STAGE[stage].desc + ').' : 'Fully renovated — sell for $' + sellPrice + ' or keep it for $45 a day in rent.',
+  ];
+  const buttons = [];
+  if (!owned) buttons.push(r6PanelButton('Buy ' + f.name + ' — $' + f.buy, () => { if (r6Spend(f.buy)) { r6Estate.owned.push(f.name); r6Estate.stage[f.name] = 0; r6EstateSave(); r6EstateOpen(); } }));
+  if (owned && stage < 3) buttons.push(r6PanelButton('Renovate: ' + R6_RENOV_STAGE[stage].name + ' — $' + R6_RENOV_STAGE[stage].cost, () => { if (r6Spend(R6_RENOV_STAGE[stage].cost)) { r6Estate.stage[f.name] = stage + 1; r6EstateSave(); toast(f.name + ' renovated to stage ' + (stage + 1) + '/3.'); r6EstateOpen(); } }));
+  if (owned && stage === 3) buttons.push(r6PanelButton('Sell for $' + sellPrice, () => { r6Estate.owned = r6Estate.owned.filter((n) => n !== f.name); r6Estate.flipped++; r6Estate.profit += sellPrice - f.buy - 1800; r6Earn(sellPrice, 'Sold ' + f.name + ' after the full renovation!'); r6EstateSave(); r6ClosePanel(); }));
+  buttons.push(r6PanelButton('Close', () => r6ClosePanel()));
+  r6ShowPanel('🏠 ' + f.name, lines, buttons);
+  return true;
+}
+function r6EstateUpdate(dt) {
+  r6Estate.rentTimer += dt;
+  if (r6Estate.rentTimer > 120 && r6Estate.owned.length > 0) {
+    r6Estate.rentTimer = 0;
+    const pay = r6Estate.owned.length * 45;
+    r6Estate.rent += pay;
+    r6Earn(pay, 'Rent day — ' + r6Estate.owned.length + ' flat(s) paying $45 each.');
+    r6EstateSave();
+  }
+}
+function r6EstateSave() { r6Save('estate', { owned: r6Estate.owned, stage: r6Estate.stage, flipped: r6Estate.flipped, profit: r6Estate.profit, rent: r6Estate.rent }); }
+function r6EstateLoad() {
+  const s = r6Load('estate', null);
+  if (s) { r6Estate.owned = s.owned || []; r6Estate.stage = s.stage || {}; r6Estate.flipped = s.flipped || 0; r6Estate.profit = s.profit || 0; r6Estate.rent = s.rent || 0; }
+}
+
+// ---------- Round 6 system 22: pawn shop + antiques ----------
+// Old Tom's Pawn on Docks Lane. Ten antiques hidden around the bay; haggle
+// the price, get an appraisal, and sell the set for $900.
+const R6_ANTIQUES = [
+  { name: 'Brass Sextant', x: 70, z: 20, value: 180 },
+  { name: 'Porcelain Teapot', x: -48, z: 24, value: 140 },
+  { name: 'Ivory Chess Queen', x: 16, z: -32, value: 220 },
+  { name: 'Silver Pocket Watch', x: -96, z: 40, value: 260 },
+  { name: 'Carved Whale Tooth', x: 104, z: -20, value: 200 },
+  { name: 'Old Brass Bell', x: -20, z: 80, value: 120 },
+  { name: 'Jade Turtle', x: 40, z: -96, value: 300 },
+  { name: 'Copper Spyglass', x: -140, z: -8, value: 170 },
+  { name: 'Embroidered Shawl', x: 8, z: 64, value: 150 },
+  { name: 'Map of the Keys', x: 130, z: 90, value: 240 },
+];
+const R6_PAWN = { x: -66, z: -52, name: 'Old Tom\'s Pawn' };
+let r6Pawn = { found: [], sold: 0, haggled: 0, appraised: 0, setBonus: false };
+function r6PawnBuild() {
+  addBox(9, 5, 7, 0x4a3a2a, R6_PAWN.x, 2.5, R6_PAWN.z);
+  addBox(9.6, 0.6, 7.6, 0xd8a020, R6_PAWN.x, 5.3, R6_PAWN.z);
+  const scale = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 1), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.7 }));
+  scale.position.set(R6_PAWN.x - 2, 1.2, R6_PAWN.z + 4); scene.add(scale);
+  for (let i = 0; i < 3; i++) {
+    const shelf = new THREE.Mesh(new THREE.BoxGeometry(2, 0.3, 1), new THREE.MeshStandardMaterial({ color: 0x6a4a2a, roughness: 0.9 }));
+    shelf.position.set(R6_PAWN.x + 2 + i * 0.4, 2 + i * 0.8, R6_PAWN.z - 3.4); scene.add(shelf);
+  }
+  for (const a of R6_ANTIQUES) {
+    if (r6Pawn.found.includes(a.name)) continue;
+    const glint = new THREE.Mesh(new THREE.SphereGeometry(0.45, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+    glint.position.set(a.x, 1, a.z); scene.add(glint);
+  }
+}
+function r6PawnNear() { return r6Near(R6_PAWN.x, R6_PAWN.z, 9); }
+function r6AntiqueNear() {
+  for (let i = 0; i < R6_ANTIQUES.length; i++) {
+    if (r6Pawn.found.includes(R6_ANTIQUES[i].name)) continue;
+    if (r6Near(R6_ANTIQUES[i].x, R6_ANTIQUES[i].z, 6)) return i;
+  }
+  return -1;
+}
+function r6PawnAppraise(value) {
+  return Math.round(value * (0.85 + Math.random() * 0.4));
+}
+function r6PawnOpen() {
+  const at = r6AntiqueNear();
+  if (at >= 0) {
+    const a = R6_ANTIQUES[at];
+    const appraised = r6PawnAppraise(a.value);
+    r6ShowPanel('🏺 ' + a.name, [
+      'An antique, half-buried in the dust — appraised at $' + appraised + ' (true value near $' + a.value + ').',
+      'Old Tom will haggle: ask high, but push too far and he walks away.',
+      'Antiques found: ' + r6Pawn.found.length + '/10 · Full set bonus $900.',
+    ], [
+      r6PanelButton('Sell it now — $' + appraised, () => { r6Pawn.found.push(a.name); r6Pawn.sold++; r6Earn(appraised, 'Sold the ' + a.name + ' to Old Tom.'); r6PawnSetCheck(); r6PawnSave(); r6ClosePanel(); }),
+      r6PanelButton('Haggle for more', () => { r6PawnHaggle(at, appraised); }),
+      r6PanelButton('Leave it', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6PawnNear()) return false;
+  r6ShowPanel('🏺 ' + R6_PAWN.name, [
+    'Old Tom buys anything with a story. He appraises free, haggles hard.',
+    'Antiques found: ' + r6Pawn.found.length + '/10 · Sold: ' + r6Pawn.sold + ' · Times haggled: ' + r6Pawn.haggled + ' · Appraisals: ' + r6Pawn.appraised + '.',
+    'The ten antiques glint gold around the bay — look for the glint.',
+  ], [
+    r6PanelButton('Get a free appraisal', () => { r6Pawn.appraised++; const v = r6PawnAppraise(200); toast('Old Tom squints: "That\'s worth about $' + v + ' on a good day."'); r6PawnSave(); r6PawnOpen(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6PawnHaggle(at, appraised) {
+  r6Pawn.haggled++;
+  if (Math.random() < 0.55) {
+    const better = Math.round(appraised * 1.25);
+    r6Pawn.found.push(R6_ANTIQUES[at].name); r6Pawn.sold++;
+    r6Earn(better, 'Haggled Old Tom up to $' + better + ' for the ' + R6_ANTIQUES[at].name + '!');
+    r6PawnSetCheck();
+  } else {
+    toast('Old Tom laughs and walks away. The ' + R6_ANTIQUES[at].name + ' stays where it is — try again later.');
+  }
+  r6PawnSave(); r6ClosePanel();
+}
+function r6PawnSetCheck() {
+  if (r6Pawn.found.length === 10 && !r6Pawn.setBonus) {
+    r6Pawn.setBonus = true;
+    r6Earn(900, '🏺 All ten antiques found — Old Tom pays a $900 set bonus!');
+  }
+}
+function r6PawnSave() { r6Save('pawn', { found: r6Pawn.found, sold: r6Pawn.sold, haggled: r6Pawn.haggled, appraised: r6Pawn.appraised, setBonus: r6Pawn.setBonus }); }
+function r6PawnLoad() {
+  const s = r6Load('pawn', null);
+  if (s) { r6Pawn.found = s.found || []; r6Pawn.sold = s.sold || 0; r6Pawn.haggled = s.haggled || 0; r6Pawn.appraised = s.appraised || 0; r6Pawn.setBonus = !!s.setBonus; }
+}
+// ---------- Round 6 system 23: firefighter career ----------
+// Bay Fire Station, callouts across the city. Drive the truck, work the hose,
+// upgrade the station — and the big warehouse fire pays $480.
+const R6_FIRE_CALLS = [
+  { name: 'Kitchen Fire', x: -40, z: 56, heat: 2, pay: 180, desc: 'a stove left on at the harbour flats' },
+  { name: 'Dumpster Blaze', x: 52, z: -70, heat: 2, pay: 160, desc: 'burning rubbish behind the neon strip' },
+  { name: 'Car Fire', x: 20, z: -20, heat: 3, pay: 220, desc: 'an engine fire at the plaza' },
+  { name: 'Warehouse Fire', x: -72, z: -72, heat: 5, pay: 480, desc: 'the big one — docks warehouse, full crew' },
+  { name: 'Palm Grove Fire', x: 96, z: 108, heat: 3, pay: 240, desc: 'dry palms by the beach studios' },
+];
+const R6_FIRE_STATION = { x: -132, z: 60, name: 'Bay Fire Station' };
+let r6Fire = { callouts: 0, putOut: 0, upgrades: 0, active: -1, hose: 0, hoseMax: 100, callTimer: 140 };
+function r6FireBuild() {
+  addBox(16, 7, 12, 0xc0392b, R6_FIRE_STATION.x, 3.5, R6_FIRE_STATION.z);
+  addBox(17, 0.8, 13, 0x8a2a2a, R6_FIRE_STATION.x, 7.4, R6_FIRE_STATION.z);
+  const bayDoor = new THREE.Mesh(new THREE.BoxGeometry(5, 4.5, 0.3), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.5 }));
+  bayDoor.position.set(R6_FIRE_STATION.x - 3, 2.25, R6_FIRE_STATION.z - 6.2); scene.add(bayDoor);
+  const truck = new THREE.Group();
+  const tBody = new THREE.Mesh(new THREE.BoxGeometry(5, 2, 2.2), new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.5 }));
+  tBody.position.y = 1.4; truck.add(tBody);
+  const tCab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 2.1), new THREE.MeshStandardMaterial({ color: 0xff5a5a, roughness: 0.5 }));
+  tCab.position.set(3, 1.1, 0); truck.add(tCab);
+  const ladder = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.25, 0.5), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.7 }));
+  ladder.position.set(-0.4, 2.7, 0); truck.add(ladder);
+  truck.position.set(R6_FIRE_STATION.x + 8, 0, R6_FIRE_STATION.z + 8); truck.rotation.y = -0.4; scene.add(truck);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd8d8d8, metalness: 0.6 }));
+  pole.position.set(R6_FIRE_STATION.x + 6, 4, R6_FIRE_STATION.z - 3); scene.add(pole);
+  for (const c of R6_FIRE_CALLS) {
+    const hydrant = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 1, 8), new THREE.MeshStandardMaterial({ color: 0xff2222, roughness: 0.6 }));
+    hydrant.position.set(c.x + 3, 0.5, c.z + 3); scene.add(hydrant);
+  }
+}
+function r6FireNear() { return r6Near(R6_FIRE_STATION.x, R6_FIRE_STATION.z, 12); }
+function r6FireCallNear() {
+  if (r6Fire.active < 0) return -1;
+  const c = R6_FIRE_CALLS[r6Fire.active];
+  return r6Near(c.x, c.z, 9) ? r6Fire.active : -1;
+}
+function r6FireOpen() {
+  if (r6FireCallNear() >= 0) {
+    const c = R6_FIRE_CALLS[r6FireCallNear()];
+    r6ShowPanel('🔥 ' + c.name, [
+      c.desc + '.',
+      'Fire heat: ' + c.heat + '/5 · Your hose: ' + Math.round(r6Fire.hose) + '/' + r6Fire.hoseMax + '.',
+      'Hold the line — working the hose drains it, then it refills at the truck.',
+      'Putting it out pays $' + c.pay + '.',
+    ], [
+      r6PanelButton('Work the hose', () => { r6FireHose(r6FireCallNear()); }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6FireNear()) return false;
+  const lines = [
+    R6_FIRE_STATION.name + ' — Engine 7, one very red truck.',
+    'Callouts answered: ' + r6Fire.callouts + ' · Fires out: ' + r6Fire.putOut + ' · Station upgrades: ' + r6Fire.upgrades + '/3.',
+    'Next callout in ' + Math.ceil(r6Fire.callTimer) + 's — the radio never sleeps.',
+    'Upgrades: bigger hose tank (+50), faster refill, better turnout gear.',
+  ];
+  r6ShowPanel('🚒 ' + R6_FIRE_STATION.name, lines, [
+    r6PanelButton('Upgrade the station — $700', () => { if (r6Fire.upgrades < 3 && r6Spend(700)) { r6Fire.upgrades++; r6Fire.hoseMax += 50; r6Fire.hose = r6Fire.hoseMax; r6FireSave(); toast('Station upgraded — hose tank is bigger now.'); r6FireOpen(); } }, r6Fire.upgrades >= 3),
+    r6PanelButton('Answer the next callout now', () => { r6FireDispatch(); r6ClosePanel(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6FireDispatch() {
+  if (r6Fire.active >= 0) { toast('Already on a callout — get to the fire!'); return; }
+  r6Fire.active = Math.floor(Math.random() * R6_FIRE_CALLS.length);
+  r6Fire.callouts++; r6Fire.hose = r6Fire.hoseMax;
+  const c = R6_FIRE_CALLS[r6Fire.active];
+  toast('🚒 Callout: ' + c.name + ' — get there and work the hose!');
+  r6FireSave();
+}
+function r6FireHose(i) {
+  if (i < 0) return;
+  const c = R6_FIRE_CALLS[i];
+  r6Fire.hose -= 20 + c.heat * 6;
+  if (r6Fire.hose <= 0) {
+    r6Fire.hose = 0;
+    toast('Hose is dry! It refills — wait a moment, then work it again.');
+    return;
+  }
+  if (Math.random() < 0.45) {
+    r6Fire.putOut++; r6Fire.active = -1;
+    r6Earn(c.pay, '🔥 ' + c.name + ' is out! The crowd cheers Engine 7.');
+    r6FireSave(); r6ClosePanel(); return;
+  }
+  toast('Hose on the flames — heat ' + c.heat + '/5, keep at it!');
+  r6FireSave(); r6FireOpen();
+}
+function r6FireUpdate(dt) {
+  r6Fire.callTimer -= dt;
+  if (r6Fire.callTimer <= 0) {
+    r6Fire.callTimer = 170;
+    if (r6Fire.active < 0) r6FireDispatch();
+  }
+  if (r6Fire.hose < r6Fire.hoseMax) r6Fire.hose = Math.min(r6Fire.hoseMax, r6Fire.hose + dt * 6);
+}
+function r6FireSave() { r6Save('fire6', { callouts: r6Fire.callouts, putOut: r6Fire.putOut, upgrades: r6Fire.upgrades, hoseMax: r6Fire.hoseMax }); }
+function r6FireLoad() {
+  const s = r6Load('fire6', null);
+  if (s) { r6Fire.callouts = s.callouts || 0; r6Fire.putOut = s.putOut || 0; r6Fire.upgrades = s.upgrades || 0; r6Fire.hoseMax = s.hoseMax || 100; r6Fire.hose = r6Fire.hoseMax; }
+}
+
+// ---------- Round 6 system 24: paramedic career ----------
+// Bay General Hospital. Ambulance callouts, triage choices that matter, and
+// a hospital reputation that pays a weekly bonus at 80+ rep.
+const R6_MEDIC_CALLS = [
+  { name: 'Cyclist Down', x: 30, z: 10, severity: 2, pay: 170, desc: 'a rider clipped by a taxi' },
+  { name: 'Beach Heatstroke', x: 96, z: 120, severity: 2, pay: 150, desc: 'a tourist out too long in the sun' },
+  { name: 'Docks Crush Injury', x: -64, z: -84, severity: 4, pay: 320, desc: 'a container shifted on a worker' },
+  { name: 'Marina Drowning', x: 48, z: 56, severity: 5, pay: 420, desc: 'pulled from the water, not breathing' },
+  { name: 'Skate Park Fall', x: -84, z: 96, severity: 3, pay: 210, desc: 'a bad landing off the big ramp' },
+];
+const R6_HOSPITAL = { x: 132, z: -60, name: 'Bay General Hospital' };
+let r6Medic = { callouts: 0, saved: 0, rep: 20, active: -1, callTimer: 150, weekly: 0 };
+function r6MedicBuild() {
+  addBox(18, 10, 14, 0xf0f4f8, R6_HOSPITAL.x, 5, R6_HOSPITAL.z);
+  addBox(19, 1, 15, 0x2a6a8a, R6_HOSPITAL.x, 10.5, R6_HOSPITAL.z);
+  const cross = new THREE.Mesh(new THREE.BoxGeometry(3, 1, 0.3), new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0x881111, emissiveIntensity: 0.6 }));
+  cross.position.set(R6_HOSPITAL.x, 8.4, R6_HOSPITAL.z - 7.2); scene.add(cross);
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(1, 3, 0.3), new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0x881111, emissiveIntensity: 0.6 }));
+  crossV.position.set(R6_HOSPITAL.x, 8.4, R6_HOSPITAL.z - 7.2); scene.add(crossV);
+  const amb = new THREE.Group();
+  const aBody = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.2, 2.2), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 }));
+  aBody.position.y = 1.4; amb.add(aBody);
+  const aStripe = new THREE.Mesh(new THREE.BoxGeometry(4.7, 0.5, 2.3), new THREE.MeshStandardMaterial({ color: 0xff2222, roughness: 0.5 }));
+  aStripe.position.y = 1.4; amb.add(aStripe);
+  amb.position.set(R6_HOSPITAL.x + 10, 0, R6_HOSPITAL.z + 6); amb.rotation.y = 0.5; scene.add(amb);
+  addBox(8, 0.4, 8, 0x9a9a9a, R6_HOSPITAL.x - 12, 0.2, R6_HOSPITAL.z + 8);
+  const helipad = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.8 }));
+  helipad.position.set(R6_HOSPITAL.x - 12, 0.45, R6_HOSPITAL.z + 8); scene.add(helipad);
+}
+function r6MedicNear() { return r6Near(R6_HOSPITAL.x, R6_HOSPITAL.z, 12); }
+function r6MedicCallNear() {
+  if (r6Medic.active < 0) return -1;
+  const c = R6_MEDIC_CALLS[r6Medic.active];
+  return r6Near(c.x, c.z, 9) ? r6Medic.active : -1;
+}
+function r6MedicOpen() {
+  if (r6MedicCallNear() >= 0) {
+    const c = R6_MEDIC_CALLS[r6MedicCallNear()];
+    r6ShowPanel('🚑 ' + c.name, [
+      c.desc + '.',
+      'Severity: ' + c.severity + '/5 · Triage decides the outcome.',
+      'Stabilise first, then transport — rushing a severe case costs rep.',
+      'A clean save pays $' + c.pay + ' and +8 hospital rep.',
+    ], [
+      r6PanelButton('Stabilise on scene', () => { r6MedicTreat(r6MedicCallNear(), 'stabilise'); }),
+      r6PanelButton('Transport at once', () => { r6MedicTreat(r6MedicCallNear(), 'transport'); }),
+      r6PanelButton('Close', () => r6ClosePanel()),
+    ]);
+    return true;
+  }
+  if (!r6MedicNear()) return false;
+  const lines = [
+    R6_HOSPITAL.name + ' — the bay\'s busiest emergency room.',
+    'Callouts answered: ' + r6Medic.callouts + ' · Patients saved: ' + r6Medic.saved + ' · Hospital rep: ' + r6Medic.rep + '/100.',
+    'Next callout in ' + Math.ceil(r6Medic.callTimer) + 's · Weekly rep bonus: ' + r6Medic.weekly + ' paid.',
+    'At 80+ rep the hospital pays $300 a week for your shift.',
+  ];
+  r6ShowPanel('🚑 ' + R6_HOSPITAL.name, lines, [
+    r6PanelButton('Take the next callout now', () => { r6MedicDispatch(); r6ClosePanel(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+  return true;
+}
+function r6MedicDispatch() {
+  if (r6Medic.active >= 0) { toast('Already on a callout — get to the patient!'); return; }
+  r6Medic.active = Math.floor(Math.random() * R6_MEDIC_CALLS.length);
+  r6Medic.callouts++;
+  const c = R6_MEDIC_CALLS[r6Medic.active];
+  toast('🚑 Callout: ' + c.name + ' — severity ' + c.severity + '/5. Go!');
+  r6MedicSave();
+}
+function r6MedicTreat(i, choice) {
+  if (i < 0) return;
+  const c = R6_MEDIC_CALLS[i];
+  const right = c.severity >= 4 ? choice === 'stabilise' : choice === 'transport';
+  r6Medic.active = -1;
+  if (right) {
+    r6Medic.saved++; r6Medic.rep = Math.min(100, r6Medic.rep + 8);
+    r6Earn(c.pay, '🚑 Saved the patient at ' + c.name + ' — right call, rep ' + r6Medic.rep + '.');
+  } else {
+    r6Medic.rep = Math.max(0, r6Medic.rep - 5);
+    toast('Wrong call on ' + c.name + ' — the patient pulls through, but rep drops to ' + r6Medic.rep + '.');
+  }
+  r6MedicSave(); r6ClosePanel();
+}
+function r6MedicUpdate(dt) {
+  r6Medic.callTimer -= dt;
+  if (r6Medic.callTimer <= 0) {
+    r6Medic.callTimer = 180;
+    if (r6Medic.active < 0) r6MedicDispatch();
+    else if (r6Medic.rep >= 80) { r6Medic.weekly++; r6Earn(300, '🚑 Weekly hospital bonus — rep ' + r6Medic.rep + ', the ward trusts you.'); r6MedicSave(); }
+  }
+}
+function r6MedicSave() { r6Save('medic6', { callouts: r6Medic.callouts, saved: r6Medic.saved, rep: r6Medic.rep, weekly: r6Medic.weekly }); }
+function r6MedicLoad() {
+  const s = r6Load('medic6', null);
+  if (s) { r6Medic.callouts = s.callouts || 0; r6Medic.saved = s.saved || 0; r6Medic.rep = s.rep ?? 20; r6Medic.weekly = s.weekly || 0; }
+}
+
+// ---------- Round 6, part eight: dispatcher, HUD, minimap, self-test ----------
+// One call from the main loop runs every Round 6 system, in dependency order.
+function updateR6(dt) {
+  r6DailyUpdate(dt);
+  r6MetroUpdate(dt);
+  r6FoodUpdate(dt);
+  r6SurfUpdate(dt);
+  r6SkateUpdate(dt);
+  r6StuntUpdate(dt);
+  r6ClubUpdate(dt);
+  r6ArtUpdate(dt);
+  r6RanchUpdate(dt);
+  r6GolfUpdate(dt);
+  r6BowlUpdate(dt);
+  r6LibraryUpdate(dt);
+  r6MuseumUpdate(dt);
+  r6FairUpdate(dt);
+  r6ZooUpdate(dt);
+  r6PhotoUpdate(dt);
+  r6BandUpdate(dt);
+  r6BuskUpdate(dt);
+  r6EstateUpdate(dt);
+  r6FireUpdate(dt);
+  r6MedicUpdate(dt);
+}
+function r6HudLine() {
+  const el = document.getElementById('r6Line');
+  if (!el) return;
+  const parts = [];
+  parts.push('🚇 Metro ' + (r6Metro.card ? 'card' : 'no card') + ' · rides ' + r6Metro.rides);
+  if (r6Metro.riding) parts.push('🚇 to ' + R6_METRO_STATIONS[r6Metro.to].name + ' · ' + Math.ceil(r6Metro.timer) + 's');
+  if (r6Food.owned) parts.push('🚚 Food ' + r6Food.served + ' served · ' + '★'.repeat(r6Food.rating));
+  if (r6Surf.board >= 0) parts.push('🏄 Best ' + r6Surf.best + ' pts');
+  if (r6Skate.combo > 0) parts.push('🛹 Combo ' + r6Skate.combo);
+  if (r6Stunt.stars > 0) parts.push('🎬 ' + r6Stunt.stars + '★');
+  if (r6Club.owned) parts.push('🌃 Vibe ' + r6Club.vibe);
+  if (r6Art.rep > 0) parts.push('🎨 Rep ' + r6Art.rep);
+  if (r6Ranch.horses.length) parts.push('🐎 ' + r6Ranch.horses.length + ' horses');
+  if (r6Golf.rounds > 0) parts.push('⛳ Best ' + (r6Golf.best === 99 ? '—' : r6Golf.best));
+  if (r6Bowl.games > 0) parts.push('🎳 Best ' + r6Bowl.best);
+  if (r6Arcade.tokens > 0) parts.push('🕹️ ' + r6Arcade.tokens + ' tokens');
+  if (r6Library.read.length) parts.push('📚 ' + r6Library.read.length + '/12 books');
+  if (r6Museum.tours > 0) parts.push('🏛️ ' + r6Museum.tours + ' tours');
+  if (r6Band.formed) parts.push('🎸 ' + r6Band.fans + ' fans');
+  if (r6Busk.crowd > 0) parts.push('🎵 Crowd ' + r6Busk.crowd);
+  if (r6Estate.owned.length) parts.push('🏠 ' + r6Estate.owned.length + ' flats');
+  if (r6Pawn.found.length) parts.push('🏺 ' + r6Pawn.found.length + '/10 antiques');
+  if (r6Fire.active >= 0) parts.push('🔥 ' + R6_FIRE_CALLS[r6Fire.active].name);
+  if (r6Medic.active >= 0) parts.push('🚑 ' + R6_MEDIC_CALLS[r6Medic.active].name);
+  if (r6Wedding.married) parts.push('💒 Married!');
+  else if (r6Wedding.vendors.length) parts.push('💐 Wedding ' + r6Wedding.vendors.length + '/5');
+  el.textContent = parts.join(' · ');
+}
+function r6MinimapDots(dot) {
+  for (const st of R6_METRO_STATIONS) dot(st.x, st.z, '#2ee6ff', 3);
+  for (const p of R6_FOOD_PITCHES) dot(p.x, p.z, '#ff7a2a', 3);
+  dot(96, 108, '#2ee6ff', 4);
+  for (const br of R6_SURF_BREAKS) dot(br.x, br.z, '#2ee6ff', 3);
+  dot(R6_SKATE_PARK.x, R6_SKATE_PARK.z, '#ff5a5a', 4);
+  dot(R6_STUDIO.x, R6_STUDIO.z, '#b45ae8', 4);
+  dot(R6_CLUB.x, R6_CLUB.z, '#2ee6ff', 4);
+  dot(R6_TATTOO_SHOP.x, R6_TATTOO_SHOP.z, '#ff2a7a', 3);
+  for (const m of R6_MURALS) dot(m.x, m.z, r6Art.done.includes(m.name) ? '#2ecc71' : '#ff9ad5', 3);
+  dot(R6_RANCH.x, R6_RANCH.z, '#8a5a2a', 4);
+  dot(R6_GOLF_COURSE.x, R6_GOLF_COURSE.z, '#2ecc71', 4);
+  dot(R6_MINIGOLF.x, R6_MINIGOLF.z, '#c86a8a', 3);
+  dot(R6_BOWL_ALLEY.x, R6_BOWL_ALLEY.z, '#ff5a5a', 4);
+  dot(R6_ARCADE.x, R6_ARCADE.z, '#ff2a7a', 4);
+  dot(R6_LIBRARY.x, R6_LIBRARY.z, '#d8c8a8', 4);
+  dot(R6_MUSEUM.x, R6_MUSEUM.z, '#f0ead8', 4);
+  for (const a of R6_MUSEUM_ARTIFACTS) if (!r6Museum.artifacts.includes(R6_MUSEUM_ARTIFACTS.indexOf(a))) dot(a.x, a.z, '#ffd23f', 3);
+  dot(R6_FAIR.x, R6_FAIR.z, '#ff2a7a', 5);
+  dot(R6_ZOO.x, R6_ZOO.z, '#7dff9a', 4);
+  dot(R6_PHOTO_STUDIO.x, R6_PHOTO_STUDIO.z, '#2ee6ff', 3);
+  dot(R6_CHAPEL.x, R6_CHAPEL.z, '#ff9ad5', 4);
+  for (const v of R6_BAND_VENUES) dot(v.x, v.z, '#8a2be2', 3);
+  for (const p of R6_BUSK_PITCHES) dot(p.x, p.z, '#ffd23f', 3);
+  for (const f of R6_FLATS) dot(f.x, f.z, '#d8a020', 3);
+  dot(R6_PAWN.x, R6_PAWN.z, '#d8a020', 4);
+  for (const a of R6_ANTIQUES) if (!r6Pawn.found.includes(a.name)) dot(a.x, a.z, '#ffd23f', 2);
+  dot(R6_FIRE_STATION.x, R6_FIRE_STATION.z, '#ff2222', 4);
+  if (r6Fire.active >= 0) dot(R6_FIRE_CALLS[r6Fire.active].x, R6_FIRE_CALLS[r6Fire.active].z, '#ff7a1a', 5);
+  dot(R6_HOSPITAL.x, R6_HOSPITAL.z, '#ffffff', 4);
+  if (r6Medic.active >= 0) dot(R6_MEDIC_CALLS[r6Medic.active].x, R6_MEDIC_CALLS[r6Medic.active].z, '#ff4444', 5);
+  if (r6Surf.rescueAt >= 0) dot(R6_SURF_BREAKS[r6Surf.rescueAt].x, R6_SURF_BREAKS[r6Surf.rescueAt].z, '#ff7a1a', 5);
+}
+function r6KeyE() {
+  if (r6MetroOpen()) return true;
+  if (r6FoodOpen()) return true;
+  if (r6SurfOpen()) return true;
+  if (r6SkateOpen()) return true;
+  if (r6StuntOpen()) return true;
+  if (r6ClubOpen()) return true;
+  if (r6TattooOpen()) return true;
+  if (r6ArtOpen()) return true;
+  if (r6RanchOpen()) return true;
+  if (r6GolfOpen()) return true;
+  if (r6BowlOpen()) return true;
+  if (r6ArcadeOpen()) return true;
+  if (r6LibraryOpen()) return true;
+  if (r6MuseumOpen()) return true;
+  if (r6FairOpen()) return true;
+  if (r6ZooOpen()) return true;
+  if (r6PhotoOpen()) return true;
+  if (r6WeddingOpen()) return true;
+  if (r6BandOpen()) return true;
+  if (r6BuskOpen()) return true;
+  if (r6EstateOpen()) return true;
+  if (r6PawnOpen()) return true;
+  if (r6FireOpen()) return true;
+  if (r6MedicOpen()) return true;
+  return false;
+}
+function r6SelfTest() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('r6-metro-stations', R6_METRO_STATIONS.length === 4 && R6_METRO_STATIONS[0].name === 'Marina Metro', '4 stations');
+  ok('r6-metro-fare', R6_METRO_CARD_PRICE === 40 && R6_METRO_FARE === 5, 'card $40, fare $5');
+  ok('r6-food-menus', R6_FOOD_MENUS.length === 5 && R6_FOOD_MENUS[0].price === 14, '5 menus');
+  ok('r6-food-pitches', R6_FOOD_PITCHES.length === 6, '6 pitches');
+  ok('r6-food-truck-price', R6_FOOD_TRUCK_PRICE === 2500, 'truck $2500');
+  ok('r6-surf-breaks', R6_SURF_BREAKS.length === 3 && R6_SURF_BREAKS[1].wave === 5, '3 breaks');
+  ok('r6-surf-boards', R6_SURF_BOARDS.length === 4 && R6_SURF_BOARDS[3].price === 950, '4 boards');
+  ok('r6-surf-score', r6SurfScore(R6_SURF_BREAKS[0]) > 0, 'score ' + r6SurfScore(R6_SURF_BREAKS[0]));
+  ok('r6-skate-tricks', R6_SKATE_TRICKS.length === 8 && R6_SKATE_TRICKS[7].pts === 120, '8 tricks');
+  ok('r6-stunt-gigs', R6_STUNT_GIGS.length === 4 && R6_STUNT_GIGS[2].pay === 320, '4 gigs');
+  ok('r6-club-djs', R6_CLUB_DJS.length === 4 && R6_CLUB_DJS[3].vibe === 60, '4 DJs');
+  ok('r6-club-price', R6_CLUB.price === 8000, 'club $8000');
+  ok('r6-tattoos', R6_TATTOOS.length === 6 && R6_TATTOOS[5].price === 700, '6 tattoos');
+  ok('r6-murals', R6_MURALS.length === 6 && R6_MURALS[5].rep === 80, '6 murals');
+  ok('r6-spray', R6_SPRAY.length === 3 && R6_SPRAY[2].cans === 14, '3 spray packs');
+  ok('r6-horses', R6_HORSES.length === 4 && R6_HORSES[2].speed === 5, '4 horses');
+  ok('r6-golf-holes', R6_GOLF_HOLES.length === 9 && r6GolfParTotal() === 35, '9 holes par 35');
+  ok('r6-bowl-alley', !!R6_BOWL_ALLEY && R6_BOWL_ALLEY.name === 'Strike Lanes', 'bowling alley built');
+  ok('r6-arcade-cabs', R6_ARCADE_CABS.length === 5 && R6_ARCADE_CABS[4].top === 20300, '5 cabinets');
+  ok('r6-rare-books', R6_RARE_BOOKS.length === 12 && R6_RARE_BOOKS[11].amt === 7, '12 rare books');
+  ok('r6-museum-exhibits', R6_MUSEUM_EXHIBITS.length === 4 && R6_MUSEUM_ARTIFACTS.length === 4, '4 exhibits + 4 artifacts');
+  ok('r6-fair', !!R6_FAIR && R6_FAIR.name === 'Solmar Fair', 'fairground built');
+  ok('r6-zoo-animals', R6_ZOO_ANIMALS.length === 6 && R6_ZOO_ANIMALS[5].name === 'White Gull', '6 zoo animals');
+  ok('r6-photo-themes', R6_PHOTO_THEMES.length === 4 && R6_PHOTO_THEMES[3].pay === 150, '4 photo themes');
+  ok('r6-wedding-vendors', R6_WEDDING_VENDORS.length === 5 && R6_WEDDING_VENDORS[4].cost === 500, '5 vendors');
+  ok('r6-band-venues', R6_BAND_VENUES.length === 4 && R6_BAND_VENUES[3].fee === 800, '4 venues');
+  ok('r6-band-songs', R6_BAND_SONGS.length === 4, '4 songs');
+  ok('r6-busk-pitches', R6_BUSK_PITCHES.length === 5, '5 pitches');
+  ok('r6-flats', R6_FLATS.length === 4 && R6_FLATS[1].buy === 3100, '4 flats');
+  ok('r6-renov-stages', R6_RENOV_STAGE.length === 3 && R6_RENOV_STAGE[2].cost === 900, '3 renov stages');
+  ok('r6-antiques', R6_ANTIQUES.length === 10 && R6_ANTIQUES[6].value === 300, '10 antiques');
+  ok('r6-pawn-appraise', r6PawnAppraise(200) >= 170 && r6PawnAppraise(200) <= 250, 'appraisal ' + r6PawnAppraise(200));
+  ok('r6-fire-calls', R6_FIRE_CALLS.length === 5 && R6_FIRE_CALLS[3].pay === 480, '5 fire callouts');
+  ok('r6-medic-calls', R6_MEDIC_CALLS.length === 5 && R6_MEDIC_CALLS[3].severity === 5, '5 medic callouts');
+  ok('r6-shot-fireworks', R6_SHOT_PROPS.fireworks.length === 30, '30 firework sparks');
+  ok('r6-shot-truck', !!R6_SHOT_PROPS.truck, 'food truck in scene');
+  ok('r6-shot-roadblock', R6_SHOT_PROPS.roadblock.length === 7, 'roadblock + cones');
+  ok('r6-shot-crates', R6_SHOT_PROPS.missionCrates.length === 3, '3 mission crates');
+  ok('r6-panel', !!document.getElementById('r6Panel'), 'R6 panel in the DOM');
+  ok('r6-hud-line', !!document.getElementById('r6Line'), 'R6 HUD line present');
+  ok('r6-keye', typeof r6KeyE === 'function', 'E hook wired');
+  ok('r6-cash-sane', state.cash >= 0 && state.cash < 100000000, 'cash ' + state.cash);
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+window.__r6exports = {
+  metro: r6Metro, food: r6Food, surf: r6Surf, skate: r6Skate, stunt: r6Stunt, club: r6Club,
+  tattoo: r6Tattoo, art: r6Art, ranch: r6Ranch, golf: r6Golf, bowl: r6Bowl, arcade: r6Arcade,
+  library: r6Library, museum: r6Museum, fair: r6Fair, zoo: r6Zoo, photo: r6Photo, wedding: r6Wedding,
+  band: r6Band, busk: r6Busk, estate: r6Estate, pawn: r6Pawn, fire: r6Fire, medic: r6Medic,
+  stations: R6_METRO_STATIONS, menus: R6_FOOD_MENUS, breaks: R6_SURF_BREAKS, tricks: R6_SKATE_TRICKS,
+  gigs: R6_STUNT_GIGS, djs: R6_CLUB_DJS, tattoos: R6_TATTOOS, murals: R6_MURALS, horses: R6_HORSES,
+  holes: R6_GOLF_HOLES, cabs: R6_ARCADE_CABS, books: R6_RARE_BOOKS, exhibits: R6_MUSEUM_EXHIBITS,
+  animals: R6_ZOO_ANIMALS, themes: R6_PHOTO_THEMES, vendors: R6_WEDDING_VENDORS, venues: R6_BAND_VENUES,
+  pitches: R6_BUSK_PITCHES, flats: R6_FLATS, antiques: R6_ANTIQUES, fireCalls: R6_FIRE_CALLS, medicCalls: R6_MEDIC_CALLS,
+  openMetro: r6MetroOpen, openFood: r6FoodOpen, openSurf: r6SurfOpen, openSkate: r6SkateOpen,
+  openStunt: r6StuntOpen, openClub: r6ClubOpen, openTattoo: r6TattooOpen, openArt: r6ArtOpen,
+  openRanch: r6RanchOpen, openGolf: r6GolfOpen, openBowl: r6BowlOpen, openArcade: r6ArcadeOpen,
+  openLibrary: r6LibraryOpen, openMuseum: r6MuseumOpen, openFair: r6FairOpen, openZoo: r6ZooOpen,
+  openPhoto: r6PhotoOpen, openWedding: r6WeddingOpen, openBand: r6BandOpen, openBusk: r6BuskOpen,
+  openEstate: r6EstateOpen, openPawn: r6PawnOpen, openFire: r6FireOpen, openMedic: r6MedicOpen,
+  rideMetro: r6MetroRide, surfRide: r6SurfRide, skateTrick: r6SkateTrick, stuntGig: r6StuntGig,
+  selftest: r6SelfTest, update: updateR6, hudLine: r6HudLine,
+};
+// Build every Round 6 place in the world and restore saved Round 6 progress.
+r6ShotPropsBuild(); r6MetroBuild(); r6FoodBuild(); r6SurfBuild(); r6SkateBuild(); r6StuntBuild();
+r6ClubBuild(); r6TattooBuild(); r6ArtBuild(); r6RanchBuild(); r6GolfBuild(); r6BowlBuild();
+r6ArcadeBuild(); r6LibraryBuild(); r6MuseumBuild(); r6FairBuild(); r6ZooBuild(); r6PhotoBuild();
+r6WeddingBuild(); r6BandBuild(); r6BuskBuild(); r6EstateBuild(); r6PawnBuild(); r6FireBuild(); r6MedicBuild();
+r6MetroLoad(); r6FoodLoad(); r6SurfLoad(); r6SkateLoad(); r6StuntLoad(); r6ClubLoad();
+r6TattooLoad(); r6ArtLoad(); r6RanchLoad(); r6GolfLoad(); r6BowlLoad(); r6ArcadeLoad();
+r6LibraryLoad(); r6MuseumLoad(); r6FairLoad(); r6ZooLoad(); r6PhotoLoad(); r6WeddingLoad();
+r6BandLoad(); r6BuskLoad(); r6EstateLoad(); r6PawnLoad(); r6FireLoad(); r6MedicLoad();
+document.getElementById('r6PanelClose').addEventListener('click', r6ClosePanel);
+document.getElementById('phoneBtnR6Stats').addEventListener('click', () => { togglePhone(); r6PhoneStatsOpen(); });
+document.getElementById('phoneBtnR6Guide').addEventListener('click', () => { togglePhone(); r6GuideOpen(); });
+document.getElementById('phoneBtnR6Extras').addEventListener('click', () => { togglePhone(); r6ExtrasOpen(); });
+
+// ---------- Round 6, part nine: extras depth ----------
+// A second layer on the 24 systems, reached from the Extras button on the phone (U):
+// catering gigs, board wax, film rotation, VIP lists, crew, breeding, the
+// driving range, a bowling team, arcade tournaments, the gift shop, a fair
+// season pass, keeper talks, the darkroom, the honeymoon, band merch, a
+// street album, an estate licence, pawn loans, a station cat, first aid.
+const R6_CATERING = [
+  { name: 'Marina Wedding Lunch', guests: 40, pay: 320, menu: 2 },
+  { name: 'Docks Crew Dinner', guests: 25, pay: 210, menu: 1 },
+  { name: 'Studio Wrap Party', guests: 60, pay: 480, menu: 0 },
+  { name: 'Beach Birthday Bash', guests: 30, pay: 260, menu: 4 },
+];
+let r6Extras = { catering: 0, waxed: 0, films: 0, vip: 0, crew: 0, foals: 0, range: 0, teamWins: 0, tourneyWins: 0, gifts: 0, pass: false, talks: 0, darkroom: 0, honeymoon: false, merch: 0, album: 0, licence: false, loans: 0, cats: 0, firstAid: 0 };
+function r6ExtrasOpen() {
+  if (state.mode !== 'play') return;
+  const lines = [
+    'Round 6 extras — the second layer of every new system, in one place.',
+    'Catering gigs: ' + r6Extras.catering + ' · Board waxed: ' + r6Extras.waxed + 'x · Films shot: ' + r6Extras.films + ' · VIP guests: ' + r6Extras.vip + '.',
+    'Crew members: ' + r6Extras.crew + '/3 · Foals bred: ' + r6Extras.foals + ' · Driving-range sessions: ' + r6Extras.range + ' · Bowling team wins: ' + r6Extras.teamWins + '.',
+    'Arcade tourney wins: ' + r6Extras.tourneyWins + ' · Gift-shop sales: ' + r6Extras.gifts + ' · Fair pass: ' + (r6Extras.pass ? 'owned' : 'not owned') + ' · Keeper talks: ' + r6Extras.talks + '.',
+    'Darkroom prints: ' + r6Extras.darkroom + ' · Honeymoon: ' + (r6Extras.honeymoon ? 'booked!' : 'not booked') + ' · Merch sold: ' + r6Extras.merch + ' · Street albums: ' + r6Extras.album + '.',
+    'Estate licence: ' + (r6Extras.licence ? 'held' : 'not held') + ' · Pawn loans: ' + r6Extras.loans + ' · Cats rescued: ' + r6Extras.cats + ' · First-aid course: ' + (r6Extras.firstAid ? 'done' : 'not done') + '.',
+  ];
+  const buttons = [
+    r6PanelButton('Catering gig ($' + R6_CATERING[r6Extras.catering % 4].pay + ')', () => { r6ExtrasCatering(); }, !r6Food.owned),
+    r6PanelButton('Wax the surfboard — $25', () => { if (r6Surf.board >= 0 && r6Spend(25)) { r6Extras.waxed++; r6Surf.skill = Math.min(50, r6Surf.skill + 2); r6ExtrasSave(); toast('Board waxed — faster drops, +2 surf skill.'); r6ExtrasOpen(); } }, r6Surf.board < 0),
+    r6PanelButton('Next film at the studio', () => { r6ExtrasFilm(); }),
+    r6PanelButton('Add a VIP to the club list — $80', () => { if (r6Club.owned && r6Spend(80)) { r6Extras.vip++; r6Club.vibe = r6Clamp(r6Club.vibe + 6, 0, 100); r6ExtrasSave(); toast('VIP booked a table — the club buzzes.'); r6ExtrasOpen(); } }, !r6Club.owned),
+    r6PanelButton('Recruit a crew member — $150', () => { if (r6Extras.crew < 3 && r6Spend(150)) { r6Extras.crew++; r6Art.rep += 10; r6ArtSave(); r6ExtrasSave(); toast('A new Gull joins the crew — rep +10.'); r6ExtrasOpen(); } }, r6Extras.crew >= 3),
+    r6PanelButton('Breed two horses — $200', () => { r6ExtrasBreed(); }, r6Ranch.horses.length < 2),
+    r6PanelButton('Driving range — $20', () => { if (r6Spend(20)) { r6Extras.range++; if (skills && typeof skills.driving === 'number') skills.driving = Math.min(100, skills.driving + 1); r6ExtrasSave(); toast('A bucket of balls at the range — driving +1.'); r6ExtrasOpen(); } }),
+    r6PanelButton('Join the bowling team', () => { r6ExtrasBowlTeam(); }),
+    r6PanelButton('Arcade tournament — $30 entry', () => { r6ExtrasTourney(); }),
+    r6PanelButton('Work the museum gift shop', () => { r6ExtrasGiftShop(); }),
+    r6PanelButton('Buy a fair season pass — $180', () => { if (!r6Extras.pass && r6Spend(180)) { r6Extras.pass = true; r6ExtrasSave(); toast('Season pass! All fair rides are free now.'); r6ExtrasOpen(); } }, r6Extras.pass),
+    r6PanelButton('Give a keeper talk at the zoo', () => { r6ExtrasTalk(); }),
+    r6PanelButton('Develop prints in the darkroom — $35', () => { if (r6Spend(35)) { r6Extras.darkroom++; r6Photo.gallery++; r6PhotoSave(); r6ExtrasSave(); toast('A print dries on the line — it joins the gallery wall.'); r6ExtrasOpen(); } }),
+    r6PanelButton('Book the honeymoon — $900', () => { if (r6Wedding.married && !r6Extras.honeymoon && r6Spend(900)) { r6Extras.honeymoon = true; r6ExtrasSave(); toast('Honeymoon booked on Coral Cay — Ryan and Ian sail off at sunset.'); r6ExtrasOpen(); } }, !r6Wedding.married || r6Extras.honeymoon),
+    r6PanelButton('Sell band merch at a gig', () => { r6ExtrasMerch(); }, !r6Band.formed),
+    r6PanelButton('Record a street album — $120', () => { if (r6Spend(120)) { r6Extras.album++; r6Busk.tips += 60; r6BuskSave(); r6ExtrasSave(); toast('Street album recorded — buskers buy it on the spot.'); r6ExtrasOpen(); } }),
+    r6PanelButton('Estate agent licence — $400', () => { if (!r6Extras.licence && r6Spend(400)) { r6Extras.licence = true; r6ExtrasSave(); toast('Licensed! Flats now sell for $200 more.'); r6ExtrasOpen(); } }, r6Extras.licence),
+    r6PanelButton('Take a pawn loan — $300', () => { r6ExtrasLoan(); }),
+    r6PanelButton('Rescue the station cat', () => { r6ExtrasCat(); }),
+    r6PanelButton('First-aid course — $90', () => { if (!r6Extras.firstAid && r6Spend(90)) { r6Extras.firstAid = 1; r6Medic.rep = Math.min(100, r6Medic.rep + 10); r6MedicSave(); r6ExtrasSave(); toast('First-aid certified — hospital rep +10.'); r6ExtrasOpen(); } }, !!r6Extras.firstAid),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ];
+  r6ShowPanel('✨ Round 6 Extras', lines, buttons);
+}
+function r6ExtrasCatering() {
+  const gig = R6_CATERING[r6Extras.catering % R6_CATERING.length];
+  r6Extras.catering++;
+  const menu = R6_FOOD_MENUS[gig.menu];
+  r6Earn(gig.pay, 'Catering: ' + gig.name + ' (' + gig.guests + ' guests, ' + menu.name + ').');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+const R6_FILMS = ['Bay Breakers', 'The Long Ferry Home', 'Neon Tide', 'Gull Song Nights'];
+function r6ExtrasFilm() {
+  r6Extras.films++;
+  r6Stunt.film = R6_FILMS[r6Extras.films % R6_FILMS.length];
+  r6StuntSave(); r6ExtrasSave();
+  toast('New film greenlit at the studio: "' + r6Stunt.film + '". Stunt pay rises with stars.');
+  r6ExtrasOpen();
+}
+function r6ExtrasBreed() {
+  if (r6Ranch.horses.length < 2) { toast('Need two horses at the ranch to breed a foal.'); return; }
+  if (!r6Spend(200)) return;
+  r6Extras.foals++;
+  r6Ranch.trained++;
+  r6RanchSave(); r6ExtrasSave();
+  toast('A foal is born at Rancho del Sol — the herd is stronger now.');
+  r6ExtrasOpen();
+}
+function r6ExtrasBowlTeam() {
+  if (r6Bowl.best >= 180) { r6Extras.teamWins++; r6Earn(200, '🎳 Bowling team night — your 180+ game carried the team!'); }
+  else toast('Bowling team wants a 180+ game first — practice at Strike Lanes.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasTourney() {
+  if (!r6Spend(30)) return;
+  if (r6Arcade.plays >= 5 && Math.random() < 0.5) { r6Extras.tourneyWins++; r6Earn(220, '🕹️ Won the Neon Palace weekly tournament!'); }
+  else toast('Arcade tournament lost — play 5+ cabinet games first, then try again.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasGiftShop() {
+  r6Extras.gifts++;
+  const sale = 20 + Math.floor(Math.random() * 40);
+  r6Earn(sale, 'Sold a golden gull souvenir at the museum gift shop.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasTalk() {
+  r6Extras.talks++;
+  r6Earn(55, 'Gave a keeper talk at the zoo — the kids loved the otters.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasMerch() {
+  const sales = 30 + r6Band.fans;
+  r6Extras.merch += 5;
+  r6Earn(sales, 'Sold band merch at the last gig — 5 shirts, $' + sales + '.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasLoan() {
+  r6Extras.loans++;
+  state.cash += 300;
+  updateHUD();
+  toast('Old Tom hands over $300. Pay it back by selling him an antique — he remembers.');
+  r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasCat() {
+  r6Extras.cats++;
+  r6Fire.putOut++;
+  r6Earn(60, '🐱 Rescued the station cat from a tree — Engine 7\'s favourite callout.');
+  r6FireSave(); r6ExtrasSave(); r6ExtrasOpen();
+}
+function r6ExtrasSave() { r6Save('extras', r6Extras); }
+function r6ExtrasLoad() {
+  const s = r6Load('extras', null);
+  if (s) Object.assign(r6Extras, s);
+}
+r6ExtrasLoad();
+
+// ---------- Round 6, part ten: bay guide, daily routine, stats ----------
+// One tip per system, a guide panel on the phone, a daily routine that pays
+// the slow incomes (sponsor money, club door trickle, ranch board), and a
+// stats summary the self-test and the phone both read.
+const R6_TIPS = [
+  { system: 'Metro', tip: 'A metro card pays for itself in eight rides — and the train beats traffic every time.' },
+  { system: 'Food truck', tip: 'Cook the priciest menu at the busiest pitch; five-star hygiene doubles every tip.' },
+  { system: 'Surfing', tip: 'Wax the board before a comp and ride Coral Barrel — the wave score is the highest.' },
+  { system: 'Skate park', tip: 'Bank the combo before a risky trick; a bail wipes the whole combo, not just the trick.' },
+  { system: 'Stunt career', tip: 'Stars unlock gigs in order — the burning-building run needs 40 stars first.' },
+  { system: 'Nightclub', tip: 'A booked DJ lifts vibe before the night starts; upgrades lift it forever.' },
+  { system: 'Tattoo parlor', tip: 'Walk-in clients pay for the flash book; the full sleeve is the biggest boost.' },
+  { system: 'Street art', tip: 'Paint the small walls first — rep opens the big ones, and heat fades with time.' },
+  { system: 'Horse ranch', tip: 'Train before you race; two trained horses breed a foal worth more than either.' },
+  { system: 'Golf', tip: 'Caddy first to learn the greens, then play — beating par pays $200 a round.' },
+  { system: 'Bowling', tip: 'A 200+ game wins league night; a 280+ game is a perfect-game payout.' },
+  { system: 'Arcade', tip: 'Tickets are the real prize — 100 of them trade for $80 at the prize shelf.' },
+  { system: 'Library', tip: 'Read the rare books in shelf order; the last one, Solmar: A History, is +7 driving.' },
+  { system: 'Museum', tip: 'Give tours to unlock the quiz night, and return artifacts the moment you find them.' },
+  { system: 'Carnival', tip: 'The season pass pays for itself in fifteen rides — buy it before the fireworks.' },
+  { system: 'Zoo', tip: 'Feed all six animals in one day and the keepers pay a $150 bonus.' },
+  { system: 'Photo studio', tip: 'Hang prints and let them sell while you work — the darkroom adds one free.' },
+  { system: 'Wedding', tip: 'Book the chapel keeper last; the ceremony pays $600 in guest gifts.' },
+  { system: 'Band', tip: 'Rehearse before a gig — every rehearsal adds fans, and fans unlock the arena.' },
+  { system: 'Busking', tip: 'Play where the crowd is biggest; a full crowd at the marina pays $150.' },
+  { system: 'Real estate', tip: 'Renovate in order and sell at stage three — or keep the flat for $45 a day.' },
+  { system: 'Pawn shop', tip: 'Haggle once per antique; Old Tom only raises his price a little over half the time.' },
+  { system: 'Firefighter', tip: 'Upgrade the hose tank before the warehouse fire — it drinks water fast.' },
+  { system: 'Paramedic', tip: 'Severe cases need stabilising first; rushing one costs five hospital rep.' },
+];
+function r6TipOfDay() {
+  const day = Math.floor(state.time / 120) % R6_TIPS.length;
+  return R6_TIPS[day];
+}
+const R6_GUIDE_SPOTS = [
+  { name: 'Metro', where: 'four stations: Marina, Old Town, Casino Row, North Docks', key: 'E at a station' },
+  { name: 'Food truck', where: 'six pitches, orange flags around the bay', key: 'E at a pitch' },
+  { name: 'Surfing', where: 'surf shop at the beach (96, 108), breaks offshore', key: 'E at the shop or a buoy' },
+  { name: 'Skate park', where: 'Concrete Wave Park, south-west', key: 'E at the park' },
+  { name: 'Stunt career', where: 'Solmar Studios, south-east', key: 'E at the studio gate' },
+  { name: 'Nightclub', where: 'The Bluefin, east side', key: 'E at the door' },
+  { name: 'Tattoo parlor', where: 'Ink & Salt, west of the plaza', key: 'E at the shop' },
+  { name: 'Street art', where: 'six mural walls around the bay', key: 'E at a wall' },
+  { name: 'Horse ranch', where: 'Rancho del Sol, far west farmland', key: 'E at the barn' },
+  { name: 'Golf', where: 'Solmar Greens, north; mini-golf at the beach', key: 'E at the clubhouse' },
+  { name: 'Bowling', where: 'Strike Lanes, north-west', key: 'E at the alley' },
+  { name: 'Arcade', where: 'Neon Palace, east of the plaza', key: 'E at the hall' },
+  { name: 'Library', where: 'Solmar Library, north of the plaza', key: 'E at the steps' },
+  { name: 'Museum', where: 'Bay Museum, north-east', key: 'E at the columns' },
+  { name: 'Carnival', where: 'Solmar Fair, south field', key: 'E at the fairground' },
+  { name: 'Zoo', where: 'Solmar Zoo, north-east past the palms', key: 'E at the gate' },
+  { name: 'Photo studio', where: 'Lightbox Studio, Marina Row', key: 'E at the studio' },
+  { name: 'Wedding', where: 'five vendors around the bay, chapel at the north end', key: 'E at a vendor or the chapel' },
+  { name: 'Band', where: 'four venues: Marina Bar, Bluefin, Fairground, Bay Arena', key: 'E at a stage' },
+  { name: 'Busking', where: 'five pitches: marina, plaza, casino, boardwalk, airport', key: 'E at a pitch' },
+  { name: 'Real estate', where: 'four flats: harbour, old town, beach, docks', key: 'E at a flat' },
+  { name: 'Pawn shop', where: 'Old Tom\'s Pawn, Docks Lane; antiques glint gold', key: 'E at the shop or a glint' },
+  { name: 'Firefighter', where: 'Bay Fire Station, west side', key: 'E at the station or a fire' },
+  { name: 'Paramedic', where: 'Bay General Hospital, east side', key: 'E at the hospital or a patient' },
+];
+function r6GuideOpen() {
+  const lines = ['Every Round 6 system, where it lives, and how to open it.'];
+  for (const g of R6_GUIDE_SPOTS) lines.push(g.name + ' — ' + g.where + ' (' + g.key + ').');
+  const tip = r6TipOfDay();
+  lines.push('');
+  lines.push('Tip of the day — ' + tip.system + ': ' + tip.tip);
+  r6ShowPanel('🗺️ Round 6 Bay Guide', lines, [
+    r6PanelButton('Open Round 6 Extras', () => { r6ExtrasOpen(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+}
+function r6StatsSummary() {
+  return {
+    systems: 24,
+    metroRides: r6Metro.rides,
+    foodServed: r6Food.served,
+    surfBest: r6Surf.best,
+    skateBest: r6Skate.best,
+    stuntStars: r6Stunt.stars,
+    clubNights: r6Club.nights,
+    tattoos: r6Tattoo.owned.length,
+    muralsDone: r6Art.done.length,
+    horses: r6Ranch.horses.length,
+    golfBest: r6Golf.best,
+    bowlBest: r6Bowl.best,
+    arcadePlays: r6Arcade.plays,
+    booksRead: r6Library.read.length,
+    museumTours: r6Museum.tours,
+    fairRides: r6Fair.rides,
+    zooFed: r6Zoo.fed.length,
+    photoSessions: r6Photo.sessions,
+    weddingVendors: r6Wedding.vendors.length,
+    married: r6Wedding.married,
+    bandFans: r6Band.fans,
+    buskTips: r6Busk.tips,
+    flatsOwned: r6Estate.owned.length,
+    flips: r6Estate.flipped,
+    antiques: r6Pawn.found.length,
+    firesOut: r6Fire.putOut,
+    patientsSaved: r6Medic.saved,
+    medicRep: r6Medic.rep,
+    extras: r6Extras,
+  };
+}
+function r6DailyUpdate(dt) {
+  r6BadgesCheck();
+  r6DailyUpdate._t = (r6DailyUpdate._t || 0) + dt;
+  if (r6DailyUpdate._t < 180) return;
+  r6DailyUpdate._t = 0;
+  let paid = 0;
+  const notes = [];
+  if (r6Skate.sponsor) { paid += 60; notes.push('sponsor $60'); }
+  if (r6Club.owned && r6Club.vibe >= 60) { const door = 30 + r6Club.upgrades * 15; paid += door; notes.push('club door $' + door); }
+  if (r6Ranch.horses.length > 0) { const board = r6Ranch.horses.length * 15; paid += board; notes.push('stable board $' + board); }
+  if (r6Estate.owned.length > 0) { const rent = r6Estate.owned.length * 20; paid += rent; notes.push('flat rent $' + rent); }
+  if (paid > 0) {
+    state.cash += paid;
+    updateHUD();
+    toast('Round 6 daily income: $' + paid + ' (' + notes.join(', ') + ').');
+  }
+  const tip = r6TipOfDay();
+  toast('Tip — ' + tip.system + ': ' + tip.tip);
+}
+function r6SelfTestExtra() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('r6-tips', R6_TIPS.length === 24 && R6_TIPS[0].system === 'Metro', '24 tips');
+  ok('r6-guide-spots', R6_GUIDE_SPOTS.length === 24 && R6_GUIDE_SPOTS[23].name === 'Paramedic', '24 guide spots');
+  ok('r6-tip-of-day', typeof r6TipOfDay().tip === 'string' && r6TipOfDay().tip.length > 10, r6TipOfDay().system);
+  ok('r6-stats', r6StatsSummary().systems === 24 && r6StatsSummary().metroRides === r6Metro.rides, 'stats summary reads live state');
+  ok('r6-catering', R6_CATERING.length === 4 && R6_CATERING[2].pay === 480, '4 catering gigs');
+  ok('r6-films', R6_FILMS.length === 4 && R6_FILMS[1] === 'The Long Ferry Home', '4 films');
+  ok('r6-extras-open', typeof r6ExtrasOpen === 'function', 'extras panel callable');
+  ok('r6-guide-open', typeof r6GuideOpen === 'function', 'guide panel callable');
+  ok('r6-daily', typeof r6DailyUpdate === 'function', 'daily routine wired');
+  ok('r6-save-keys', R6_STORE === 'solmar-r6-', 'store prefix set');
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+if (window.__r6exports) {
+  window.__r6exports.extraSelftest = r6SelfTestExtra;
+  window.__r6exports.stats = r6StatsSummary;
+  window.__r6exports.guide = r6GuideOpen;
+  window.__r6exports.extras = r6ExtrasOpen;
+  window.__r6exports.tips = R6_TIPS;
+}
+
+// ---------- Round 6, part eleven: badges, metro lines, food specials ----------
+// Twenty-four Round 6 badges, one per system, each paying $50 the first time
+// it is earned. The check runs inside the daily routine, so no new wiring.
+const R6_BADGES = [
+  { id: 'first-ride', name: 'First Ride', desc: 'Ride the metro once', test: () => r6Metro.rides >= 1 },
+  { id: 'food-critic', name: 'Food Critic', desc: 'Serve 25 dishes from the truck', test: () => r6Food.served >= 25 },
+  { id: 'wave-rider', name: 'Wave Rider', desc: 'Score 80+ on a surf ride', test: () => r6Surf.best >= 80 },
+  { id: 'combo-king', name: 'Combo King', desc: 'Land a 500+ skate combo', test: () => r6Skate.best >= 500 },
+  { id: 'movie-star', name: 'Movie Star', desc: 'Reach 80 stars at the studio', test: () => r6Stunt.stars >= 80 },
+  { id: 'club-boss', name: 'Club Boss', desc: 'Run 5 club nights', test: () => r6Club.nights >= 5 },
+  { id: 'inked', name: 'Inked', desc: 'Get 3 tattoos', test: () => r6Tattoo.owned.length >= 3 },
+  { id: 'mural-master', name: 'Mural Master', desc: 'Finish all 6 murals', test: () => r6Art.done.length >= 6 },
+  { id: 'rancher', name: 'Rancher', desc: 'Own 3 horses', test: () => r6Ranch.horses.length >= 3 },
+  { id: 'club-champion', name: 'Club Champion', desc: 'Win a golf tournament', test: () => r6Golf.tourneyWins >= 1 },
+  { id: 'strike-king', name: 'Strike King', desc: 'Bowl 10 strikes', test: () => r6Bowl.strikes >= 10 },
+  { id: 'high-scorer', name: 'High Scorer', desc: 'Beat any arcade top score', test: () => Object.keys(r6Arcade.scores).some((k) => r6Arcade.scores[k] > (R6_ARCADE_CABS.find((c) => c.name === k) || { top: 0 }).top) },
+  { id: 'bookworm', name: 'Bookworm', desc: 'Read all 12 rare books', test: () => r6Library.read.length >= 12 },
+  { id: 'curator', name: 'Curator', desc: 'Return all 4 museum artifacts', test: () => r6Museum.artifacts.length >= 4 },
+  { id: 'fair-fan', name: 'Fair Fan', desc: 'Ride the wheel 10 times', test: () => r6Fair.rides >= 10 },
+  { id: 'zookeeper', name: 'Zookeeper', desc: 'Feed all 6 zoo animals', test: () => r6Zoo.fed.length >= 6 },
+  { id: 'shutterbug', name: 'Shutterbug', desc: 'Shoot 10 photo sessions', test: () => r6Photo.sessions >= 10 },
+  { id: 'just-married', name: 'Just Married', desc: 'Hold the Ryan & Ian ceremony', test: () => r6Wedding.married },
+  { id: 'headliner', name: 'Headliner', desc: 'Grow the band to 300 fans', test: () => r6Band.fans >= 300 },
+  { id: 'street-star', name: 'Street Star', desc: 'Reach a 100 crowd busking', test: () => r6Busk.best >= 100 },
+  { id: 'flipper', name: 'Flipper', desc: 'Flip 2 flats', test: () => r6Estate.flipped >= 2 },
+  { id: 'antique-hunter', name: 'Antique Hunter', desc: 'Find all 10 antiques', test: () => r6Pawn.found.length >= 10 },
+  { id: 'hero', name: 'Hero', desc: 'Put out 5 fires', test: () => r6Fire.putOut >= 5 },
+  { id: 'lifesaver', name: 'Lifesaver', desc: 'Save 5 patients', test: () => r6Medic.saved >= 5 },
+];
+let r6Badges = { earned: [] };
+function r6BadgesCheck() {
+  for (const b of R6_BADGES) {
+    if (r6Badges.earned.includes(b.id)) continue;
+    let pass = false;
+    try { pass = b.test(); } catch (e) { pass = false; }
+    if (!pass) continue;
+    r6Badges.earned.push(b.id);
+    state.cash += 50;
+    updateHUD();
+    toast('🏅 Round 6 badge: ' + b.name + ' — ' + b.desc + ' (+$50).');
+    r6BadgesSave();
+  }
+}
+function r6BadgesSave() { r6Save('badges', r6Badges); }
+function r6BadgesLoad() {
+  const s = r6Load('badges', null);
+  if (s) r6Badges.earned = s.earned || [];
+}
+r6BadgesLoad();
+if (window.__r6exports) window.__r6exports.badges = R6_BADGES;
+// Three metro lines, each with its own colour and a pair of stations, so the
+// map reads like a real transit map in the guide.
+const R6_METRO_LINES = [
+  { name: 'Blue Line', color: '#2ee6ff', stops: [0, 1], desc: 'Marina to Old Town, along the bay' },
+  { name: 'Pink Line', color: '#ff2a7a', stops: [1, 2], desc: 'Old Town to Casino Row, the night run' },
+  { name: 'Green Line', color: '#7dff9a', stops: [2, 3], desc: 'Casino Row to the North Docks, the workers\' run' },
+];
+function r6MetroLineName(from, to) {
+  for (const line of R6_METRO_LINES) {
+    if (line.stops.includes(from) && line.stops.includes(to)) return line.name;
+  }
+  return 'Bay Line';
+}
+// The food truck runs a daily special: one menu at double tips, rotating by
+// the in-game clock, announced on the truck panel.
+function r6FoodSpecial() {
+  const day = Math.floor(state.time / 120) % R6_FOOD_MENUS.length;
+  return R6_FOOD_MENUS[day];
+}
+function r6FoodSpecialLine() {
+  const sp = r6FoodSpecial();
+  return 'Today\'s special: ' + sp.name + ' — double tips all day.';
+}
+// A surf forecast for the three breaks, driven by the same clock as the
+// seasons, so the best break changes through the week.
+function r6SurfForecast() {
+  const day = Math.floor(state.time / 120) % 3;
+  const order = [2, 0, 1];
+  const best = R6_SURF_BREAKS[order[day]];
+  return 'Surf forecast: ' + best.name + ' is firing today (wave ' + best.wave + '/5).';
+}
+
+// ---------- Round 6, part twelve: earnings ledger + phone stats ----------
+// Every Round 6 dollar in and out runs through r6Earn / r6Spend, so the
+// ledger below is exact. The phone stats screen reads it plus the summary.
+let r6Ledger = { earned: 0, spent: 0, jobs: 0 };
+function r6LedgerLoad() {
+  const s = r6Load('ledger', null);
+  if (s) { r6Ledger.earned = s.earned || 0; r6Ledger.spent = s.spent || 0; r6Ledger.jobs = s.jobs || 0; }
+}
+function r6LedgerSave() { r6Save('ledger', r6Ledger); }
+function r6LedgerSummary() {
+  return {
+    earned: r6Ledger.earned,
+    spent: r6Ledger.spent,
+    profit: r6Ledger.earned - r6Ledger.spent,
+    jobs: r6Ledger.jobs,
+    badges: r6Badges.earned.length,
+    badgesTotal: R6_BADGES.length,
+  };
+}
+function r6PhoneStatsOpen() {
+  if (state.mode !== 'play') return;
+  const s = r6StatsSummary();
+  const l = r6LedgerSummary();
+  const lines = [
+    'Round 6 — your bay, by the numbers.',
+    '',
+    'Money: earned $' + l.earned + ' · spent $' + l.spent + ' · profit $' + l.profit + ' across ' + l.jobs + ' paying jobs.',
+    'Badges: ' + l.badges + '/' + l.badgesTotal + ' earned ($50 each).',
+    '',
+    'Metro rides ' + s.metroRides + ' · Food served ' + s.foodServed + ' · Surf best ' + s.surfBest + ' pts.',
+    'Skate best combo ' + s.skateBest + ' · Stunt stars ' + s.stuntStars + ' · Club nights ' + s.clubNights + '.',
+    'Tattoos ' + s.tattoos + ' · Murals ' + s.muralsDone + '/6 · Horses ' + s.horses + ' · Golf best ' + (s.golfBest === 99 ? '—' : s.golfBest) + '.',
+    'Bowling best ' + s.bowlBest + ' · Arcade plays ' + s.arcadePlays + ' · Books read ' + s.booksRead + '/12.',
+    'Museum tours ' + s.museumTours + ' · Fair rides ' + s.fairRides + ' · Zoo animals fed ' + s.zooFed + '/6.',
+    'Photo sessions ' + s.photoSessions + ' · Wedding vendors ' + s.weddingVendors + '/5' + (s.married ? ' · married!' : '') + '.',
+    'Band fans ' + s.bandFans + ' · Busking tips $' + s.buskTips + ' · Flats owned ' + s.flatsOwned + ' · Flips ' + s.flips + '.',
+    'Antiques ' + s.antiques + '/10 · Fires out ' + s.firesOut + ' · Patients saved ' + s.patientsSaved + ' · Hospital rep ' + s.medicRep + '.',
+    '',
+    r6SurfForecast(),
+    r6FoodSpecialLine(),
+    'Tip — ' + r6TipOfDay().system + ': ' + r6TipOfDay().tip,
+  ];
+  r6ShowPanel('📊 Round 6 Stats', lines, [
+    r6PanelButton('Open the Bay Guide', () => { r6GuideOpen(); }),
+    r6PanelButton('Open Round 6 Extras', () => { r6ExtrasOpen(); }),
+    r6PanelButton('Close', () => r6ClosePanel()),
+  ]);
+}
+r6LedgerLoad();
+if (window.__r6exports) {
+  window.__r6exports.ledger = r6LedgerSummary;
+  window.__r6exports.phoneStats = r6PhoneStatsOpen;
+  window.__r6exports.badgesEarned = () => r6Badges.earned;
+  window.__r6exports.metroLine = r6MetroLineName;
+  window.__r6exports.foodSpecial = r6FoodSpecialLine;
+  window.__r6exports.surfForecast = r6SurfForecast;
+}
+
+// ---------- Round 6, part thirteen: ledger self-test ----------
+// A second self-test pass over the ledger, badges and guide helpers, kept
+// separate so the main Round 6 self-test stays readable.
+function r6SelfTestLedger() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('r6-ledger-shape', typeof r6Ledger.earned === 'number' && typeof r6Ledger.spent === 'number' && typeof r6Ledger.jobs === 'number', 'ledger ' + JSON.stringify(r6LedgerSummary()));
+  ok('r6-ledger-profit', r6LedgerSummary().profit === r6Ledger.earned - r6Ledger.spent, 'profit math exact');
+  ok('r6-badges-count', R6_BADGES.length === 24, '24 badges');
+  ok('r6-badges-unique', new Set(R6_BADGES.map((b) => b.id)).size === 24, 'badge ids unique');
+  ok('r6-badge-tests', R6_BADGES.every((b) => typeof b.test === 'function'), 'every badge has a test');
+  ok('r6-metro-lines', R6_METRO_LINES.length === 3 && R6_METRO_LINES[0].stops.length === 2, '3 metro lines');
+  ok('r6-metro-line-name', r6MetroLineName(0, 1) === 'Blue Line' && r6MetroLineName(1, 2) === 'Pink Line' && r6MetroLineName(2, 3) === 'Green Line', 'line lookup works');
+  ok('r6-food-special', typeof r6FoodSpecialLine() === 'string' && r6FoodSpecialLine().includes('special'), r6FoodSpecialLine());
+  ok('r6-surf-forecast', typeof r6SurfForecast() === 'string' && r6SurfForecast().includes('Surf forecast'), r6SurfForecast());
+  ok('r6-phone-stats', typeof r6PhoneStatsOpen === 'function', 'phone stats callable');
+  ok('r6-ledger-save', typeof r6LedgerSave === 'function' && typeof r6LedgerLoad === 'function', 'ledger persistence wired');
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+if (window.__r6exports) window.__r6exports.ledgerSelftest = r6SelfTestLedger;
+
+// ---------- Round 6, part fourteen: fare chart + system status ----------
+// A fare chart for the metro panel and a one-line status per system, used by
+// the phone stats screen and the guide.
+function r6FareChart() {
+  const rows = [];
+  for (let i = 0; i < R6_METRO_STATIONS.length; i++) {
+    for (let j = 0; j < R6_METRO_STATIONS.length; j++) {
+      if (i === j) continue;
+      rows.push({
+        from: R6_METRO_STATIONS[i].name,
+        to: R6_METRO_STATIONS[j].name,
+        line: r6MetroLineName(i, j),
+        fare: r6Metro.card ? 0 : R6_METRO_FARE,
+      });
+    }
+  }
+  return rows;
+}
+function r6SystemStatus() {
+  return [
+    'Metro ' + r6Metro.rides + ' rides',
+    'Food ' + r6Food.served + ' served',
+    'Surf best ' + r6Surf.best,
+    'Skate best ' + r6Skate.best,
+    'Stunt ' + r6Stunt.stars + ' stars',
+    'Club vibe ' + r6Club.vibe,
+    'Tattoos ' + r6Tattoo.owned.length,
+    'Murals ' + r6Art.done.length + '/6',
+    'Horses ' + r6Ranch.horses.length,
+    'Golf best ' + r6Golf.best,
+    'Bowling best ' + r6Bowl.best,
+    'Arcade ' + r6Arcade.plays + ' plays',
+    'Books ' + r6Library.read.length + '/12',
+    'Museum ' + r6Museum.tours + ' tours',
+    'Fair ' + r6Fair.rides + ' rides',
+    'Zoo fed ' + r6Zoo.fed.length + '/6',
+    'Photos ' + r6Photo.sessions,
+    'Wedding ' + r6Wedding.vendors.length + '/5',
+    'Band ' + r6Band.fans + ' fans',
+    'Busking $' + r6Busk.tips,
+    'Flats ' + r6Estate.owned.length,
+    'Antiques ' + r6Pawn.found.length + '/10',
+    'Fires ' + r6Fire.putOut,
+    'Patients ' + r6Medic.saved,
+  ];
+}
+if (window.__r6exports) {
+  window.__r6exports.fareChart = r6FareChart;
+  window.__r6exports.systemStatus = r6SystemStatus;
+}
+
 // ---------- main loop ----------
 const clock = new THREE.Clock();
 let hudTimer = 0;
@@ -8595,6 +11367,7 @@ function animate() {
     if (!state.inCar) updatePlayer(dt);
     if (state.inCar) updateCar(dt);
     updateR5(dt);
+    updateR6(dt);
     updateTraffic(dt);
     updatePeds(dt);
     updatePolice(dt);
@@ -8633,3 +11406,4 @@ animate();
 window.__solmar = { state, buildingCount, playerState, parkedCars, camera, scene, police, policeBikes, roadblocks, extraVehicles, helis, boats, planes, traffic, buses, BUS_STOPS, CHARS, RADIO_STATIONS, WEAPONS, weaponPickups, vestPickups, ambientPlanes, movingBoats, hunters, AIRPORTS, RACE_CPS, RACE_START, animals, SHOPS, HEIST_STAGES, HEIST_REWARD, groundHeight, chute, heist, ownedProperties, skills, skillLevel, packages, packagesFound: () => packagesFound, golf, streetEvent: () => streetEvent, fireJob: () => fireJob, medicJob: () => medicJob, busJob: () => busJob, taxiJob: () => taxiJob, charMission: () => charMission, onRiver, fish, race, taxiActive: () => !!taxiCall, speak: speakLine, damage: damagePlayer, startRace, togglePhone, openShop, startHeist, startCharMission, startDriverJob, startGolf, collectPassiveIncome, spawnStreetEvent, togglePhotoMode, takePhoto, toggleScope, showStory };
 if (window.__r4exports) Object.assign(window.__solmar, window.__r4exports);
 if (window.__r5exports) { window.__solmar.r5 = window.__r5exports; window.__solmar.r5selftest = r5SelfTest; }
+if (window.__r6exports) { window.__solmar.r6 = window.__r6exports; window.__solmar.r6selftest = r6SelfTest; }

@@ -1263,6 +1263,88 @@ export function roundSixPayingSystems(): { system: string; max: number }[] {
     .filter((p) => p.max > 0)
     .sort((a, b) => b.max - a.max);
 }
+/** How many new systems Round 7 added. */
+export function roundSevenFeatureCount(): number {
+  return roundSevenFeatures().length;
+}
+/** The most a player can earn from one full pass of this round's repeatable systems. */
+export function roundSevenMaxPayouts(): { system: string; max: number }[] {
+  const list = [
+    { system: 'bay-reputation-deeds', max: 0 },
+    { system: 'witness-disguise-saved-heat', max: 0 },
+    { system: 'focus-mode-disarms', max: 0 },
+    { system: 'robbery-take', max: 0 },
+    { system: 'car-theft-chop-shop', max: 0 },
+    { system: 'weapon-lockers-cleaning', max: 0 },
+    { system: 'wildlife-rare-tracks', max: 0 },
+    { system: 'horse-ranch-races', max: 0 },
+    { system: 'safehouse-crew-jobs', max: 0 },
+    { system: 'stranger-missions', max: 0 },
+    { system: 'bounty-hunting-alive', max: 500 + 650 + 800 + 450 + 720 },
+    { system: 'treasure-hunts', max: 1200 + 1500 + 900 },
+    { system: 'challenges-all-medals', max: 9 * (100 + 200 + 400) },
+    { system: 'basketball-wrestling', max: 0 },
+    { system: 'pool-boxing-belt', max: 0 },
+    { system: 'kayak-scuba-loot', max: 220 + 140 + 350 + 100 },
+    { system: 'base-jumping', max: 0 },
+    { system: 'airboat-tours', max: 0 },
+    { system: 'hunting-lodge-pelts', max: 0 },
+    { system: 'hurricane-salvage', max: 0 },
+    { system: 'bayride-saved-fares', max: 0 },
+    { system: 'snapmatic-brand-deals', max: 0 },
+    { system: 'radio-podcasts-fan-mail', max: 0 },
+    { system: 'body-stats-apartments', max: 0 },
+    { system: 'round-seven-badges', max: 24 * 50 },
+  ];
+  return list;
+}
+/** The new systems Round 7 added to the game, in the order a player meets them. */
+export function roundSevenFeatures(): { id: string; where: string; reward: string }[] {
+  return [
+    { id: 'bay-reputation', where: 'plaza board at (-18, 26), press E', reward: 'good deeds pay, brutality costs, shop prices shift with rep' },
+    { id: 'witness-disguise', where: 'clothes shop at (22, -30), press E', reward: 'change outfit and vehicle to shed heat, Bay Lockdown at 6 stars' },
+    { id: 'focus-mode', where: 'anywhere on foot, press F', reward: 'slow-mo targeting, vitals and limb hits, disarm enemies' },
+    { id: 'robbery-prep', where: 'four target shops, press E', reward: 'scout, safe codes 4821, 1937, 6602, 7754, duo robberies with Ian at 1.5x' },
+    { id: 'car-theft', where: 'near a parked car, press E', reward: 'slim jim timing bar with a 62 to 78 sweet spot, chop shop at (-52, 18)' },
+    { id: 'weapon-lockers', where: 'Bay Arms at (30, 52), press E', reward: 'carry 2 rifles and 2 pistols, wear and cleaning, trunk and safehouse storage' },
+    { id: 'wildlife-compendium', where: 'three habitat spots, press E', reward: 'eight species logged, three rare trackable animals' },
+    { id: 'horse-bonding', where: 'the ranch, press E', reward: 'three horses, bond levels, feed, groom, ride and drills' },
+    { id: 'safehouse-upgrades', where: 'safehouse at (-8, -40), press E', reward: 'five upgrades, crew roles, morale, sleep' },
+    { id: 'stranger-missions', where: 'eight strangers across the map, press E', reward: 'eight quirky side quests with dialogue, gifts and follow-ups' },
+    { id: 'bounty-hunting', where: 'bounty board at (6, 34), press E', reward: 'five targets, alive pays $500 to $800, dead pays less' },
+    { id: 'treasure-hunts', where: 'three clue chains, press E at a clue site', reward: 'caches pay $1200, $1500 and $900' },
+    { id: 'challenges', where: 'challenge board at (0, 14), press E', reward: 'nine categories, bronze $100, silver $200, gold $400' },
+    { id: 'basketball-wrestling', where: 'Marina Courts (48, -52) and the ring at (-58, 70), press E', reward: '3v3 pickup games, court season and ladder, wrestling bouts' },
+    { id: 'pool-boxing', where: 'Eight Ball Hall (-26, 44) and Bay Iron Boxing (26, -64), press E', reward: 'billiards trick shots, boxing bouts, belt at five wins' },
+    { id: 'kayak-scuba', where: 'marina shop at (88, 20), press E', reward: 'four dive sites at 12, 8, 18 and 6 metres, loot $220, $140, $350, $100' },
+    { id: 'base-jumping', where: 'four jump spots, press E', reward: 'cliffs and rooftops at 120, 90, 70 and 80 metres, wind and landing scored' },
+    { id: 'airboat-tours', where: 'swamp dock at (-140, 110), press E', reward: 'three swamp tours, wildlife log, tour scripts' },
+    { id: 'hunting-lodge', where: 'lodge at (-110, -130), press E', reward: 'four pelts, trophy room, pelt crafting, lodge rank' },
+    { id: 'hurricane-fronts', where: 'shelter at (14, -8)', reward: 'three fronts Alma, Brio and Cleo with winds 9, 6 and 10, forecast and repairs' },
+    { id: 'bayride', where: 'five BayRide stops, press E', reward: 'fares $12, $10, $14, $16 and $20, three timetable lines, surge pricing' },
+    { id: 'phone-2', where: 'phone (U), then Snapmatic', reward: 'photo social app with likes, followers and brand deals, car scanner app' },
+    { id: 'radio-podcasts', where: 'headphones shop, press E', reward: 'headphones $85, four podcasts, fan mail' },
+    { id: 'body-stats', where: 'gym at (38, -58) and three apartments, press E', reward: 'food, gym and sleep change strength, stamina and appearance' },
+  ];
+}
+/** Every Round 7 system id, for the dossier's feature list. */
+export function roundSevenFeatureIds(): string[] {
+  return roundSevenFeatures().map((f) => f.id);
+}
+/** One line per Round 7 system, for logs and the dossier's summary. */
+export function roundSevenSummary(): string {
+  return roundSevenFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
+}
+/** The combined ceiling of every Round 7 repeatable payout, in game dollars. */
+export function roundSevenTotalMaxPayout(): number {
+  return roundSevenMaxPayouts().reduce((sum, p) => sum + p.max, 0);
+}
+/** Round 7 systems that pay cash, with their ceilings, sorted highest first. */
+export function roundSevenPayingSystems(): { system: string; max: number }[] {
+  return roundSevenMaxPayouts()
+    .filter((p) => p.max > 0)
+    .sort((a, b) => b.max - a.max);
+}
 export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const max = caps.text_max_bytes;
   if (!Number.isSafeInteger(max) || max <= 0) throw new DossierError(`buildDossier: caps.text_max_bytes must be a positive integer, not ${String(max)}`, 'text_max_bytes');

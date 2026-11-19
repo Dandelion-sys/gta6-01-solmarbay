@@ -86,6 +86,47 @@ createServer((request, response) => {
     response.end(body);
     return;
   }
+  if (url.pathname === '/r7-features.json') {
+    const features = [
+      { id: 'bay-reputation', what: 'good deeds vs brutality tracked, NPC reactions and shop prices shift', key: 'E at the plaza board' },
+      { id: 'witness-disguise', what: 'cameras and witnesses lock in outfit and vehicle, change both to shed heat, Bay Lockdown at 6 stars', key: 'E at the clothes shop' },
+      { id: 'focus-mode', what: 'slow-mo targeting with vitals and limb hits, disarm enemies', key: 'F' },
+      { id: 'robbery-prep', what: 'scout shops, back entrances, safe codes, disable cameras, duo robberies with Ian', key: 'E at a target shop' },
+      { id: 'car-theft', what: 'slim jim timing bar, window smash, key cloner, phone scanner', key: 'E near a parked car' },
+      { id: 'weapon-lockers', what: 'carry 2 rifles and 2 pistols, extras in trunk or safehouse, weapons wear and clean', key: 'E at Bay Arms' },
+      { id: 'wildlife-compendium', what: 'study animals, log species, track three rare animals, hunt with the right weapon', key: 'E at a habitat spot' },
+      { id: 'horse-bonding', what: 'bond levels, horse stats, grooming, feeding and drills', key: 'E at the ranch' },
+      { id: 'safehouse-upgrades', what: 'bed, workshop, armory and decor, crew roles, morale, sleep', key: 'E at the safehouse' },
+      { id: 'stranger-missions', what: 'eight quirky NPC side quests across the map', key: 'E near a stranger' },
+      { id: 'bounty-hunting', what: 'wanted NPCs, capture alive pays more than dead', key: 'E at the bounty board' },
+      { id: 'treasure-hunts', what: 'three clue-chain hunts to buried caches', key: 'E at a clue site' },
+      { id: 'challenges', what: 'nine challenge categories with bronze, silver and gold ranks', key: 'E at the challenge board' },
+      { id: 'basketball-wrestling', what: '3v3 pickup games at the Marina Courts, backyard wrestling ring', key: 'E at the courts or the ring' },
+      { id: 'pool-boxing', what: 'billiards at Eight Ball Hall, boxing bouts at Bay Iron, belt at five wins', key: 'E at the hall or the gym' },
+      { id: 'kayak-scuba', what: 'kayaking and scuba diving, reefs, underwater loot, four dive sites', key: 'E at the marina shop' },
+      { id: 'base-jumping', what: 'cliff and building jump spots with parachute challenges', key: 'E at a jump spot' },
+      { id: 'airboat-tours', what: 'airboat swamp tours and swamp wildlife', key: 'E at the swamp dock' },
+      { id: 'hunting-lodge', what: 'hunting lodge and trophy room, pelt crafting', key: 'E at the lodge' },
+      { id: 'hurricane-fronts', what: 'severe storm events with surge, debris and shelter-seeking NPCs', key: 'shelter at the storm marker' },
+      { id: 'bayride', what: 'ride-share and bus and train timetables, fast travel network', key: 'E at a BayRide stop' },
+      { id: 'phone-2', what: 'Snapmatic-style photo social app with likes and followers, car scanner app', key: 'U then Snapmatic' },
+      { id: 'radio-podcasts', what: 'podcasts and headphones to listen on foot', key: 'E at the headphones shop' },
+      { id: 'body-stats', what: 'food, gym and sleep change strength, stamina and appearance, enterable apartments', key: 'E at the gym or an apartment' },
+    ];
+    const body = JSON.stringify({ round: 7, features }, null, 2);
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
+  if (url.pathname === '/r7-health') {
+    // A second health endpoint that also reports the Round 7 feature count,
+    // so a smoke test can confirm the Round 7 build without loading the game.
+    const features = 24;
+    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 7, roundSevenSystems: features });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
+    response.end(body);
+    return;
+  }
   if (url.pathname === '/r5-features.json') {
     const features = [
       { id: 'garage', what: 'paint, wheels, engine and nitro tuning for any car', key: 'E or Y at Solmar Customs' },

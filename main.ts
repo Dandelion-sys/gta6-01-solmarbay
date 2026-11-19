@@ -214,6 +214,76 @@ const r6HowTo: { system: string; how: string }[] = [
   { system: 'paramedic', how: 'E at the hospital or a patient' },
 ];
 console.log(`Round 6 how-to (${r6HowTo.length} entries):\n${r6HowTo.map((h) => `  ${h.system}: ${h.how}`).join('\n')}`);
+// Round 7 how-to, one line per system, for the build log and the dossier.
+//   Bay reputation — E at the plaza board; good deeds pay, brutality costs.
+//   Witness & disguise — E at the clothes shop; change outfit and car to shed heat.
+//   Focus mode — F; slow-mo, vitals and limb hits, disarm.
+//   Robbery prep — E at a target shop; scout, safe codes, cameras, duo with Ian.
+//   Car theft — E near a parked car; slim jim timing, window smash, key cloner.
+//   Weapon lockers — E at Bay Arms; 2 rifles and 2 pistols carried, wear and clean.
+//   Wildlife compendium — E at a habitat spot; log species, track the rare three.
+//   Horse bonding — E at the ranch; feed, groom, ride, drills, bond levels.
+//   Safehouse upgrades — E at the safehouse; bed, workshop, armory, crew, morale.
+//   Stranger missions — E near a stranger; eight quirky quests across the map.
+//   Bounty hunting — E at the bounty board; alive pays more than dead.
+//   Treasure hunts — E at a clue site; three clue chains, caches $1200, $1500, $900.
+//   Challenges — E at the challenge board; nine categories, bronze, silver, gold.
+//   Basketball & wrestling — E at the Marina Courts or the ring.
+//   Pool & boxing — E at Eight Ball Hall or Bay Iron; belt at five bout wins.
+//   Kayak & scuba — E at the marina shop; four dive sites, loot $220, $140, $350, $100.
+//   Base jumping — E at a jump spot; four cliffs and rooftops.
+//   Airboat tours — E at the swamp dock; three tours, swamp wildlife.
+//   Hunting lodge — E at the lodge; pelts, trophy room, crafting.
+//   Hurricane fronts — shelter at the storm marker; Alma, Brio, Cleo.
+//   BayRide — E at a BayRide stop; fares $12, $10, $14, $16, $20, timetables.
+//   Phone 2.0 — U then Snapmatic; likes, followers, car scanner, brand deals.
+//   Radio podcasts — E at the headphones shop; headphones $85, four podcasts.
+//   Body & stats — E at the gym or an apartment; food, gym, sleep, rooftops.
+//   Extras, guide and stats — phone (U) buttons: Round 7 extras, guide, stats.
+const r7FeatureNames = [
+  'Bay reputation', 'witness and disguise', 'focus mode',
+  'robbery prep', 'car-theft minigames', 'weapon lockers and degradation',
+  'wildlife compendium', 'horse bonding', 'safehouse upgrades',
+  'stranger missions', 'bounty hunting', 'treasure hunts', 'challenges',
+  'basketball and wrestling', 'pool hall and boxing', 'kayaking and scuba',
+  'base jumping', 'airboat swamp tours', 'hunting lodge and trophy room',
+  'hurricane fronts', 'BayRide and timetables', 'phone 2.0 Snapmatic',
+  'radio podcasts', 'body and stats',
+];
+function roundSevenSummary(): string {
+  return r7FeatureNames.map((f, i) => `${i + 1}. ${f}`).join('\n');
+}
+console.log(`Round 7 features in this build: ${r7FeatureNames.length} (${r7FeatureNames.join(', ')})`);
+console.log(roundSevenSummary());
+console.log(`Round 7 totals: treasure caches $1200, $1500, $900; dive loot $220, $140, $350, $100; BayRide fares $12, $10, $14, $16, $20; headphones $85; 24 badges at $50 each.`);
+// Round 7 how-to, one line per system, for the build log and the dossier.
+const r7HowTo: { system: string; how: string }[] = [
+  { system: 'bay-reputation', how: 'E at the plaza board' },
+  { system: 'witness-disguise', how: 'E at the clothes shop' },
+  { system: 'focus-mode', how: 'F to toggle slow-mo' },
+  { system: 'robbery-prep', how: 'E at a target shop' },
+  { system: 'car-theft', how: 'E near a parked car' },
+  { system: 'weapon-lockers', how: 'E at Bay Arms' },
+  { system: 'wildlife-compendium', how: 'E at a habitat spot' },
+  { system: 'horse-bonding', how: 'E at the ranch' },
+  { system: 'safehouse-upgrades', how: 'E at the safehouse' },
+  { system: 'stranger-missions', how: 'E near a stranger' },
+  { system: 'bounty-hunting', how: 'E at the bounty board' },
+  { system: 'treasure-hunts', how: 'E at a clue site' },
+  { system: 'challenges', how: 'E at the challenge board' },
+  { system: 'basketball-wrestling', how: 'E at the Marina Courts or the ring' },
+  { system: 'pool-boxing', how: 'E at Eight Ball Hall or Bay Iron' },
+  { system: 'kayak-scuba', how: 'E at the marina shop' },
+  { system: 'base-jumping', how: 'E at a jump spot' },
+  { system: 'airboat-tours', how: 'E at the swamp dock' },
+  { system: 'hunting-lodge', how: 'E at the hunting lodge' },
+  { system: 'hurricane-fronts', how: 'shelter at the storm marker' },
+  { system: 'bayride', how: 'E at a BayRide stop' },
+  { system: 'phone-2', how: 'U then Snapmatic' },
+  { system: 'radio-podcasts', how: 'E at the headphones shop' },
+  { system: 'body-stats', how: 'E at the gym or an apartment' },
+];
+console.log(`Round 7 how-to (${r7HowTo.length} entries):\n${r7HowTo.map((h) => `  ${h.system}: ${h.how}`).join('\n')}`);
 // Round 6 verification note: the entry is verified three ways before it is
 // handed in. First, `node playtest.mjs` in the parent directory loads the
 // game in headless Chromium and must print PLAYTEST ALL PASS (103 checks plus

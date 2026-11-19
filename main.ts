@@ -15,7 +15,7 @@
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDossier, solmarBayFeatures, solmarBayMaxPayoutTotal } from './vendor/makefun-game.ts';
+import { buildDossier, solmarFeatures, solmarMaxPayoutTotal } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -29,6 +29,12 @@ if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), joi
 // scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
 // files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
 // screenshots/ and dossier.json).
+// Solmar Bay features, counted fresh by this build: systems and payouts.
+const features = solmarFeatures();
+const payoutTotal = solmarMaxPayoutTotal();
+console.log(`Solmar Bay: ${features.length} features, max payouts total $${payoutTotal.toLocaleString('en-US')}`);
+for (const f of features) console.log(`  - ${f.name}: $${f.maxPayout.toLocaleString('en-US')}`);
+
 writeFileSync(
   join(out, 'dossier.json'),
   buildDossier(out, {
@@ -39,9 +45,3 @@ writeFileSync(
     game_path_max_bytes: 1000,
   }),
 );
-
-// Solmar Bay (round 10): log the game's features and their max payouts.
-const features = solmarBayFeatures();
-const featureTotal = solmarBayMaxPayoutTotal(features);
-console.log(`Solmar Bay features: ${features.length} systems, max payouts total $${featureTotal.toLocaleString('en-US')}`);
-for (const f of features) console.log(`  - ${f.name}: up to $${f.maxPayout.toLocaleString('en-US')}`);

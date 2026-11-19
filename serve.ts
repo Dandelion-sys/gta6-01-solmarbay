@@ -6,7 +6,6 @@ import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { solmarBayFeatures, solmarBayMaxPayoutTotal } from './vendor/makefun-game.ts';
 
 const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 const args = process.argv.slice(2);
@@ -40,6 +39,13 @@ const MIME: Record<string, string> = {
 
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  // Solmar Bay features endpoint: lists the game's systems for local tools.
+  if (url.pathname === '/features') {
+    const features = ['open world, 7 districts', 'Ryan and Ian, shared wallet', 'missions x12 plus computed finale', 'police 1-6 stars', 'phone apps', 'shops and properties', 'wildlife field guide', 'treasure hunts', 'challenges', 'sports', 'weather and day/night', 'synth radio'];
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ game: 'Solmar Bay', features }));
+    return;
+  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
@@ -48,13 +54,6 @@ createServer((request, response) => {
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
-  if (pathname === '/features') {
-    const features = solmarBayFeatures();
-    const body = JSON.stringify({ features, total: solmarBayMaxPayoutTotal(features) });
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
-    response.end(body);
-    return;
-  }
   const file = resolve(join(root, normalize(pathname)));
   if (file !== root && !file.startsWith(root + sep)) {
     response.writeHead(403).end('forbidden');

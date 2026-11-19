@@ -38,150 +38,25 @@ const MIME: Record<string, string> = {
 };
 
 createServer((request, response) => {
+  // Solmar Bay features endpoint: a quick machine-readable list of what
+  // this entry includes, for the playtest and for curious players.
+  if ((request.url ?? '') === '/features') {
+    const features = [
+      'open-world bay city', 'ryan-and-ian duo', 'six-mission chains',
+      'vault heist with computed payout', 'wanted levels and police',
+      'focus slow motion', 'car theft', 'weapons locker',
+      'wildlife compendium', 'safehouse upgrades', 'stranger missions',
+      'bounty hunting', 'treasure hunts', 'challenges', 'sports',
+      'kayak and scuba', 'base jumping', 'airboat tours', 'hurricanes',
+      'bayride transport', 'phone apps', 'radio', 'body stats',
+      'day and night', 'weather', 'save and load',
+    ];
+    const body = JSON.stringify({ game: 'Solmar Bay', features });
+    response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
+    response.end(body);
+    return;
+  }
   const url = new URL(request.url ?? '/', 'http://localhost');
-  if (url.pathname === '/health') {
-    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 5 });
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r6-features.json') {
-    const features = [
-      { id: 'metro', what: 'four underground stations, metro card $40, fare $5, fare-dodging heat', key: 'E at a station' },
-      { id: 'food-truck', what: 'buy a truck, five menus, six pitches, tips, health rating', key: 'E at a pitch flag' },
-      { id: 'surfing', what: 'three surf breaks, board shop, rescue swims, competitions', key: 'E at the surf shop or a buoy' },
-      { id: 'skate-park', what: 'tricks, combos, competitions, sponsor deals', key: 'E at Concrete Wave Park' },
-      { id: 'stunt-career', what: 'stunt-double gigs, film shoots, star meter', key: 'E at Solmar Studios' },
-      { id: 'nightclub', what: 'buy the club, book DJs, door and VIP income, vibe meter', key: 'E at The Bluefin' },
-      { id: 'tattoo-parlor', what: 'get inked for stat boosts, tattoo clients, flash book', key: 'E at Ink & Salt' },
-      { id: 'street-art', what: 'six murals, spray cans, crew rep, tagging heat', key: 'E at a mural wall' },
-      { id: 'horse-ranch', what: 'buy and train horses, ranch races, stable income', key: 'E at Rancho del Sol' },
-      { id: 'golf', what: 'nine-hole course, tournaments, caddy tips, mini-golf', key: 'E at Solmar Greens' },
-      { id: 'bowling', what: 'leagues, perfect-game bonus, snack bar', key: 'E at Strike Lanes' },
-      { id: 'arcade', what: 'five retro cabinets, high scores, tokens, prize shelf', key: 'E at Neon Palace' },
-      { id: 'library', what: 'twelve rare books, reading boosts, book club', key: 'E at Solmar Library' },
-      { id: 'museum', what: 'exhibits, guided tours, artifact hunts, night event', key: 'E at the Bay Museum' },
-      { id: 'carnival', what: 'Ferris wheel, bumper cars, ring toss, fireworks show', key: 'E at the Solmar Fair' },
-      { id: 'zoo', what: 'animal encounters, feeding, safari photos', key: 'E at the zoo gate' },
-      { id: 'photo-studio', what: 'portrait sessions, photo contests, gallery sales', key: 'E at Lightbox Studio' },
-      { id: 'wedding', what: 'Ryan and Ian wedding storyline, five vendor quests, ceremony', key: 'E at a vendor or the chapel' },
-      { id: 'band', what: 'form a band, gigs at four venues, album sales, fans', key: 'E at a venue stage' },
-      { id: 'busking', what: 'five street pitches, hat tips, crowd meter', key: 'E at a pitch' },
-      { id: 'real-estate', what: 'buy rundown flats, renovate, flip for profit', key: 'E at a flat' },
-      { id: 'pawn-shop', what: 'ten antiques, haggling, appraisal', key: 'E at Old Tom\'s' },
-      { id: 'firefighter', what: 'fire-truck callouts, hose play, station upgrades', key: 'E at the fire station' },
-      { id: 'paramedic', what: 'ambulance callouts, triage, hospital reputation', key: 'E at the hospital' },
-    ];
-    const body = JSON.stringify({ round: 6, features }, null, 2);
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r6-health') {
-    // A second health endpoint that also reports the Round 6 feature count,
-    // so a smoke test can confirm the Round 6 build without loading the game.
-    const features = 24;
-    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 6, roundSixSystems: features });
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r7-features.json') {
-    const features = [
-      { id: 'bay-reputation', what: 'good deeds vs brutality tracked, NPC reactions and shop prices shift', key: 'E at the plaza board' },
-      { id: 'witness-disguise', what: 'cameras and witnesses lock in outfit and vehicle, change both to shed heat, Bay Lockdown at 6 stars', key: 'E at the clothes shop' },
-      { id: 'focus-mode', what: 'slow-mo targeting with vitals and limb hits, disarm enemies', key: 'F' },
-      { id: 'robbery-prep', what: 'scout shops, back entrances, safe codes, disable cameras, duo robberies with Ian', key: 'E at a target shop' },
-      { id: 'car-theft', what: 'slim jim timing bar, window smash, key cloner, phone scanner', key: 'E near a parked car' },
-      { id: 'weapon-lockers', what: 'carry 2 rifles and 2 pistols, extras in trunk or safehouse, weapons wear and clean', key: 'E at Bay Arms' },
-      { id: 'wildlife-compendium', what: 'study animals, log species, track three rare animals, hunt with the right weapon', key: 'E at a habitat spot' },
-      { id: 'horse-bonding', what: 'bond levels, horse stats, grooming, feeding and drills', key: 'E at the ranch' },
-      { id: 'safehouse-upgrades', what: 'bed, workshop, armory and decor, crew roles, morale, sleep', key: 'E at the safehouse' },
-      { id: 'stranger-missions', what: 'eight quirky NPC side quests across the map', key: 'E near a stranger' },
-      { id: 'bounty-hunting', what: 'wanted NPCs, capture alive pays more than dead', key: 'E at the bounty board' },
-      { id: 'treasure-hunts', what: 'three clue-chain hunts to buried caches', key: 'E at a clue site' },
-      { id: 'challenges', what: 'nine challenge categories with bronze, silver and gold ranks', key: 'E at the challenge board' },
-      { id: 'basketball-wrestling', what: '3v3 pickup games at the Marina Courts, backyard wrestling ring', key: 'E at the courts or the ring' },
-      { id: 'pool-boxing', what: 'billiards at Eight Ball Hall, boxing bouts at Bay Iron, belt at five wins', key: 'E at the hall or the gym' },
-      { id: 'kayak-scuba', what: 'kayaking and scuba diving, reefs, underwater loot, four dive sites', key: 'E at the marina shop' },
-      { id: 'base-jumping', what: 'cliff and building jump spots with parachute challenges', key: 'E at a jump spot' },
-      { id: 'airboat-tours', what: 'airboat swamp tours and swamp wildlife', key: 'E at the swamp dock' },
-      { id: 'hunting-lodge', what: 'hunting lodge and trophy room, pelt crafting', key: 'E at the lodge' },
-      { id: 'hurricane-fronts', what: 'severe storm events with surge, debris and shelter-seeking NPCs', key: 'shelter at the storm marker' },
-      { id: 'bayride', what: 'ride-share and bus and train timetables, fast travel network', key: 'E at a BayRide stop' },
-      { id: 'phone-2', what: 'Snapmatic-style photo social app with likes and followers, car scanner app', key: 'U then Snapmatic' },
-      { id: 'radio-podcasts', what: 'podcasts and headphones to listen on foot', key: 'E at the headphones shop' },
-      { id: 'body-stats', what: 'food, gym and sleep change strength, stamina and appearance, enterable apartments', key: 'E at the gym or an apartment' },
-    ];
-    const body = JSON.stringify({ round: 7, features }, null, 2);
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r7-health') {
-    // A second health endpoint that also reports the Round 7 feature count,
-    // so a smoke test can confirm the Round 7 build without loading the game.
-    const features = 24;
-    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 7, roundSevenSystems: features });
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r5-features.json') {
-    const features = [
-      { id: 'garage', what: 'paint, wheels, engine and nitro tuning for any car', key: 'E or Y at Solmar Customs' },
-      { id: 'casino', what: 'slots and blackjack for in-game cash only', key: 'E or I at the Solmar Sands' },
-      { id: 'fishing-tournament', what: 'two-minute tournaments, points per catch, tackle shop', key: 'automatic; tackle on the phone' },
-      { id: 'pursuit-heli', what: 'police helicopter with a searchlight at 3 stars, spike strips at 4', key: 'automatic at high wanted' },
-      { id: 'seasons', what: 'spring, summer, autumn, winter, four days each, with weather fronts', key: 'automatic' },
-      { id: 'taxi-empire', what: 'buy up to 3 cabs, hire drivers, earn per minute, parcel runs', key: 'E at the yellow depot' },
-      { id: 'stunt-jumps', what: 'six ramps, airtime and distance scored, local leaderboard', key: 'drive fast over a yellow ramp' },
-      { id: 'postcards', what: 'eight golden postcards at scenic spots, $60 each, $500 for the set', key: 'E at a floating card' },
-      { id: 'flight-school', what: 'three lessons in a stunt plane at Solmar Intl', key: 'E at the flight school' },
-      { id: 'gym', what: 'five training plans that bank real skill XP, $30 a session', key: 'E at Bay Iron' },
-      { id: 'stocks', what: 'six bay companies, prices move every minute, dividends at dawn', key: 'Stocks on the phone' },
-      { id: 'districts', what: 'five districts, influence pays $40 a minute above 60', key: 'work anywhere' },
-      { id: 'bond', what: 'gifts and sunset date nights for Ryan and Ian', key: 'Gifts and dates on the phone' },
-      { id: 'boat-races', what: 'three-buoy marina race, 150 seconds, up to $450', key: 'E at the pink marina flag' },
-      { id: 'safehouse', what: 'furniture comfort that heals, fast travel for $25 a hop', key: 'E at the harbour safehouse' },
-      { id: 'heat-zones', what: 'three zones where the law watches closer', key: 'automatic' },
-      { id: 'responder-shifts', what: 'ambulance and fire truck night shifts, $220 a shift', key: 'E at the hospital or fire station' },
-      { id: 'car-meets', what: 'Friday marina meets, best tuned car wins $300', key: 'Fridays at the marina' },
-      { id: 'achievements', what: 'twelve achievements with one-time cash bonuses', key: 'Achievements on the phone' },
-      { id: 'dj-chatter', what: 'live bay news on the two new radio stations', key: 'R to stations 4 and 5' },
-    ];
-    const body = JSON.stringify({ round: 5, features }, null, 2);
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r4-features.json') {
-    const features = [
-      { id: 'coral-cay', what: 'island town with lighthouse, walkers and six shells', key: 'hovercraft or boat east' },
-      { id: 'hovercraft', what: 'fan-driven craft that runs on water and land', key: 'E near the beach or Cay pier' },
-      { id: 'marisol-chain', what: 'four extra story jobs after the main missions', key: 'L' },
-      { id: 'darts', what: 'three-dart turns at the pink-neon bar', key: 'K near the bar' },
-      { id: 'race-league', what: 'five-round season standings for checkpoint races', key: 'T at the airport flag' },
-      { id: 'job-board', what: 'five repeatable timed jobs', key: 'Z at the wooden board' },
-      { id: 'random-events', what: 'robbery, challenger, stranded driver, tourist, runaway cart', key: 'automatic' },
-      { id: 'salvage-diving', what: 'eight crates at four buoys, 35 seconds of air', key: 'X near a buoy' },
-      { id: 'buried-loot', what: 'five dig sites, map from the Cay keepsake stall', key: 'hold F at a mound' },
-      { id: 'keeper-quest', what: 'three fish for the lighthouse keeper', key: 'E near the lighthouse' },
-    ];
-    const body = JSON.stringify({ round: 4, features }, null, 2);
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
-  if (url.pathname === '/r5-health') {
-    // A second health endpoint that also reports the Round 5 feature count,
-    // so a smoke test can confirm the Round 5 build without loading the game.
-    const features = 24;
-    const body = JSON.stringify({ ok: true, game: 'solmar-bay', round: 5, roundFiveSystems: features });
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' });
-    response.end(body);
-    return;
-  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);

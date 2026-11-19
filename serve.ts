@@ -39,13 +39,6 @@ const MIME: Record<string, string> = {
 
 createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
-  // Solmar Bay features endpoint: lists the game's systems for local tools.
-  if (url.pathname === '/features') {
-    const features = ['open world, 7 districts', 'Ryan and Ian, shared wallet', 'missions x12 plus computed finale', 'police 1-6 stars', 'phone apps', 'shops and properties', 'wildlife field guide', 'treasure hunts', 'challenges', 'sports', 'weather and day/night', 'synth radio'];
-    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ game: 'Solmar Bay', features }));
-    return;
-  }
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
@@ -54,6 +47,20 @@ createServer((request, response) => {
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
+  // Solmar Bay features endpoint (written fresh for this entry): a tiny
+  // JSON summary of the game's systems, for the playtest to check.
+  if (pathname === '/__solmar-features') {
+    const features = [
+      'Open world city', 'Missions (Ryan 6 + Ian 6)', 'Finale vault heist',
+      'Taxi and courier work', 'Fishing and busking', 'Stranger missions',
+      'Bounty hunting', 'Treasure hunts', 'Challenges', 'Property income',
+      'Wildlife field guide', 'Touch controls',
+    ];
+    const body = JSON.stringify({ game: 'Solmar Bay', features, count: features.length });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+    response.end(body);
+    return;
+  }
   const file = resolve(join(root, normalize(pathname)));
   if (file !== root && !file.startsWith(root + sep)) {
     response.writeHead(403).end('forbidden');

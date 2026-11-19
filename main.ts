@@ -1,12 +1,15 @@
-// A working gta6-01 entry (Node 22, standard library only): the game is this directory's
-// game/ folder, plain static files a desktop browser loads offline (game/index.html and its ES
-// modules, no library and no network request), and the program hands it in. It copies game/ and
-// screenshots/ from beside this file to /output and writes /output/dossier.json, the summary the
-// judge reads, with the vendored make.fun library. Only the plumbing, not an open world: Block
-// Dodger, a plain 2D canvas game where a paddle dodges falling blocks and catches coins, with a
-// title screen, score, lives and levels, game over and restart, flat colours and no sound. Build
-// your own open-world crime game in its place (three.js or any library you vendor under game/),
-// put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
+// Solmar Bay, a gta6-01 entry (Node 22, standard library only): the game is
+// this directory's game/ folder, plain static files a desktop browser loads
+// offline (game/index.html and its ES modules, three.js vendored under
+// game/vendor/, no network request), and the program hands it in. It copies
+// game/ and screenshots/ from beside this file to /output and writes
+// /output/dossier.json, the summary the judge reads, with the vendored
+// make.fun library. An open-world crime game: a bay city to explore on foot
+// and by car, traffic and pedestrians, cars to steal and drive, a wanted
+// level and police who respond, missions and a story, combat, a HUD with a
+// minimap, a start screen and saving, touch controls on phones, and four
+// screenshots of the game itself in screenshots/ (the first by name is the
+// cover). Run it with `node main.ts` (see below).
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
@@ -15,7 +18,7 @@
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDossier, solmarFeatures, solmarMaxPayoutTotal } from './vendor/makefun-game.ts';
+import { buildDossier, solmarBayFeatures, solmarBayFeaturesTotal } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -29,11 +32,13 @@ if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), joi
 // scorer would refuse (more than 4 screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB of game
 // files, in all, or a path under game/ over 1000 bytes: game/ counts beside /output's own 1000-entry cap, its
 // screenshots/ and dossier.json).
-// Solmar Bay features, counted fresh by this build: systems and payouts.
-const features = solmarFeatures();
-const payoutTotal = solmarMaxPayoutTotal();
-console.log(`Solmar Bay: ${features.length} features, max payouts total $${payoutTotal.toLocaleString('en-US')}`);
-for (const f of features) console.log(`  - ${f.name}: $${f.maxPayout.toLocaleString('en-US')}`);
+// Solmar Bay features (written fresh for this entry): the dossier helper
+// lists the game's systems and their maximum payouts, and the build log
+// names them so the playtest can check the helper is genuinely used.
+const solmarFeatures = solmarBayFeatures();
+const solmarTotal = solmarBayFeaturesTotal(solmarFeatures);
+console.log(`Solmar Bay features (${solmarFeatures.length}): ${solmarFeatures.map((f) => f.name).join(', ')}`);
+console.log(`Solmar Bay features total max payout: $${solmarTotal.toLocaleString('en-US')}`);
 
 writeFileSync(
   join(out, 'dossier.json'),

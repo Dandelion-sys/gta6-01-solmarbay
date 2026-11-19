@@ -1,83 +1,47 @@
-// Saving and loading: money, cars, weapons, outfits, mission progress,
-// properties, stats and position, kept in the browser's local storage.
-const KEY = 'solmar-bay-save-v1';
-const BEST_KEY = 'solmar-bay-best-v1';
-export function saveGameData(state) {
+// Saving and loading. The save keeps money, cars, weapons, mission
+// progress, owned properties, reputation, bond and the clock.
+export const SAVE_KEY = 'solmar-bay-save-v1';
+export function saveGame(G) {
   try {
     const data = {
-      money: state.economy.money,
-      bestMoney: state.economy.bestMoney,
-      ownedCars: state.economy.ownedCars,
-      ownedPlanes: state.economy.ownedPlanes,
-      ownedBoats: state.economy.ownedBoats,
-      ownedProperties: state.economy.ownedProperties,
-      weapons: state.economy.weapons,
-      ownedOutfits: state.economy.ownedOutfits,
-      crew: state.economy.crew,
-      upgrades: state.economy.upgrades,
-      challenges: state.economy.challenges,
-      treasuresFound: state.economy.treasuresFound,
-      strangersDone: state.economy.strangersDone,
-      bountiesDone: state.economy.bountiesDone,
-      completed: state.missions.completed,
-      finaleDone: state.missions.finaleDone,
-      activeHero: state.heroes.active,
-      ryan: pickHero(state.heroes.ryan),
-      ian: pickHero(state.heroes.ian),
-      bond: state.heroes.bond,
-      reputation: state.heroes.reputation,
-      fieldGuide: Array.from(state.fieldGuide || []),
-      hour: state.city.hour,
-      savedAt: new Date().toISOString(),
+      money: G.money, day: G.time.day, minutes: G.time.minutes,
+      wanted: G.wanted, reputation: G.reputation, bond: G.bond,
+      activeChar: G.activeChar,
+      missions: { ryan: G.missions.ryan, ian: G.missions.ian, finaleDone: G.missions.finaleDone },
+      inventory: G.inventory, properties: G.properties,
+      stats: G.stats, systems: G.systems,
+      player: {
+        x: G.player.mesh.position.x, z: G.player.mesh.position.z,
+        heading: G.player.heading, health: G.player.health,
+        armour: G.player.armour, strength: G.player.strength,
+        stamina: G.player.stamina, outfit: G.player.outfit,
+      },
+      best: G.stats.best,
     };
-    localStorage.setItem(KEY, JSON.stringify(data));
-    localStorage.setItem(BEST_KEY, String(Math.max(state.economy.bestMoney, readBest())));
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     return true;
   } catch (e) { return false; }
 }
-function pickHero(h) {
-  return { x: h.x, z: h.z, heading: h.heading, health: h.health, armour: h.armour,
-    strength: h.strength, stamina: h.stamina, weight: h.weight, outfit: h.outfit };
-}
-export function loadGameData() {
+export function loadGame(G) {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (e) { return null; }
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    G.money = d.money; G.time.day = d.day; G.time.minutes = d.minutes;
+    G.wanted = d.wanted || 0; G.reputation = d.reputation || 0;
+    G.bond = d.bond || 0; G.activeChar = d.activeChar || 'ryan';
+    G.missions.ryan = d.missions.ryan; G.missions.ian = d.missions.ian;
+    G.missions.finaleDone = d.missions.finaleDone;
+    G.inventory = d.inventory; G.properties = d.properties;
+    G.stats = d.stats; G.systems = Object.assign(G.systems, d.systems || {});
+    const p = d.player;
+    G.player.mesh.position.set(p.x, 1, p.z);
+    G.player.heading = p.heading; G.player.health = p.health;
+    G.player.armour = p.armour; G.player.strength = p.strength;
+    G.player.stamina = p.stamina; G.player.outfit = p.outfit;
+    return true;
+  } catch (e) { return false; }
 }
 export function hasSave() {
-  try { return !!localStorage.getItem(KEY); } catch (e) { return false; }
-}
-export function readBest() {
-  try { return Number(localStorage.getItem(BEST_KEY) || 0); } catch (e) { return 0; }
-}
-export function applySave(state, data) {
-  if (!data) return false;
-  const e = state.economy;
-  e.money = data.money ?? e.money;
-  e.bestMoney = Math.max(data.bestMoney ?? 0, e.bestMoney);
-  e.ownedCars = data.ownedCars || e.ownedCars;
-  e.ownedPlanes = data.ownedPlanes || [];
-  e.ownedBoats = data.ownedBoats || [];
-  e.ownedProperties = data.ownedProperties || ['safehouse'];
-  e.weapons = data.weapons || e.weapons;
-  e.ownedOutfits = data.ownedOutfits || ['tee'];
-  e.crew = data.crew || [];
-  e.upgrades = data.upgrades || e.upgrades;
-  e.challenges = data.challenges || {};
-  e.treasuresFound = data.treasuresFound || [];
-  e.strangersDone = data.strangersDone || [];
-  e.bountiesDone = data.bountiesDone || [];
-  state.missions.completed = data.completed || { ryan: [], ian: [] };
-  state.missions.finaleDone = !!data.finaleDone;
-  state.heroes.active = data.activeHero || 'ryan';
-  if (data.ryan) Object.assign(state.heroes.ryan, data.ryan);
-  if (data.ian) Object.assign(state.heroes.ian, data.ian);
-  state.heroes.bond = data.bond ?? 50;
-  state.heroes.reputation = data.reputation ?? 0;
-  state.fieldGuide = new Set(data.fieldGuide || []);
-  if (data.hour) state.city.hour = data.hour;
-  state.heroes.syncMeshes();
-  return true;
+  try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
 }

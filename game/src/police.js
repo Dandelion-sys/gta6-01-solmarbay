@@ -1,133 +1,93 @@
-// Wanted level and the police: patrol cars, roadblocks, helicopters,
-// lockdown at six stars, and the bounty board at the precinct.
+// Police and the wanted level. One to six stars: patrol cars at low
+// levels, roadblocks and helicopters higher up, a full lockdown at six.
+// Breaking line of sight and staying hidden lets the heat fade.
 import * as THREE from 'three';
-import { makeCarMesh, Vehicle } from './vehicles.js';
-import { clamp, fmtMoney } from './rng.js';
-
-export class Police {
-  constructor(scene, seed) {
-    this.scene = scene;
-    this.wanted = 0;
-    this.heat = 0;
-    this.hiddenTimer = 0;
-    this.bounty = 0;
-    this.cars = [];
-    this.heli = null;
-    this.heliLight = null;
-    this.roadblocks = [];
-    this.spawnTimer = 0;
-    this.lockdown = false;
-    this.bounties = [
-      { id: 'b1', name: 'Marlon Vex', crime: 'Smuggled crates', reward: 1200, alive: true },
-      { id: 'b2', name: 'Tessa Kline', crime: 'Casino cheat', reward: 2200, alive: true },
-      { id: 'b3', name: 'Big Otto', crime: 'Truck hijack', reward: 3500, alive: true },
-    ];
-    this.spawnedBounty = null;
+import { clamp, dist2 } from './tuning.js';
+import { spawnVehicle } from './vehicles.js';
+export function addHeat(G, amount, reason) {
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  let witnesses = 0;
+  for (const p of G.peds) {
+    if (dist2(p.x, p.z, px, pz) < 30) witnesses++;
   }
-  addCrime(amount, reason) {
-    this.heat = clamp(this.heat + amount, 0, 100);
-    const next = Math.min(6, Math.ceil(this.heat / 16));
-    if (next > this.wanted) this.wanted = next;
-    this.bounty += amount * 25;
-    this.hiddenTimer = 0;
-    return reason;
+  const mult = witnesses > 0 ? 1.5 : 1;
+  G.wanted = clamp(G.wanted + amount * mult, 0, 6);
+  G.heat = 100;
+  G.hiddenTimer = 0;
+  if (G.wanted > 0) G.sound.sirenStart();
+  return G.wanted;
+}
+export function updatePolice(G, dt) {
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  const want = G.wanted > 0 ? Math.min(G.wanted + 1, 5) : 0;
+  while (G.police.length < want) {
+    const a = Math.random() * Math.PI * 2;
+    const v = spawnVehicle(G, 'police', px + Math.cos(a) * 90, pz + Math.sin(a) * 90, a, 0x1A1A2E);
+    v.route = null;
+    G.police.push(v);
   }
-  shedHeat(amount) {
-    this.heat = Math.max(0, this.heat - amount);
-    this.wanted = Math.min(this.wanted, Math.ceil(this.heat / 16));
-    if (this.wanted === 0) this.bounty = 0;
+  while (G.police.length > want) {
+    const v = G.police.pop();
+    G.scene.remove(v.mesh);
+    G.vehicles.splice(G.vehicles.indexOf(v), 1);
   }
-  spawnCar(x, z) {
-    const mesh = makeCarMesh(0x1a2a4a, 'police');
-    const v = new Vehicle(mesh, x, z, 0, { top: 44, accel: 34, colour: 0x1a2a4a, kind: 'police' });
-    v.parked = false;
-    this.scene.add(mesh);
-    this.cars.push(v);
-    return v;
+  for (const v of G.police) {
+    const d = dist2(v.x, v.z, px, pz);
+    const dx = px - v.x, dz = pz - v.z;
+    const targetHeading = Math.atan2(dx, dz);
+    let dh = targetHeading - v.heading;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    v.heading += clamp(dh, -2.4 * dt, 2.4 * dt);
+    const speed = d > 12 ? 26 : 18;
+    v.speed = speed;
+    v.x += Math.sin(v.heading) * speed * dt;
+    v.z += Math.cos(v.heading) * speed * dt;
+    v.mesh.position.set(v.x, 0, v.z);
+    v.mesh.rotation.y = v.heading;
+    if (d < 3.5) {
+      G.player.health = clamp(G.player.health - 12 * dt, 0, 100);
+      G.heat = 100;
+    }
   }
-  spawnHeli(x, z) {
-    if (this.heli) return;
+}
+export function decayWanted(G, dt) {
+  if (G.wanted <= 0) { G.sound.sirenStop(); return; }
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  let nearest = 9999;
+  for (const v of G.police) nearest = Math.min(nearest, dist2(v.x, v.z, px, pz));
+  const hidden = nearest > 60;
+  if (hidden) {
+    G.hiddenTimer += dt;
+    if (G.hiddenTimer > TUNING_WANTED_DECAY) {
+      G.wanted -= 1;
+      G.hiddenTimer = 0;
+      if (G.wanted <= 0) { G.wanted = 0; G.sound.sirenStop(); }
+    }
+  } else {
+    G.hiddenTimer = 0;
+  }
+  G.heat = Math.max(0, G.heat - dt * 2);
+}
+const TUNING_WANTED_DECAY = 9;
+export function updateHelicopter(G, dt) {
+  if (G.wanted < 4 && !G.heli) return;
+  if (!G.heli) {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 4.6),
-      new THREE.MeshLambertMaterial({ color: 0x1a2a4a }));
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 1.6, 6),
+      new THREE.MeshLambertMaterial({ color: 0x1A1A2E }));
     g.add(body);
     const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.15, 0.6),
-      new THREE.MeshLambertMaterial({ color: 0x222222 }));
-    rotor.position.y = 1; g.add(rotor);
-    const spot = new THREE.Mesh(new THREE.ConeGeometry(4, 26, 10),
-      new THREE.MeshBasicMaterial({ color: 0xfff2a8, transparent: true, opacity: 0.22 }));
-    spot.position.y = -13; g.add(spot);
-    g.position.set(x, 46, z);
-    this.scene.add(g);
-    this.heli = { mesh: g, rotor, x, z };
+      new THREE.MeshLambertMaterial({ color: 0x333333 }));
+    rotor.position.y = 1.1; g.add(rotor);
+    g.userData.rotor = rotor;
+    G.scene.add(g);
+    G.heli = g;
   }
-  removeHeli() {
-    if (!this.heli) return;
-    this.scene.remove(this.heli.mesh);
-    this.heli = null;
-  }
-  clearCars() {
-    for (const c of this.cars) this.scene.remove(c.mesh);
-    this.cars = [];
-    this.removeHeli();
-    for (const r of this.roadblocks) this.scene.remove(r);
-    this.roadblocks = [];
-    this.lockdown = false;
-  }
-  update(dt, px, pz, playerVisible, city) {
-    if (this.wanted > 0) {
-      if (playerVisible) this.hiddenTimer = 0;
-      else {
-        this.hiddenTimer += dt;
-        if (this.hiddenTimer > 6) this.shedHeat(dt * 3.2);
-      }
-      this.spawnTimer -= dt;
-      const want = this.wanted >= 4 ? 4 : this.wanted >= 2 ? 3 : this.wanted >= 1 ? 2 : 0;
-      if (this.spawnTimer <= 0 && this.cars.length < want) {
-        this.spawnTimer = 2.5;
-        const a = Math.random() * Math.PI * 2;
-        this.spawnCar(px + Math.sin(a) * 70, pz + Math.cos(a) * 70);
-      }
-      if (this.wanted >= 4 && !this.heli) this.spawnHeli(px, pz);
-      if (this.wanted < 4 && this.heli) this.removeHeli();
-      if (this.wanted >= 6 && !this.lockdown) {
-        this.lockdown = true;
-        for (let i = 0; i < 6; i++) {
-          const a = (i / 6) * Math.PI * 2;
-          const mesh = new THREE.Mesh(new THREE.BoxGeometry(8, 2, 1.4),
-            new THREE.MeshLambertMaterial({ color: 0xff8800 }));
-          mesh.position.set(px + Math.sin(a) * 55, 1, pz + Math.cos(a) * 55);
-          this.scene.add(mesh);
-          this.roadblocks.push(mesh);
-        }
-      }
-    } else {
-      this.clearCars();
-    }
-    for (const c of this.cars) {
-      const dx = px - c.x, dz = pz - c.z;
-      const d = Math.hypot(dx, dz) || 1;
-      const targetHeading = Math.atan2(dx, dz);
-      let dh = targetHeading - c.heading;
-      while (dh > Math.PI) dh -= Math.PI * 2;
-      while (dh < -Math.PI) dh += Math.PI * 2;
-      c.heading += clamp(dh, -1.6 * dt, 1.6 * dt);
-      const speed = d > 12 ? 40 : 18;
-      c.x += Math.sin(c.heading) * speed * dt;
-      c.z += Math.cos(c.heading) * speed * dt;
-      c.sync();
-      if (c.mesh.userData.lightBar) {
-        c.mesh.userData.lightBar.material.color.setHex(
-          Math.floor(performance.now() / 300) % 2 ? 0xff2222 : 0x2266ff);
-      }
-      if (d < 3.2) { c.speed = 0; }
-    }
-    if (this.heli) {
-      this.heli.x += (px - this.heli.x) * dt * 0.5;
-      this.heli.z += (pz - this.heli.z) * dt * 0.5;
-      this.heli.mesh.position.set(this.heli.x, 46 + Math.sin(performance.now() * 0.001) * 2, this.heli.z);
-      this.heli.rotor.rotation.y += dt * 22;
-    }
-  }
-  bountyText() { return this.bounty > 0 ? 'Bounty ' + fmtMoney(this.bounty) : ''; }
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  G.heliAngle = (G.heliAngle || 0) + dt * 0.25;
+  G.heli.position.set(px + Math.cos(G.heliAngle) * 26, 42, pz + Math.sin(G.heliAngle) * 26);
+  G.heli.userData.rotor.rotation.y += dt * 22;
+  G.heli.lookAt(px, 0, pz);
+  if (G.wanted < 4) { G.scene.remove(G.heli); G.heli = null; }
 }

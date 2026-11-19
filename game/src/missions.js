@@ -1,139 +1,127 @@
-// Missions: Vera's story chains for Ryan and Ian, the shared vault finale,
-// stranger side quests and three treasure riddle chains.
-import { fmtMoney } from './rng.js';
-
-export const RYAN_CHAIN = [
-  { id: 'r1', name: 'First Fare', chain: 'ryan', pay: 350,
-    brief: 'Vera needs a cab driver for one shift. Pick up the fare at the pier and drop them at the casino.',
-    steps: [{ type: 'goto', x: -380, z: 330, label: 'Pick up the fare at Sunset Pier', radius: 10 },
-            { type: 'goto', x: 60, z: -40, label: 'Drop the fare at Marina Royale', radius: 10 }] },
-  { id: 'r2', name: 'Against the Clock', chain: 'ryan', pay: 600,
-    brief: 'A parcel has to cross the city before the ferry leaves. Drive fast, stay clean.',
-    time: 150,
-    steps: [{ type: 'goto', x: -300, z: 285, label: 'Collect the parcel at The Brass Anchor', radius: 8 },
-            { type: 'goto', x: 60, z: -400, label: 'Deliver to Solmar Airfield', radius: 12 }] },
-  { id: 'r3', name: 'Quiet Shadow', chain: 'ryan', pay: 900,
-    brief: 'Tail the courier through Coral Row. Stay close but unseen — Focus helps. Do not get spotted.',
-    steps: [{ type: 'tail', x: 0, z: 0, label: 'Tail the courier without being seen', radius: 26, hold: 25 }] },
-  { id: 'r4', name: 'Repo Man', chain: 'ryan', pay: 1400,
-    brief: 'A Gullwing GT is parked at Harbor Motors, unpaid. Take it — the slim jim is in your pocket.',
-    steps: [{ type: 'steal', x: 120, z: 60, label: 'Steal the Gullwing GT', radius: 8 },
-            { type: 'goto', x: -300, z: 285, label: 'Bring it back to The Brass Anchor', radius: 12, needCar: true }] },
-  { id: 'r5', name: 'The Getaway', chain: 'ryan', pay: 2200,
-    brief: 'A job went loud at the docks. Grab the bag and lose the police before you reach the safehouse.',
-    steps: [{ type: 'goto', x: 0, z: -360, label: 'Grab the bag at North Docks', radius: 10 },
-            { type: 'escape', x: -20, z: 152, label: 'Lose the police, then reach the safehouse', radius: 12 }] },
-  { id: 'r6', name: 'Bay Run', chain: 'ryan', pay: 3400,
-    brief: 'Boat chase across the bay. Follow the smuggler\'s wake to Tern Isle and bring the cargo home.',
-    steps: [{ type: 'goto', x: -280, z: 380, label: 'Take the boat at the ferry terminal', radius: 10 },
-            { type: 'goto', x: -120, z: 560, label: 'Chase the wake to Tern Isle', radius: 14 }] },
+// Missions. Vera, the fixer at The Brass Anchor bar, hands out the story
+// jobs one at a time, in order. Ryan has six, Ian has six, and the finale
+// unlocks when both chains are done. Each mission pays more than the last.
+import * as THREE from 'three';
+import { PLACES, AIRCRAFT, PROPERTIES, clamp, dist2 } from './tuning.js';
+export const RYAN_MISSIONS = [
+  { name: 'First Fare', brief: 'Vera needs a taxi driver for the morning rush. Pick up the fare at the pier and drop them at the casino.', pay: 150, timed: 0 },
+  { name: 'Hot Delivery', brief: 'A parcel for the docks, and the clock is running. Get it to North Docks before the timer ends.', pay: 300, timed: 120 },
+  { name: 'Quiet Tail', brief: 'Follow the mark from Coral Row without being seen. Use Focus to slow things down when it gets tight.', pay: 500, timed: 0 },
+  { name: 'Repo Run', brief: 'A car in Sunset Fields has missed its payments. Take it quietly and bring it to the dealer.', pay: 800, timed: 0 },
+  { name: 'The Getaway', brief: 'A job went loud at the pool hall. Drive fast, lose the police, and get to the safehouse.', pay: 1200, timed: 0 },
+  { name: 'Bay Chase', brief: 'A boat is running for the open water. Take the skiff from the pier and run it down across the bay.', pay: 1800, timed: 0 },
 ];
-export const IAN_CHAIN = [
-  { id: 'i1', name: 'Eyes on the Prize', chain: 'ian', pay: 400,
-    brief: 'Photograph the casino vault door and the guard rotation. The phone camera does the work.',
-    steps: [{ type: 'photo', x: 60, z: -40, label: 'Photograph Marina Royale', radius: 12 }] },
-  { id: 'i2', name: 'Case the Joint', chain: 'ian', pay: 750,
-    brief: 'Scout the shop on Coral Row: find the back entrance and learn the safe code.',
-    steps: [{ type: 'goto', x: 40, z: 110, label: 'Scout Tide and Thread', radius: 8 },
-            { type: 'goto', x: 130, z: -60, label: 'Note the patrol route at Bay Precinct', radius: 10 }] },
-  { id: 'i3', name: 'Three Drops', chain: 'ian', pay: 1100,
-    brief: 'Three packages, three corners of the city. No questions, no stops.',
-    steps: [{ type: 'goto', x: -300, z: 285, label: 'Drop one at The Brass Anchor', radius: 8 },
-            { type: 'goto', x: 300, z: 240, label: 'Drop two at Sunset Fields', radius: 10 },
-            { type: 'goto', x: -330, z: -300, label: 'Drop three at Gull Point', radius: 10 }] },
-  { id: 'i4', name: 'The Decoy', chain: 'ian', pay: 1800,
-    brief: 'Draw the police away from the docks. Get three stars, then lose them — clean.',
-    steps: [{ type: 'wanted', x: 0, z: -360, label: 'Get the police chasing you at North Docks', radius: 20 },
-            { type: 'escape', x: 300, z: 240, label: 'Lose them and reach Sunset Fields', radius: 12 }] },
-  { id: 'i5', name: 'Dark Windows', chain: 'ian', pay: 2600,
-    brief: 'Disable the cameras at Gull and Gun so a later job goes unseen.',
-    steps: [{ type: 'disable', x: -60, z: 90, label: 'Disable the cameras at Gull and Gun', radius: 8, hold: 6 }] },
-  { id: 'i6', name: 'Break the Cordon', chain: 'ian', pay: 4200,
-    brief: 'Ryan is boxed in by a police cordon at the precinct. Get him out.',
-    steps: [{ type: 'goto', x: 130, z: -60, label: 'Reach Ryan at Bay Precinct', radius: 10 },
-            { type: 'goto', x: -20, z: 152, label: 'Bring Ryan home to the safehouse', radius: 12 }] },
+export const IAN_MISSIONS = [
+  { name: 'Eyes on the Prize', brief: 'Photograph the casino vault door and the guard rotation. The phone camera is your best friend.', pay: 200, timed: 0 },
+  { name: 'Scout the Shop', brief: 'Case Bay Mart for a future job: find the back entrance and learn the safe code.', pay: 350, timed: 0 },
+  { name: 'Drop Points', brief: 'Three packages, three corners of the city, no questions asked. Do not get followed.', pay: 600, timed: 180 },
+  { name: 'Decoy Drive', brief: 'Draw the police away from Coral Row while Ryan works. Lose them at Gull Point.', pay: 900, timed: 0 },
+  { name: 'Dark Cameras', brief: 'Disable the cameras around the casino service yard so the crew can move unseen.', pay: 1400, timed: 0 },
+  { name: 'The Rescue', brief: 'Ryan is boxed in by a police cordon at the docks. Break through and get him out.', pay: 2000, timed: 0 },
 ];
-export const STRANGERS = [
-  { id: 's1', name: 'Lost Tourist', x: -280, z: 380, reward: 250, text: 'A tourist lost their map. Walk them to the lighthouse viewpoint.' },
-  { id: 's2', name: 'Lucky Rod', x: -380, z: 330, reward: 300, text: 'A fisherman lost his lucky rod off the pier. Fish it out near the pier.' },
-  { id: 's3', name: 'Street Musician', x: 0, z: 0, reward: 200, text: 'A busker needs an audience. Play three songs near the plaza.' },
-  { id: 's4', name: 'Retired Sailor', x: -300, z: 285, reward: 400, text: 'An old sailor wants one last look at Tern Isle from the ferry.' },
-  { id: 's5', name: 'Runaway Bride', x: 300, z: 240, reward: 500, text: 'A bride ran from her wedding. Drive her to the airfield, fast.' },
-  { id: 's6', name: 'Birdwatcher', x: 300, z: -280, reward: 350, text: 'A birdwatcher needs a photo of the night heron in the mangroves.' },
-  { id: 's7', name: 'Night Nurse', x: -90, z: -20, reward: 300, text: 'A nurse missed her bus. Give her a lift to the hospital.' },
-  { id: 's8', name: 'Young Fan', x: 60, z: -40, reward: 450, text: 'A boy wants a photo with the lookalike at the casino doors.' },
-];
-export const TREASURES = [
-  { id: 't1', name: 'The Gull\'s Cache', reward: 2500,
-    clues: ['Where the light turns over the cliffs, look below the white tower.',
-            'The pier that points at the sunset keeps a box under its third post.',
-            'Dig where the sand meets the boardwalk at Palm Quay.'] },
-  { id: 't2', name: 'The Smuggler\'s Tin', reward: 4000,
-    clues: ['Crates sleep in rows where the cranes stand tall.',
-            'The airboat shed hides what the tide forgot.',
-            'Under the last container by the truck yard, the tin waits.'] },
-  { id: 't3', name: 'The Captain\'s Chest', reward: 6500,
-    clues: ['A cottage on a small isle keeps a captain\'s log.',
-            'The ferry bell rings twice for the honest and once for the thief.',
-            'Beneath the viewpoint bench on Tern Isle, the chest is buried.'] },
-];
-export class MissionEngine {
-  constructor() {
-    this.active = null;
-    this.stepIndex = 0;
-    this.stepTimer = 0;
-    this.timeLeft = 0;
-    this.completed = { ryan: [], ian: [] };
-    this.finaleDone = false;
-    this.tailSeen = 0;
-    this.log = [];
+export function finalePayout() {
+  const topPlane = Math.max(...AIRCRAFT.map((a) => a.price));
+  const topHome = Math.max(...PROPERTIES.map((p) => p.price));
+  return topPlane + topHome;
+}
+export const FINALE = {
+  name: 'The Marina Royale Vault',
+  brief: 'Both chains done. Ryan and Ian rob the casino vault together, switch between them mid-job, and escape by boat and car. The payout is the most expensive aircraft plus the most expensive property in the city.',
+};
+export function startMission(G, who) {
+  const list = who === 'ryan' ? RYAN_MISSIONS : IAN_MISSIONS;
+  const idx = G.missions[who];
+  if (idx >= list.length) return null;
+  const def = list[idx];
+  const m = {
+    who, index: idx, def, stage: 0, timer: def.timed || 0,
+    target: missionTarget(G, who, idx, 0), done: false, label: def.name,
+  };
+  G.missions.active = m;
+  if (!G.missionBeam) {
+    const geo = new THREE.CylinderGeometry(2.5, 2.5, 60, 12, 1, true);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xFFD94D, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
+    G.missionBeam = new THREE.Mesh(geo, mat);
+    G.scene.add(G.missionBeam);
   }
-  nextFor(chain) {
-    const list = chain === 'ryan' ? RYAN_CHAIN : IAN_CHAIN;
-    const done = this.completed[chain];
-    return list.find((m) => !done.includes(m.id)) || null;
+  G.missionBeam.visible = true;
+  G.missionBeam.position.set(m.target.x, 30, m.target.z);
+  return m;
+}
+function missionTarget(G, who, idx, stage) {
+  const P = PLACES;
+  const spots = {
+    ryan: [[P.pier, P.casino], [P.bar, P.policeStation], [P.casino, P.airport], [P.stables, P.dealer], [P.poolhall, P.safehouse], [P.pier, P.ferry]],
+    ian: [[P.casino, P.casino], [P.mart, P.mart], [P.bar, P.docks, P.lighthouse], [P.casino, P.lighthouse], [P.casino, P.casino], [P.policeStation, P.safehouse]],
+  };
+  const chain = spots[who][idx] || [P.bar, P.casino];
+  const place = chain[Math.min(stage, chain.length - 1)];
+  return { x: place.x, z: place.z, r: 8, label: place.name };
+}
+export function updateMissions(G, dt) {
+  const m = G.missions.active;
+  if (!m) return;
+  if (m.timer > 0) {
+    m.timer -= dt;
+    if (m.timer <= 0) { failMission(G, 'Out of time.'); return; }
   }
-  start(mission) {
-    this.active = mission;
-    this.stepIndex = 0;
-    this.stepTimer = 0;
-    this.timeLeft = mission.time || 0;
-    this.tailSeen = 0;
-    this.log.push('Started: ' + mission.name);
-    return mission;
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  const t = m.target;
+  const d = dist2(px, pz, t.x, t.z);
+  m.distance = d;
+  if (G.missionBeam) G.missionBeam.position.set(t.x, 30, t.z);
+  if (d < t.r) {
+    m.stage++;
+    if (m.stage >= missionStages(G, m)) { completeMission(G); return; }
+    m.target = missionTarget(G, m.who, m.index, m.stage);
+    G.hud.toast(`Next: ${m.target.label}`);
+    G.sound.chime();
   }
-  currentStep() {
-    if (!this.active) return null;
-    return this.active.steps[this.stepIndex] || null;
+  // The tailing job: stay close but not too close.
+  if (m.who === 'ryan' && m.index === 2) {
+    if (d < 4) { failMission(G, 'Spotted. The mark made you.'); }
   }
-  advance() {
-    this.stepIndex++;
-    this.stepTimer = 0;
-    if (this.stepIndex >= this.active.steps.length) return true;
-    return false;
+}
+function missionStages(G, m) {
+  if (m.who === 'ian' && m.index === 2) return 3;
+  return 2;
+}
+function failMission(G, why) {
+  const m = G.missions.active;
+  G.missions.active = null;
+  if (G.missionBeam) G.missionBeam.visible = false;
+  G.hud.toast(`Mission failed: ${why}`);
+  G.hud.showBriefing('Mission failed', `${why} Talk to Vera at The Brass Anchor to try again.`);
+}
+function completeMission(G) {
+  const m = G.missions.active;
+  G.missions.active = null;
+  if (G.missionBeam) G.missionBeam.visible = false;
+  let pay = m.def.pay;
+  if (m.who === 'ryan' && m.index === 5) pay = m.def.pay;
+  G.money += pay;
+  G.stats.earned += pay;
+  G.stats.best = Math.max(G.stats.best, G.money);
+  G.missions[m.who]++;
+  G.bond = clamp(G.bond + 4, 0, 100);
+  G.sound.sting(); G.sound.chime();
+  G.hud.showBriefing('Mission complete', `${m.def.name} paid $${pay}. Vera has more work at The Brass Anchor.`);
+  if (G.missions.ryan >= 6 && G.missions.ian >= 6 && !G.missions.finaleDone) {
+    G.hud.showBriefing('The big one', 'Both chains are done. The Marina Royale vault heist is ready — talk to Vera to start it.');
   }
-  complete() {
-    const m = this.active;
-    this.completed[m.chain].push(m.id);
-    this.log.push('Completed: ' + m.name + ' +' + fmtMoney(m.pay));
-    this.active = null;
-    this.stepIndex = 0;
-    return m;
-  }
-  fail(reason) {
-    const m = this.active;
-    this.log.push('Failed: ' + (m ? m.name : '') + ' — ' + reason);
-    this.active = null;
-    this.stepIndex = 0;
-    return m;
-  }
-  finaleReady() {
-    return this.completed.ryan.length >= RYAN_CHAIN.length &&
-      this.completed.ian.length >= IAN_CHAIN.length;
-  }
-  finalePayout(planes, properties) {
-    const bestPlane = planes.reduce((a, b) => (b.price > a.price ? b : a), planes[0]);
-    const bestProp = properties.reduce((a, b) => (b.price > a.price ? b : a), properties[0]);
-    return { payout: bestPlane.price + bestProp.price, plane: bestPlane, property: bestProp };
-  }
+  saveProgress(G);
+}
+function saveProgress(G) {
+  try { G.saveGame(); } catch (e) {}
+}
+export function startFinale(G) {
+  if (G.missions.ryan < 6 || G.missions.ian < 6 || G.missions.finaleDone) return null;
+  const pay = finalePayout();
+  const m = {
+    who: 'both', index: 99, def: { name: FINALE.name, brief: FINALE.brief, pay, timed: 0 },
+    stage: 0, timer: 0, target: { x: PLACES.casino.x, z: PLACES.casino.z, r: 8, label: 'Marina Royale vault' },
+    done: false, label: FINALE.name, finale: true,
+  };
+  G.missions.active = m;
+  return m;
 }

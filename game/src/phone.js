@@ -1,143 +1,128 @@
-// The phone: contacts, map, BayRide, SnapShot social, car scanner,
-// wildlife camera, radio and settings — all as a DOM overlay.
-export class Phone {
-  constructor(game) {
-    this.game = game;
-    this.open = false;
-    this.app = 'home';
-    this.followers = 128;
-    this.likes = 0;
-    this.posts = [];
-    this.photosTaken = 0;
-    this.el = document.getElementById('phone');
-    this.screen = document.getElementById('phone-screen');
-    this.buildHome();
+// The phone: map, camera, BayRide, radio, social, car scanner, transport
+// timetables and contacts. Opens with P. Everything on it is playable.
+export function createPhone(G) {
+  G.phone = { open: false, app: 'home', likes: 0, followers: 12, photos: [] };
+  const panel = document.createElement('div');
+  panel.id = 'phone';
+  panel.style.display = 'none';
+  document.getElementById('hud').appendChild(panel);
+  G.phoneEl = panel;
+  renderPhone(G);
+}
+const APPS = ['Map', 'Camera', 'BayRide', 'Radio', 'Social', 'Scanner', 'Travel', 'Contacts'];
+export function togglePhone(G) {
+  G.phone.open = !G.phone.open;
+  G.phoneEl.style.display = G.phone.open ? 'block' : 'none';
+  if (G.phone.open) renderPhone(G);
+  return G.phone.open;
+}
+export function renderPhone(G) {
+  const el = G.phoneEl;
+  const app = G.phone.app;
+  if (app !== 'home' && app !== 'Map') { phoneApps(G); return; }
+  let body = '';
+  if (app === 'home') {
+    body = '<div class="phone-apps">' + APPS.map((a) => `<button data-app="${a}">${a}</button>`).join('') + '</div>';
+  } else if (app === 'Map') {
+    body = '<h3>Solmar Bay Map</h3><p>Tap a district to fast-travel by bus ($15).</p>' + Object.keys(PLACES).slice(0, 8).map((k) => `<button data-place="${k}">${PLACES[k].name}</button>`).join('');
   }
-  buildHome() {
-    if (!this.screen) return;
-    this.screen.innerHTML = '';
-    const title = document.createElement('div');
-    title.className = 'phone-title';
-    title.textContent = 'Solmar Phone';
-    this.screen.appendChild(title);
-    const apps = [
-      ['map', 'Map'], ['contacts', 'Contacts'], ['bayride', 'BayRide'],
-      ['snapshot', 'SnapShot'], ['scanner', 'Scanner'], ['camera', 'Camera'],
-      ['radio', 'Radio'], ['jobs', 'Jobs'], ['settings', 'Settings'],
-    ];
-    const grid = document.createElement('div');
-    grid.className = 'phone-grid';
-    for (const [id, label] of apps) {
-      const b = document.createElement('button');
-      b.className = 'phone-app';
-      b.textContent = label;
-      b.addEventListener('click', () => this.openApp(id));
-      grid.appendChild(b);
-    }
-    this.screen.appendChild(grid);
-    const back = document.createElement('button');
-    back.className = 'phone-app phone-back';
-    back.textContent = 'Close (P)';
-    back.addEventListener('click', () => this.close());
-    this.screen.appendChild(back);
+  el.innerHTML = `<div class="phone-top">Solmar Phone — ${app}</div>${body}<button data-app="home">‹ Home</button>`;
+  el.querySelectorAll('[data-app]').forEach((b) => {
+    b.addEventListener('click', () => { G.phone.app = b.dataset.app; renderPhone(G); });
+  });
+  el.querySelectorAll('[data-place]').forEach((b) => {
+    b.addEventListener('click', () => { travelTo(G, b.dataset.place); renderPhone(G); });
+  });
+}
+import { PLACES, dist2 } from './tuning.js';
+export function phoneApps(G) {
+  const app = G.phone.app;
+  const el = G.phoneEl;
+  if (app === 'Camera') {
+    el.innerHTML = `<div class="phone-top">Camera</div><p>Point at an animal and tap Snap. Logged animals fill the field guide.</p><button id="snap">Snap photo</button><p>Logged: ${Object.keys(G.systems.wildlife.log).length} species</p><button data-app="home">‹ Home</button>`;
+    el.querySelector('#snap').addEventListener('click', () => snapPhoto(G));
+  } else if (app === 'BayRide') {
+    el.innerHTML = `<div class="phone-top">BayRide</div><p>A car comes to you. Fare $18.</p><button id="ride">Call a BayRide</button><button data-app="home">‹ Home</button>`;
+    el.querySelector('#ride').addEventListener('click', () => callRide(G));
+  } else if (app === 'Radio') {
+    el.innerHTML = `<div class="phone-top">Radio</div><p>Station: ${['Bay FM', 'Quay Talk', 'Tide Podcasts'][G.radioStation]}</p><button id="next">Next station</button><button data-app="home">‹ Home</button>`;
+    el.querySelector('#next').addEventListener('click', () => { G.radioStation = (G.radioStation + 1) % 3; G.radioOn = true; renderPhone(G); });
+  } else if (app === 'Social') {
+    el.innerHTML = `<div class="phone-top">SnapBay</div><p>Followers: ${G.systems.social.followers} · Likes: ${G.systems.social.likes}</p><button id="post">Post a photo</button><button data-app="home">‹ Home</button>`;
+    el.querySelector('#post').addEventListener('click', () => postPhoto(G));
+  } else if (app === 'Scanner') {
+    const near = G.vehicles.filter((v) => dist2(v.x, v.z, G.player.mesh.position.x, G.player.mesh.position.z) < 60);
+    let list = near.map((v) => `<p>${v.kind === 'boat' ? 'Boat' : 'Car'} — worth $${v.value}</p>`).join('');
+    if (!list) list = '<p>No cars nearby.</p>';
+    el.innerHTML = `<div class="phone-top">Car Scanner</div>${list}<button data-app="home">‹ Home</button>`;
+  } else if (app === 'Travel') {
+    el.innerHTML = `<div class="phone-top">Travel</div><p>Bus $15 · Ferry to Tern Isle $10, runs on the hour.</p><button id="ferry">Take the ferry</button><button data-app="home">‹ Home</button>`;
+    el.querySelector('#ferry').addEventListener('click', () => {
+      if (G.money < 10) { G.hud.toast('Ferry fare is $10.'); return; }
+      G.money -= 10;
+      G.player.mesh.position.set(0, 0, 455);
+      G.hud.toast('Ferry dropped you on Tern Isle.');
+      renderPhone(G);
+    });
+  } else if (app === 'Contacts') {
+    el.innerHTML = `<div class="phone-top">Contacts</div><p>Vera — fixer at The Brass Anchor</p><p>Partner — ${G.activeChar === 'ryan' ? 'Ian' : 'Ryan'}</p><button id="call-vera">Call Vera</button><button id="swap">Switch character</button><button data-app="home">‹ Home</button>`;
+    el.querySelector('#call-vera').addEventListener('click', () => {
+      G.hud.toast('Vera: work is at the bar. Come see me in person.');
+    });
+    el.querySelector('#swap').addEventListener('click', () => {
+      G.switchChar();
+      renderPhone(G);
+    });
   }
-  setOpen(open) {
-    this.open = open;
-    if (this.el) this.el.style.display = open ? 'block' : 'none';
-    if (open) this.buildHome();
+  el.querySelectorAll('[data-app]').forEach((b) => {
+    b.addEventListener('click', () => { G.phone.app = b.dataset.app; renderPhone(G); });
+  });
+}
+export function snapPhoto(G) {
+  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
+  let best = null, bestD = 40;
+  for (const a of G.animals) {
+    const d = Math.hypot(a.x - px, a.z - pz);
+    if (d < bestD) { bestD = d; best = a; }
   }
-  close() { this.setOpen(false); }
-  openApp(id) {
-    this.app = id;
-    const g = this.game;
-    const s = this.screen;
-    if (!s) return;
-    s.innerHTML = '';
-    const head = document.createElement('div');
-    head.className = 'phone-title';
-    s.appendChild(head);
-    const body = document.createElement('div');
-    body.className = 'phone-body';
-    s.appendChild(body);
-    const back = document.createElement('button');
-    back.className = 'phone-app phone-back';
-    back.textContent = 'Back';
-    back.addEventListener('click', () => this.buildHome());
-    s.appendChild(back);
-    const line = (t) => { const p = document.createElement('p'); p.textContent = t; body.appendChild(p); return p; };
-    const btn = (label, fn) => {
-      const b = document.createElement('button');
-      b.className = 'phone-app'; b.textContent = label;
-      b.addEventListener('click', fn); body.appendChild(b); return b;
-    };
-    if (id === 'map') {
-      head.textContent = 'Map — Solmar Bay';
-      line('Districts: Palm Quay, Coral Row, Sunset Fields, Gull Point, Mangrove Flats, North Docks, Tern Isle.');
-      line('Press M for the big map.');
-    } else if (id === 'contacts') {
-      head.textContent = 'Contacts';
-      line('Vera — The Brass Anchor fixer. She has the story jobs.');
-      line('Ryan / Ian — your partner. Switch with C.');
-      btn('Call Vera — next job', () => { g.startNextMission(); this.close(); });
-      btn('Switch character', () => { g.switchHero(); this.close(); });
-    } else if (id === 'bayride') {
-      head.textContent = 'BayRide';
-      line('A ride-share car comes to you. Fare $25.');
-      btn('Call a BayRide car', () => {
-        if (g.economy.spend(25)) { g.spawnRideCar(); line('Car on its way!'); }
-        else line('Not enough money.');
-      });
-      line('Bus: Coral Row ↔ Palm Quay every 20 min. Ferry: Palm Quay ↔ Tern Isle hourly.');
-    } else if (id === 'snapshot') {
-      head.textContent = 'SnapShot';
-      line('Followers: ' + this.followers + ' — Likes: ' + this.likes);
-      btn('Post a photo', () => {
-        this.photosTaken++;
-        const gained = 3 + Math.floor(Math.random() * 18);
-        this.followers += gained; this.likes += gained * 2;
-        this.posts.push('Photo ' + this.photosTaken);
-        g.economy.earn(15, 'SnapShot post');
-        line('Posted! +' + gained + ' followers, +$15 sponsor tip.');
-      });
-      for (const p of this.posts.slice(-4)) line('• ' + p);
-    } else if (id === 'scanner') {
-      head.textContent = 'Car Scanner';
-      const near = g.traffic ? g.traffic.nearestParked(g.hero.x, g.hero.z, 60) : null;
-      if (near) line('Nearby car value: $' + (1800 + Math.floor(Math.random() * 9000)) + ' — worth a look.');
-      else line('No valuable cars nearby. Try the dealer district.');
-      btn('Scan again', () => this.openApp('scanner'));
-    } else if (id === 'camera') {
-      head.textContent = 'Wildlife Camera';
-      const near = g.animals ? g.animals.nearest(g.hero.x, g.hero.z, 40) : null;
-      if (near) {
-        line('Subject: ' + near.kind + ' — ' + (near.studied ? 'already logged' : 'new!'));
-        btn('Log this animal', () => {
-          if (!near.studied) {
-            near.studied = true;
-            const info = g.logAnimal(near.kind);
-            line('Logged: ' + info.name + ' +' + info.points + ' pts, +$' + info.points * 2);
-          } else line('Already in your field guide.');
-        });
-      } else line('No animal in frame. Try the swamp, the fields or the beach.');
-      line('Field guide: ' + g.fieldGuide.size + ' of 9 species logged.');
-    } else if (id === 'radio') {
-      head.textContent = 'Radio';
-      for (const st of g.radioStations) {
-        btn(st.name + ' — ' + st.desc, () => { g.setRadio(st.id); line('Now playing ' + st.name); });
-      }
-      btn('Radio off', () => { g.setRadio(null); });
-    } else if (id === 'jobs') {
-      head.textContent = 'Side Jobs';
-      btn('Taxi shift — $120', () => { g.economy.startTaxi(); this.close(); });
-      btn('Delivery run — $160', () => { g.economy.startDelivery(); this.close(); });
-      btn('Go fishing', () => { g.economy.startFishing(); this.close(); });
-      btn('Busk on the plaza', () => { g.economy.startBusking(); this.close(); });
-    } else if (id === 'settings') {
-      head.textContent = 'Settings';
-      line('Sound: ' + (g.sound.muted ? 'muted' : 'on'));
-      btn(g.sound.muted ? 'Unmute' : 'Mute', () => { g.toggleMute(); this.openApp('settings'); });
-      btn('Save game', () => { g.saveGame(); line('Saved.'); });
-      line('Switch character: C — Pause: Esc');
-    }
+  if (best) {
+    const first = !G.systems.wildlife.log[best.kind];
+    G.systems.wildlife.log[best.kind] = (G.systems.wildlife.log[best.kind] || 0) + 1;
+    G.phone.photos.push(best.kind);
+    G.hud.toast(first ? `New in field guide: ${best.kind}!` : `Photographed a ${best.kind}.`);
+    G.sound.chime();
+  } else {
+    G.hud.toast('Nothing wild in frame. Get closer to an animal.');
   }
+  renderPhone(G);
+}
+export function callRide(G) {
+  if (G.money < 18) { G.hud.toast('BayRide costs $18.'); return { ok: false, why: 'Need $18.' }; }
+  G.money -= 18;
+  const v = G.spawnVehicle('taxi', G.player.mesh.position.x + 30, G.player.mesh.position.z + 10, Math.PI, 0xF1C40F);
+  v.route = null; v.parked = false;
+  G.systems.transport.rides++;
+  G.hud.toast('BayRide is on its way. Hop in with F.');
+  renderPhone(G);
+  return { ok: true };
+}
+export function postPhoto(G) {
+  const gain = 3 + Math.floor(Math.random() * 9);
+  G.systems.social.followers += gain;
+  G.systems.social.likes += 5 + Math.floor(Math.random() * 20);
+  G.phone.likes = G.systems.social.likes;
+  G.hud.toast(`Posted! +${gain} followers on SnapBay.`);
+  G.sound.chime();
+  renderPhone(G);
+}
+export function travelTo(G, placeKey) {
+  const p = PLACES[placeKey];
+  if (!p) return false;
+  if (G.money < 15) { G.hud.toast('Bus fare is $15.'); return false; }
+  G.money -= 15;
+  G.player.mesh.position.set(p.x + 4, 0, p.z + 4);
+  if (G.player.vehicle) { exitCar(G); }
+  G.systems.transport.rides++;
+  G.hud.toast(`Bus dropped you at ${p.name}.`);
+  return true;
 }

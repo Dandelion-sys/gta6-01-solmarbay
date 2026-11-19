@@ -1,57 +1,40 @@
-// Keyboard and mouse input: one action per key, edge-triggered presses.
-import { KEYS } from './config.js';
-export class Input {
-  constructor() {
-    this.down = new Set();
-    this.pressed = new Set();
-    this.mouseX = 0; this.mouseY = 0;
-    this.dragging = false; this.dragDX = 0; this.dragDY = 0;
-    this.lastMouseDown = 0;
-    this._onKeyDown = (e) => this.keyDown(e);
-    this._onKeyUp = (e) => this.keyUp(e);
-    this._onMouseDown = (e) => this.mouseDown(e);
-    this._onMouseUp = (e) => this.mouseUp(e);
-    this._onMouseMove = (e) => this.mouseMove(e);
-    this._onBlur = () => { this.down.clear(); this.pressed.clear(); };
-  }
-  attach() {
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-    window.addEventListener('mousemove', this._onMouseMove);
-    window.addEventListener('blur', this._onBlur);
-  }
-  keyDown(e) {
+// Keyboard and mouse input. One action per key; E is the single context
+// key and the HUD always says what E will do right now.
+export const KEYMAP = {
+  forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD',
+  run: 'ShiftLeft', interact: 'KeyE', enterCar: 'KeyF',
+  punch: 'KeyQ', aim: 'MouseRight', shoot: 'MouseLeft',
+  focus: 'KeyC', phone: 'KeyP', map: 'KeyM', pause: 'Escape',
+  switchChar: 'KeyT', radio: 'KeyR', horn: 'KeyH', jump: 'Space',
+};
+export function createInput() {
+  return {
+    keys: new Set(), pressed: new Set(), mouseDX: 0, mouseDY: 0,
+    mouseDown: false, mouseRight: false, dragging: false,
+    down(code) { return this.keys.has(code); },
+    hit(code) { return this.pressed.has(code); },
+    clearPressed() { this.pressed.clear(); this.mouseDX = 0; this.mouseDY = 0; },
+  };
+}
+export function attachInput(input, element) {
+  window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(e.code)) e.preventDefault();
-    this.down.add(e.code);
-    this.pressed.add(e.code);
-  }
-  keyUp(e) { this.down.delete(e.code); }
-  mouseDown(e) {
-    this.dragging = true; this.mouseX = e.clientX; this.mouseY = e.clientY;
-    this.lastMouseDown = performance.now();
-    this.pressed.add('Mouse0');
-  }
-  mouseUp(e) { this.dragging = false; this.down.delete('Mouse0'); }
-  mouseMove(e) {
-    if (this.dragging) {
-      this.dragDX += e.clientX - this.mouseX;
-      this.dragDY += e.clientY - this.mouseY;
-    }
-    this.mouseX = e.clientX; this.mouseY = e.clientY;
-  }
-  is(code) { return this.down.has(code); }
-  was(code) { return this.pressed.has(code); }
-  axis() {
-    let x = 0, y = 0;
-    if (this.is(KEYS.forward) || this.is('ArrowUp')) y += 1;
-    if (this.is(KEYS.back) || this.is('ArrowDown')) y -= 1;
-    if (this.is(KEYS.left) || this.is('ArrowLeft')) x -= 1;
-    if (this.is(KEYS.right) || this.is('ArrowRight')) x += 1;
-    return { x, y };
-  }
-  consumeDrag() { const d = { x: this.dragDX, y: this.dragDY }; this.dragDX = 0; this.dragDY = 0; return d; }
-  endFrame() { this.pressed.clear(); }
+    input.keys.add(e.code); input.pressed.add(e.code);
+    if (['Space', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => input.keys.delete(e.code));
+  window.addEventListener('blur', () => input.keys.clear());
+  element.addEventListener('mousedown', (e) => {
+    input.mouseDown = true; input.dragging = true;
+    if (e.button === 2) input.mouseRight = true;
+    if (e.button === 0) input.pressed.add('MouseLeft');
+  });
+  window.addEventListener('mouseup', (e) => {
+    input.mouseDown = false; input.dragging = false;
+    if (e.button === 2) input.mouseRight = false;
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (input.dragging) { input.mouseDX += e.movementX; input.mouseDY += e.movementY; }
+  });
+  element.addEventListener('contextmenu', (e) => e.preventDefault());
 }

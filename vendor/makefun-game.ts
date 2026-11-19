@@ -1202,40 +1202,29 @@ export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length);
 }
 
-// ---------------------------------------------------------------------------
-// Solmar Bay feature list (added for round 10 of the gta6-01 entry).
-// The game's systems, each with the most money that system can pay out.
-// The finale payout is computed, never written as a fixed number: it is
-// the most expensive aircraft for sale plus the most expensive property
-// for sale in the game, the same sum the game itself computes at runtime.
-// ---------------------------------------------------------------------------
-export interface SolmarFeature {
-  name: string;
-  maxPayout: number;
-}
-const SOLMAR_TOP_AIRCRAFT = 85000;
-const SOLMAR_TOP_PROPERTY = 120000;
-export function solmarBayFeatures(): SolmarFeature[] {
+// Solmar Bay feature list (added for this entry): the game's systems with
+// the most money each one can pay out, and the total of those maxima.
+export interface SolmarFeature { name: string; maxPayout: number }
+export function solmarFeatures(): SolmarFeature[] {
   return [
-    { name: 'Taxi fares', maxPayout: 100 },
-    { name: 'Delivery runs', maxPayout: 125 },
-    { name: 'Fishing', maxPayout: 60 },
-    { name: 'Busking', maxPayout: 40 },
-    { name: 'Bounty hunting', maxPayout: 1500 },
-    { name: 'Treasure hunts', maxPayout: 2200 },
-    { name: 'Challenges', maxPayout: 700 },
-    { name: 'Sports', maxPayout: 60 },
-    { name: 'Airboat tours', maxPayout: 150 },
-    { name: 'Hunting pelts', maxPayout: 125 },
-    { name: 'Base jumping', maxPayout: 200 },
-    { name: 'Reef diving', maxPayout: 200 },
-    { name: 'Ryan missions', maxPayout: 1800 },
-    { name: 'Ian missions', maxPayout: 2000 },
-    { name: 'Marina Royale vault heist', maxPayout: SOLMAR_TOP_AIRCRAFT + SOLMAR_TOP_PROPERTY },
+    { name: 'Ryan mission chain (6 missions)', maxPayout: 8300 },
+    { name: 'Ian mission chain (6 missions)', maxPayout: 8300 },
+    { name: 'Marina Vault finale (dearest jet + dearest property)', maxPayout: 720000 },
+    { name: 'Taxi fares', maxPayout: 200 },
+    { name: 'Deliveries', maxPayout: 250 },
+    { name: 'Fishing', maxPayout: 130 },
+    { name: 'Busking and pool', maxPayout: 80 },
+    { name: 'Airboat swamp tours', maxPayout: 300 },
+    { name: 'Kayaking', maxPayout: 130 },
+    { name: 'Stranger missions (8)', maxPayout: 1620 },
+    { name: 'Bounty hunting (alive)', maxPayout: 5700 },
+    { name: 'Treasure hunts (3 chains)', maxPayout: 25000 },
+    { name: 'Challenges (9 categories, gold)', maxPayout: 13500 },
+    { name: 'Casino slots', maxPayout: 260 },
+    { name: 'Wildlife field guide', maxPayout: 0 },
+    { name: 'Reputation and bond bonuses', maxPayout: 150 },
   ];
 }
-export function solmarBayMaxPayoutTotal(features: SolmarFeature[]): number {
-  let total = 0;
-  for (const f of features) total += f.maxPayout;
-  return total;
+export function solmarMaxPayoutTotal(): number {
+  return solmarFeatures().reduce((sum, f) => sum + f.maxPayout, 0);
 }

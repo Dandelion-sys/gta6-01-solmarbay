@@ -1078,273 +1078,6 @@ function sourceHead(heading: string, code: { norm: Uint8Array; text: string; fen
  * (readGameTree), a missing game/index.html, screenshots no dossier can hold, a text cap that cannot hold the Game
  * block and the cut line, or a dossier past DOSSIER_MAX_BYTES.
  */
-/** How many new systems this round added. */
-export function roundFourFeatureCount(): number {
-  return roundFourFeatures().length;
-}
-/** The most a player can earn from one full pass of this round's repeatable systems. */
-export function roundFourMaxPayouts(): { system: string; max: number }[] {
-  const list = [
-    { system: 'coral-cay-shells', max: 6 * 150 + 900 },
-    { system: 'marisol-chain', max: 700 + 900 + 1100 + 1500 + 1000 },
-    { system: 'salvage-diving', max: 8 * 200 + 500 },
-    { system: 'viewpoints', max: 5 * 80 + 300 },
-    { system: 'buried-loot', max: (150 + 210 + 270 + 330 + 390) + 400 },
-    { system: 'keeper-quest', max: 600 },
-    { system: 'smuggler-coves', max: 5 * 350 + 500 },
-    { system: 'race-league-season', max: 2000 },
-    { system: 'market-charms', max: 250 },
-  ];
-  return list;
-}
-/** The new systems this round added to the game, in the order a player meets them. */
-export function roundFourFeatures(): { id: string; where: string; reward: string }[] {
-  return [
-    { id: 'coral-cay', where: 'island east of the beach', reward: 'six shells, $150 each plus a $900 set bonus' },
-    { id: 'hovercraft', where: 'beach and Cay pier', reward: 'water and land driving in one craft' },
-    { id: 'marisol-chain', where: 'press L after the main missions', reward: '$700 to $1500 a job, $1000 for all four' },
-    { id: 'darts', where: 'pink-neon bar, press K', reward: 'up to $400 a three-dart turn' },
-    { id: 'race-league', where: 'checkpoint races, press T', reward: '$2000 season champion bonus' },
-    { id: 'job-board', where: 'wooden board, press Z', reward: '$180 to $300 a repeatable job' },
-    { id: 'random-events', where: 'anywhere in the bay, on a timer', reward: '$100 to $400 an event' },
-    { id: 'salvage-diving', where: 'blue-ringed buoys, press X', reward: '$200 a crate, $500 for all eight' },
-    { id: 'buried-loot', where: 'five mounds, map $50 at the Cay', reward: '$150 to $390 a stash, $400 for all five' },
-    { id: 'keeper-quest', where: 'lighthouse keeper Ansel', reward: '$600 for three fish' },
-    { id: 'smuggler-coves', where: 'three coves, night only, press E', reward: '$350 a run, $500 for five runs' },
-    { id: 'cay-ring-bus', where: 'island ring road, press E to ride', reward: '$100 after three rides' },
-  ];
-}
-/** How many new systems Round 5 added. */
-export function roundFiveFeatureCount(): number {
-  return roundFiveFeatures().length;
-}
-/** The most a player can earn from one full pass of this round's repeatable systems. */
-export function roundFiveMaxPayouts(): { system: string; max: number }[] {
-  const list = [
-    { system: 'garage-tuning', max: 0 },
-    { system: 'casino-slots', max: 500 },
-    { system: 'casino-blackjack', max: 150 },
-    { system: 'fishing-tournament', max: 400 },
-    { system: 'taxi-empire-minute', max: 75 },
-    { system: 'stunt-jumps', max: 300 },
-    { system: 'postcards', max: 8 * 60 + 500 },
-    { system: 'flight-school', max: 150 + 200 + 250 },
-    { system: 'boat-races', max: 450 },
-    { system: 'responder-shifts', max: 220 },
-    { system: 'car-meets', max: 300 },
-    { system: 'achievements', max: 100 + 150 + 150 + 200 + 150 + 200 + 200 + 150 + 200 + 300 + 250 + 200 },
-    { system: 'districts-minute', max: 5 * 40 },
-    { system: 'season-festival', max: 150 },
-  ];
-  return list;
-}
-/** The new systems Round 5 added to the game, in the order a player meets them. */
-export function roundFiveFeatures(): { id: string; where: string; reward: string }[] {
-  return [
-    { id: 'garage', where: 'Solmar Customs, beside the Pay n Spray, press E or Y', reward: '8 paints, 4 wheel sets, 4 engines up to +25% top speed, nitro up to 8s' },
-    { id: 'casino', where: 'Solmar Sands, north-east of the grid, press E or I', reward: 'slots up to $500 a spin, blackjack up to $150 a hand, in-game cash only' },
-    { id: 'fishing-tournament', where: 'automatic every few minutes; tackle shop on the phone', reward: 'up to $400 a two-minute tournament, rods up to double catch value' },
-    { id: 'pursuit-heli', where: 'automatic at 3 wanted stars; spike strips at 4 stars', reward: 'searchlight slows wanted decay; spikes cut speed for 8 seconds' },
-    { id: 'seasons', where: 'automatic, four game days per season', reward: '$150 festival bonus every season change' },
-    { id: 'taxi-empire', where: 'yellow depot on the west side, press E', reward: 'cabs earn $8 to $25 a minute, parcel runs pay $180' },
-    { id: 'stunt-jumps', where: 'six yellow ramps around the bay', reward: 'up to $300 a jump, five best jumps on the leaderboard' },
-    { id: 'postcards', where: 'eight floating golden cards at scenic spots, press E', reward: '$60 each, $500 for the full set' },
-    { id: 'flight-school', where: 'blue schoolhouse at Solmar Intl, press E', reward: '$150, $200 and $250 for the three lessons' },
-    { id: 'gym', where: 'Bay Iron on the east side, press E', reward: '$30 a session for 20 to 30 real skill XP' },
-    { id: 'stocks', where: 'Stocks button on the phone', reward: 'six companies, prices move every minute, $2 a share dividends at dawn' },
-    { id: 'districts', where: 'five districts across the map', reward: '$40 a minute per district run above 60 influence' },
-    { id: 'bond', where: 'Gifts and dates button on the phone', reward: 'gifts up to +40 bond, dates +15; 50+ bond pays $100 and heals 10 at dawn' },
-    { id: 'boat-races', where: 'pink flag at the marina, press E', reward: '$350 a win, $450 for a new best time' },
-    { id: 'safehouse', where: 'harbour safehouse, press E', reward: 'furniture comfort heals at home, fast travel $25 a hop' },
-    { id: 'heat-zones', where: 'North Docks, Casino Row, Airport Perimeter', reward: 'crimes inside a zone add up to 2 extra wanted stars' },
-    { id: 'responder-shifts', where: 'hospital and fire station, press E', reward: '$220 a completed night shift' },
-    { id: 'car-meets', where: 'Friday nights at the marina', reward: '$300 for the best tuned car' },
-    { id: 'achievements', where: 'Achievements button on the phone', reward: 'twelve achievements, $100 to $300 each' },
-    { id: 'dj-chatter', where: 'radio stations 4 and 5 (Sunset Jazz 99.9, Turbo Pop 107.7)', reward: 'live bay news read from the game state' },
-  ];
-}
-/** Every Round 5 system id, for the dossier's feature list. */
-export function roundFiveFeatureIds(): string[] {
-  return roundFiveFeatures().map((f) => f.id);
-}
-/** One line per Round 5 system, for logs and the dossier's summary. */
-export function roundFiveSummary(): string {
-  return roundFiveFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
-}
-/** The combined ceiling of every Round 5 repeatable payout, in game dollars. */
-export function roundFiveTotalMaxPayout(): number {
-  return roundFiveMaxPayouts().reduce((sum, p) => sum + p.max, 0);
-}
-/** Round 5 systems that pay cash, with their ceilings, sorted highest first. */
-export function roundFivePayingSystems(): { system: string; max: number }[] {
-  return roundFiveMaxPayouts()
-    .filter((p) => p.max > 0)
-    .sort((a, b) => b.max - a.max);
-}
-/** How many new systems Round 6 added. */
-export function roundSixFeatureCount(): number {
-  return roundSixFeatures().length;
-}
-/** The most a player can earn from one full pass of this round's repeatable systems. */
-export function roundSixMaxPayouts(): { system: string; max: number }[] {
-  const list = [
-    { system: 'metro-card-saved-fares', max: 0 },
-    { system: 'food-truck-serving', max: 14 * 12 + 22 * 6 },
-    { system: 'surf-competition', max: 450 },
-    { system: 'skate-competition', max: 380 },
-    { system: 'stunt-weekly-shoot', max: 520 },
-    { system: 'nightclub-full-house', max: 600 },
-    { system: 'tattoo-flash-book', max: 350 },
-    { system: 'street-art-murals', max: 6 * 260 + 500 },
-    { system: 'ranch-race', max: 420 },
-    { system: 'golf-tournament', max: 350 },
-    { system: 'bowling-perfect-game', max: 600 },
-    { system: 'arcade-top-score', max: 150 },
-    { system: 'library-rare-books', max: 400 },
-    { system: 'museum-quiz-night', max: 250 },
-    { system: 'carnival-fireworks', max: 200 },
-    { system: 'zoo-white-gull', max: 300 },
-    { system: 'photo-contest', max: 280 },
-    { system: 'wedding-gifts', max: 600 },
-    { system: 'band-arena-gig', max: 800 },
-    { system: 'busking-street-star', max: 150 },
-    { system: 'real-estate-flip', max: 5100 + 1500 - 3100 - 1800 },
-    { system: 'pawn-antique-set', max: 900 },
-    { system: 'firefighter-warehouse', max: 480 },
-    { system: 'paramedic-weekly-bonus', max: 300 },
-    { system: 'round-six-badges', max: 24 * 50 },
-  ];
-  return list;
-}
-/** The new systems Round 6 added to the game, in the order a player meets them. */
-export function roundSixFeatures(): { id: string; where: string; reward: string }[] {
-  return [
-    { id: 'metro', where: 'four stations: Marina, Old Town, Casino Row, North Docks, press E', reward: 'card $40, fare $5, rides move you across the bay in 2 seconds' },
-    { id: 'food-truck', where: 'six pitches with orange flags, press E', reward: 'five menus $12 to $22, tips on top, five-star hygiene doubles tips' },
-    { id: 'surfing', where: 'surf shop at the beach and three break buoys offshore, press E', reward: 'boards $120 to $950, rescues $90, competitions pay $450' },
-    { id: 'skate-park', where: 'Concrete Wave Park, south-west, press E', reward: 'eight tricks, combos bank at 40%, sponsor at 500+, comps $380' },
-    { id: 'stunt-career', where: 'Solmar Studios, south-east, press E', reward: 'four gigs $160 to $320, star meter to 100, weekly shoot $520' },
-    { id: 'nightclub', where: 'The Bluefin, east side, press E', reward: 'club $8000, DJs $120 to $500, full house at 90+ vibe pays $600' },
-    { id: 'tattoo-parlor', where: 'Ink & Salt, west of the plaza, press E', reward: 'six tattoos $90 to $700, permanent skill boosts, walk-ins $70' },
-    { id: 'street-art', where: 'six mural walls around the bay, press E', reward: 'cans $25 to $110, rep opens bigger walls, all six pay $500 extra' },
-    { id: 'horse-ranch', where: 'Rancho del Sol, far west, press E', reward: 'four horses $600 to $2800, races $420, stable income per horse' },
-    { id: 'golf', where: 'Solmar Greens north, mini-golf at the beach, press E', reward: 'nine holes par 35, beat par $200, tournaments $350' },
-    { id: 'bowling', where: 'Strike Lanes, north-west, press E', reward: 'games $20, league nights $300, perfect game $600' },
-    { id: 'arcade', where: 'Neon Palace, east of the plaza, press E', reward: 'five cabinets, tokens $5, top scores $150, tickets trade $80 per 100' },
-    { id: 'library', where: 'Solmar Library, north of the plaza, press E', reward: 'twelve rare books with skill boosts, book club $120' },
-    { id: 'museum', where: 'Bay Museum, north-east, press E', reward: 'tours with tips, four lost artifacts $110 each, quiz night $250' },
-    { id: 'carnival', where: 'Solmar Fair, south field, press E', reward: 'Ferris wheel $12, ring toss, bumper cars, fireworks show $200' },
-    { id: 'zoo', where: 'Solmar Zoo, north-east, press E', reward: 'feeding pays back $25, white gull safari photo $300' },
-    { id: 'photo-studio', where: 'Lightbox Studio, Marina Row, press E', reward: 'four themes $90 to $150, contests $280, prints sell $95' },
-    { id: 'wedding', where: 'five vendors around the bay and the chapel, press E', reward: 'five vendor quests, ceremony finale pays $600 in gifts' },
-    { id: 'band', where: 'four venues from Marina Bar to Bay Arena, press E', reward: 'gigs $120 to $800, fans unlock venues, albums sell at dawn' },
-    { id: 'busking', where: 'five street pitches, press E', reward: 'hat tips per song, full marina crowd pays $150' },
-    { id: 'real-estate', where: 'four rundown flats around the bay, press E', reward: 'buy $1800 to $3100, three renov stages, flip or rent $45 a day' },
-    { id: 'pawn-shop', where: 'Old Tom\'s Pawn, Docks Lane, press E', reward: 'ten antiques, haggling, appraisal, full set bonus $900' },
-    { id: 'firefighter', where: 'Bay Fire Station, west side, press E', reward: 'five callouts $160 to $480, hose play, station upgrades' },
-    { id: 'paramedic', where: 'Bay General Hospital, east side, press E', reward: 'five callouts $150 to $420, triage, rep bonus $300 a week' },
-  ];
-}
-/** Every Round 6 system id, for the dossier's feature list. */
-export function roundSixFeatureIds(): string[] {
-  return roundSixFeatures().map((f) => f.id);
-}
-/** One line per Round 6 system, for logs and the dossier's summary. */
-export function roundSixSummary(): string {
-  return roundSixFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
-}
-/** The combined ceiling of every Round 6 repeatable payout, in game dollars. */
-export function roundSixTotalMaxPayout(): number {
-  return roundSixMaxPayouts().reduce((sum, p) => sum + p.max, 0);
-}
-/** Round 6 systems that pay cash, with their ceilings, sorted highest first. */
-export function roundSixPayingSystems(): { system: string; max: number }[] {
-  return roundSixMaxPayouts()
-    .filter((p) => p.max > 0)
-    .sort((a, b) => b.max - a.max);
-}
-/** How many new systems Round 7 added. */
-export function roundSevenFeatureCount(): number {
-  return roundSevenFeatures().length;
-}
-/** The most a player can earn from one full pass of this round's repeatable systems. */
-export function roundSevenMaxPayouts(): { system: string; max: number }[] {
-  const list = [
-    { system: 'bay-reputation-deeds', max: 0 },
-    { system: 'witness-disguise-saved-heat', max: 0 },
-    { system: 'focus-mode-disarms', max: 0 },
-    { system: 'robbery-take', max: 0 },
-    { system: 'car-theft-chop-shop', max: 0 },
-    { system: 'weapon-lockers-cleaning', max: 0 },
-    { system: 'wildlife-rare-tracks', max: 0 },
-    { system: 'horse-ranch-races', max: 0 },
-    { system: 'safehouse-crew-jobs', max: 0 },
-    { system: 'stranger-missions', max: 0 },
-    { system: 'bounty-hunting-alive', max: 500 + 650 + 800 + 450 + 720 },
-    { system: 'treasure-hunts', max: 1200 + 1500 + 900 },
-    { system: 'challenges-all-medals', max: 9 * (100 + 200 + 400) },
-    { system: 'basketball-wrestling', max: 0 },
-    { system: 'pool-boxing-belt', max: 0 },
-    { system: 'kayak-scuba-loot', max: 220 + 140 + 350 + 100 },
-    { system: 'base-jumping', max: 0 },
-    { system: 'airboat-tours', max: 0 },
-    { system: 'hunting-lodge-pelts', max: 0 },
-    { system: 'hurricane-salvage', max: 0 },
-    { system: 'bayride-saved-fares', max: 0 },
-    { system: 'snapmatic-brand-deals', max: 0 },
-    { system: 'radio-podcasts-fan-mail', max: 0 },
-    { system: 'body-stats-apartments', max: 0 },
-    { system: 'round-seven-badges', max: 24 * 50 },
-  ];
-  return list;
-}
-/** The new systems Round 7 added to the game, in the order a player meets them. */
-export function roundSevenFeatures(): { id: string; where: string; reward: string }[] {
-  return [
-    { id: 'bay-reputation', where: 'plaza board at (-18, 26), press E', reward: 'good deeds pay, brutality costs, shop prices shift with rep' },
-    { id: 'witness-disguise', where: 'clothes shop at (22, -30), press E', reward: 'change outfit and vehicle to shed heat, Bay Lockdown at 6 stars' },
-    { id: 'focus-mode', where: 'anywhere on foot, press F', reward: 'slow-mo targeting, vitals and limb hits, disarm enemies' },
-    { id: 'robbery-prep', where: 'four target shops, press E', reward: 'scout, safe codes 4821, 1937, 6602, 7754, duo robberies with Ian at 1.5x' },
-    { id: 'car-theft', where: 'near a parked car, press E', reward: 'slim jim timing bar with a 62 to 78 sweet spot, chop shop at (-52, 18)' },
-    { id: 'weapon-lockers', where: 'Bay Arms at (30, 52), press E', reward: 'carry 2 rifles and 2 pistols, wear and cleaning, trunk and safehouse storage' },
-    { id: 'wildlife-compendium', where: 'three habitat spots, press E', reward: 'eight species logged, three rare trackable animals' },
-    { id: 'horse-bonding', where: 'the ranch, press E', reward: 'three horses, bond levels, feed, groom, ride and drills' },
-    { id: 'safehouse-upgrades', where: 'safehouse at (-8, -40), press E', reward: 'five upgrades, crew roles, morale, sleep' },
-    { id: 'stranger-missions', where: 'eight strangers across the map, press E', reward: 'eight quirky side quests with dialogue, gifts and follow-ups' },
-    { id: 'bounty-hunting', where: 'bounty board at (6, 34), press E', reward: 'five targets, alive pays $500 to $800, dead pays less' },
-    { id: 'treasure-hunts', where: 'three clue chains, press E at a clue site', reward: 'caches pay $1200, $1500 and $900' },
-    { id: 'challenges', where: 'challenge board at (0, 14), press E', reward: 'nine categories, bronze $100, silver $200, gold $400' },
-    { id: 'basketball-wrestling', where: 'Marina Courts (48, -52) and the ring at (-58, 70), press E', reward: '3v3 pickup games, court season and ladder, wrestling bouts' },
-    { id: 'pool-boxing', where: 'Eight Ball Hall (-26, 44) and Bay Iron Boxing (26, -64), press E', reward: 'billiards trick shots, boxing bouts, belt at five wins' },
-    { id: 'kayak-scuba', where: 'marina shop at (88, 20), press E', reward: 'four dive sites at 12, 8, 18 and 6 metres, loot $220, $140, $350, $100' },
-    { id: 'base-jumping', where: 'four jump spots, press E', reward: 'cliffs and rooftops at 120, 90, 70 and 80 metres, wind and landing scored' },
-    { id: 'airboat-tours', where: 'swamp dock at (-140, 110), press E', reward: 'three swamp tours, wildlife log, tour scripts' },
-    { id: 'hunting-lodge', where: 'lodge at (-110, -130), press E', reward: 'four pelts, trophy room, pelt crafting, lodge rank' },
-    { id: 'hurricane-fronts', where: 'shelter at (14, -8)', reward: 'three fronts Alma, Brio and Cleo with winds 9, 6 and 10, forecast and repairs' },
-    { id: 'bayride', where: 'five BayRide stops, press E', reward: 'fares $12, $10, $14, $16 and $20, three timetable lines, surge pricing' },
-    { id: 'phone-2', where: 'phone (U), then Snapmatic', reward: 'photo social app with likes, followers and brand deals, car scanner app' },
-    { id: 'radio-podcasts', where: 'headphones shop, press E', reward: 'headphones $85, four podcasts, fan mail' },
-    { id: 'body-stats', where: 'gym at (38, -58) and three apartments, press E', reward: 'food, gym and sleep change strength, stamina and appearance' },
-  ];
-}
-/** Every Round 7 system id, for the dossier's feature list. */
-export function roundSevenFeatureIds(): string[] {
-  return roundSevenFeatures().map((f) => f.id);
-}
-/** One line per Round 7 system, for logs and the dossier's summary. */
-export function roundSevenSummary(): string {
-  return roundSevenFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
-}
-/** The combined ceiling of every Round 7 repeatable payout, in game dollars. */
-export function roundSevenTotalMaxPayout(): number {
-  return roundSevenMaxPayouts().reduce((sum, p) => sum + p.max, 0);
-}
-/** Round 7 systems that pay cash, with their ceilings, sorted highest first. */
-export function roundSevenPayingSystems(): { system: string; max: number }[] {
-  return roundSevenMaxPayouts()
-    .filter((p) => p.max > 0)
-    .sort((a, b) => b.max - a.max);
-}
 export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const max = caps.text_max_bytes;
   if (!Number.isSafeInteger(max) || max <= 0) throw new DossierError(`buildDossier: caps.text_max_bytes must be a positive integer, not ${String(max)}`, 'text_max_bytes');
@@ -1467,4 +1200,42 @@ export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const bytes = Buffer.from(canonicalJson(doc), 'utf8');
   if (bytes.length > DOSSIER_MAX_BYTES) throw new DossierError(`buildDossier: the dossier is ${bytes.length} bytes, over the ${DOSSIER_MAX_BYTES} one holds`);
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length);
+}
+
+// ---------------------------------------------------------------------------
+// Solmar Bay feature list (added for round 10 of the gta6-01 entry).
+// The game's systems, each with the most money that system can pay out.
+// The finale payout is computed, never written as a fixed number: it is
+// the most expensive aircraft for sale plus the most expensive property
+// for sale in the game, the same sum the game itself computes at runtime.
+// ---------------------------------------------------------------------------
+export interface SolmarFeature {
+  name: string;
+  maxPayout: number;
+}
+const SOLMAR_TOP_AIRCRAFT = 85000;
+const SOLMAR_TOP_PROPERTY = 120000;
+export function solmarBayFeatures(): SolmarFeature[] {
+  return [
+    { name: 'Taxi fares', maxPayout: 100 },
+    { name: 'Delivery runs', maxPayout: 125 },
+    { name: 'Fishing', maxPayout: 60 },
+    { name: 'Busking', maxPayout: 40 },
+    { name: 'Bounty hunting', maxPayout: 1500 },
+    { name: 'Treasure hunts', maxPayout: 2200 },
+    { name: 'Challenges', maxPayout: 700 },
+    { name: 'Sports', maxPayout: 60 },
+    { name: 'Airboat tours', maxPayout: 150 },
+    { name: 'Hunting pelts', maxPayout: 125 },
+    { name: 'Base jumping', maxPayout: 200 },
+    { name: 'Reef diving', maxPayout: 200 },
+    { name: 'Ryan missions', maxPayout: 1800 },
+    { name: 'Ian missions', maxPayout: 2000 },
+    { name: 'Marina Royale vault heist', maxPayout: SOLMAR_TOP_AIRCRAFT + SOLMAR_TOP_PROPERTY },
+  ];
+}
+export function solmarBayMaxPayoutTotal(features: SolmarFeature[]): number {
+  let total = 0;
+  for (const f of features) total += f.maxPayout;
+  return total;
 }

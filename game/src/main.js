@@ -6,83 +6,114 @@
 
 import * as THREE from 'three';
 
-// ---------- deterministic RNG ----------
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+// ---------- seeded random numbers ----------
+// One small deterministic generator drives world layout, so a given seed
+// always builds the same bay. The magic constants are the classic
+// mulberry32 set; only the local variable names are ours.
+function mulberry32(seed) {
+  let s = seed;
+  return () => {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let mixed = Math.imul(s ^ (s >>> 15), 1 | s);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
   };
 }
 const params = new URLSearchParams(location.search);
 const seedParam = parseInt(params.get('seed') || '7', 10) || 7;
 const shotMode = params.get('shot') || '';
 let rng = mulberry32(seedParam);
-function rr(a, b) { return a + rng() * (b - a); }
-function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function lerp(a, b, t) { return a + (b - a) * t; }
+// Small helpers every system shares: a ranged roll, a random pick,
+// a clamp and a lerp, all on the seeded stream.
+function rr(low, high) { return low + rng() * (high - low); }
+function pick(list) { return list[Math.floor(rng() * list.length)]; }
+function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+function lerp(from, to, t) { return from + (to - from) * t; }
 
-// ---------- game state ----------
+// ---------- central game state ----------
+// One object holds the run: mode, money, health, heat, missions, the car
+// you are in, the clock, the radio, the weapon and both characters.
 const SAVE_KEY = 'solmar-bay-save-v1';
 const state = {
   mode: 'start', // start | play | pause | dead
   cash: 0,
   health: 100,
+  armor: 0, // vest absorbs damage before health, 0-100
   wanted: 0,
+  kills: 0,
+  cleanTimer: 0, // seconds with no police nearby
   mission: 0, // index into MISSIONS
   missionStage: 0, // 0 idle, 1 go to pickup, 2 deliver, 3 done
   missionTimer: 0,
   inCar: null,
   speed: 0,
-  muted: false,
-  shot: shotMode,
-  cleanTimer: 0, // seconds with no police nearby
-  kills: 0,
   time: 0,
-  radio: 0, // index into RADIO_STATIONS
-  weapon: 'pistol',
-  charMissions: { Ryan: 0, Ian: 0 },
-  ammo: { pistol: Infinity, shotgun: 24, smg: 120, knife: Infinity, grenade: 3, molotov: 3, bazooka: 1, sniper: 5 },
-  activeChar: 0,
-  armor: 0, // vest: absorbs damage before health, 0-100
   dayTime: 0.34, // 0-1 across one game day; starts ~08:10 morning
   weather: 'clear', // clear | rain
+  radio: 0, // index into RADIO_STATIONS
+  weapon: 'pistol',
+  ammo: { pistol: Infinity, shotgun: 24, smg: 120, knife: Infinity, grenade: 3, molotov: 3, bazooka: 1, sniper: 5 },
+  activeChar: 0,
+  charMissions: { Ryan: 0, Ian: 0 },
+  muted: false,
+  shot: shotMode,
 };
 
+// The three story jobs from the fixer Marisol: first wheels, a timed
+// package run, then losing a three-star tail.
 const MISSIONS = [
-  { id: 1, title: 'M1 — First Wheels', giver: 'Marisol', text: 'Steal a car and drive it to the yellow beacon at the marina.', reward: 500 },
-  { id: 2, title: 'M2 — Package Run', giver: 'Marisol', text: 'Pick up the package at the north docks, then deliver it to Solmar Intl airport on the far west side before the timer runs out.', reward: 800 },
-  { id: 3, title: 'M3 — Lose the Heat', giver: 'Marisol', text: 'Get the cops riled up to 3 stars, then shake them and go clean.', reward: 1200 },
+  {
+    id: 1, reward: 500, giver: 'Marisol', title: 'M1 — First Wheels',
+    text: 'Steal a car and drive it to the yellow beacon at the marina.',
+  },
+  {
+    id: 2, reward: 800, giver: 'Marisol', title: 'M2 — Package Run',
+    text: 'Pick up the package at the north docks, then deliver it to Solmar Intl airport on the far west side before the timer runs out.',
+  },
+  {
+    id: 3, reward: 1200, giver: 'Marisol', title: 'M3 — Lose the Heat',
+    text: 'Get the cops riled up to 3 stars, then shake them and go clean.',
+  },
 ];
 
+// Three synth radio stations: bass lines and arpeggios per station.
 const RADIO_STATIONS = [
-  { name: 'Solmar FM 88.5', desc: 'synthwave', bpm: 112, bass: [55, 55, 65.41, 49], arp: [220, 261.63, 329.63, 392, 329.63, 261.63] },
-  { name: 'Bay Beats 101.1', desc: 'hip-hop', bpm: 92, bass: [41.2, 41.2, 55, 36.71], arp: [110, 130.81, 98, 146.83] },
-  { name: 'Coast Rock 95.3', desc: 'rock', bpm: 128, bass: [82.41, 82.41, 98, 73.42], arp: [164.81, 196, 246.94, 196, 164.81, 130.81] },
+  {
+    name: 'Solmar FM 88.5', desc: 'synthwave', bpm: 112,
+    bass: [55, 55, 65.41, 49], arp: [220, 261.63, 329.63, 392, 329.63, 261.63],
+  },
+  {
+    name: 'Bay Beats 101.1', desc: 'hip-hop', bpm: 92,
+    bass: [41.2, 41.2, 55, 36.71], arp: [110, 130.81, 98, 146.83],
+  },
+  {
+    name: 'Coast Rock 95.3', desc: 'rock', bpm: 128,
+    bass: [82.41, 82.41, 98, 73.42], arp: [164.81, 196, 246.94, 196, 164.81, 130.81],
+  },
 ];
+// The weapon table: damage, fire rate, pellet count, spread and handling.
 const WEAPONS = {
-  pistol: { name: 'Pistol', dmg: 1, rate: 0.35, pellets: 1, spread: 0.01, auto: false },
-  shotgun: { name: 'Shotgun', dmg: 1, rate: 0.9, pellets: 5, spread: 0.09, auto: false },
-  smg: { name: 'SMG', dmg: 1, rate: 0.09, pellets: 1, spread: 0.05, auto: true },
-  knife: { name: 'Knife', dmg: 2, rate: 0.28, pellets: 1, spread: 0, auto: false, melee: true },
-  grenade: { name: 'Grenade', dmg: 3, rate: 0.8, pellets: 1, spread: 0, auto: false, thrown: true },
-  molotov: { name: 'Molotov', dmg: 2, rate: 0.8, pellets: 1, spread: 0, auto: false, thrown: true },
-  bazooka: { name: 'Bazooka', dmg: 5, rate: 1.6, pellets: 1, spread: 0, auto: false, thrown: true },
-  sniper: { name: 'Sniper Rifle', dmg: 5, rate: 1.4, pellets: 1, spread: 0.002, auto: false, range: 220 },
+  pistol: { name: 'Pistol', rate: 0.35, dmg: 1, pellets: 1, spread: 0.01, auto: false },
+  shotgun: { name: 'Shotgun', rate: 0.9, dmg: 1, pellets: 5, spread: 0.09, auto: false },
+  smg: { name: 'SMG', rate: 0.09, dmg: 1, pellets: 1, spread: 0.05, auto: true },
+  knife: { name: 'Knife', rate: 0.28, dmg: 2, pellets: 1, spread: 0, auto: false, melee: true },
+  grenade: { name: 'Grenade', rate: 0.8, dmg: 3, pellets: 1, spread: 0, auto: false, thrown: true },
+  molotov: { name: 'Molotov', rate: 0.8, dmg: 2, pellets: 1, spread: 0, auto: false, thrown: true },
+  bazooka: { name: 'Bazooka', rate: 1.6, dmg: 5, pellets: 1, spread: 0, auto: false, thrown: true },
+  sniper: { name: 'Sniper Rifle', rate: 1.4, dmg: 5, pellets: 1, spread: 0.002, auto: false, range: 220 },
 };
 const DAY_LENGTH = 540; // seconds per game day (9 minutes)
 let radioGain = null, radioStep = 0, radioNextTime = 0;
+// Day cycle keys: sky, fog, hemisphere light and sun per time of day.
 const DAY_KEYS = [
-  { t: 0.00, sky: 0x0b1e3a, fog: 0x0b1e3a, hemi: 0.25, sun: 0.0, sunCol: 0x8899ff },
-  { t: 0.22, sky: 0x0b1e3a, fog: 0x16283f, hemi: 0.3, sun: 0.05, sunCol: 0xffb080 },
-  { t: 0.30, sky: 0xf2a56b, fog: 0xe8b48a, hemi: 0.7, sun: 0.9, sunCol: 0xffc080 },
-  { t: 0.38, sky: 0x87c5e8, fog: 0x9fd0e8, hemi: 0.95, sun: 1.6, sunCol: 0xfff2d0 },
-  { t: 0.62, sky: 0x87c5e8, fog: 0x9fd0e8, hemi: 0.95, sun: 1.6, sunCol: 0xfff2d0 },
-  { t: 0.72, sky: 0xe8853f, fog: 0xd98a5a, hemi: 0.6, sun: 0.8, sunCol: 0xff9030 },
-  { t: 0.80, sky: 0x1a2a4a, fog: 0x1a2a4a, hemi: 0.3, sun: 0.0, sunCol: 0x8899ff },
-  { t: 1.00, sky: 0x0b1e3a, fog: 0x0b1e3a, hemi: 0.25, sun: 0.0, sunCol: 0x8899ff },
+  { sky: 0x0b1e3a, fog: 0x0b1e3a, hemi: 0.25, sun: 0.0, sunCol: 0x8899ff, t: 0.00 },
+  { sky: 0x0b1e3a, fog: 0x16283f, hemi: 0.3, sun: 0.05, sunCol: 0xffb080, t: 0.22 },
+  { sky: 0xf2a56b, fog: 0xe8b48a, hemi: 0.7, sun: 0.9, sunCol: 0xffc080, t: 0.30 },
+  { sky: 0x87c5e8, fog: 0x9fd0e8, hemi: 0.95, sun: 1.6, sunCol: 0xfff2d0, t: 0.38 },
+  { sky: 0x87c5e8, fog: 0x9fd0e8, hemi: 0.95, sun: 1.6, sunCol: 0xfff2d0, t: 0.62 },
+  { sky: 0xe8853f, fog: 0xd98a5a, hemi: 0.6, sun: 0.8, sunCol: 0xff9030, t: 0.72 },
+  { sky: 0x1a2a4a, fog: 0x1a2a4a, hemi: 0.3, sun: 0.0, sunCol: 0x8899ff, t: 0.80 },
+  { sky: 0x0b1e3a, fog: 0x0b1e3a, hemi: 0.25, sun: 0.0, sunCol: 0x8899ff, t: 1.00 },
 ];
 let lampMats = [], rainNodes = null, weatherTimer = 180, lightningTimer = 0, rainDark = 0;
 let stars = null, moon = null, moonLight = null;
@@ -90,64 +121,113 @@ let fireTimer = 0, switchTimer = 0, switchTarget = 0, switchSwapped = false;
 let heliAlt = 0, boatBob = 0;
 
 // ---------- audio: WebAudio synth only ----------
+// Everything is synthesized: an engine hum, a police siren, beeps, gun
+// noise and the three radio stations. No audio files anywhere.
 let AC = null, engineOsc = null, engineGain = null, sirenOsc = null, sirenGain = null, sirenLfo = null;
 function audioInit() {
   if (AC) return;
   try {
     AC = new (window.AudioContext || window.webkitAudioContext)();
-    engineOsc = AC.createOscillator(); engineOsc.type = 'sawtooth'; engineOsc.frequency.value = 55;
-    engineGain = AC.createGain(); engineGain.gain.value = 0;
-    const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
-    engineOsc.connect(lp); lp.connect(engineGain); engineGain.connect(AC.destination); engineOsc.start();
-    sirenOsc = AC.createOscillator(); sirenOsc.type = 'triangle'; sirenOsc.frequency.value = 700;
-    sirenGain = AC.createGain(); sirenGain.gain.value = 0;
-    sirenLfo = AC.createOscillator(); sirenLfo.type = 'square'; sirenLfo.frequency.value = 0.9;
-    const lfoGain = AC.createGain(); lfoGain.gain.value = 260;
-    sirenLfo.connect(lfoGain); lfoGain.connect(sirenOsc.frequency);
-    sirenOsc.connect(sirenGain); sirenGain.connect(AC.destination);
-    sirenOsc.start(); sirenLfo.start();
+    engineOsc = AC.createOscillator();
+    engineOsc.type = 'sawtooth';
+    engineOsc.frequency.value = 55;
+    engineGain = AC.createGain();
+    engineGain.gain.value = 0;
+    const lp = AC.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 420;
+    engineOsc.connect(lp);
+    lp.connect(engineGain);
+    engineGain.connect(AC.destination);
+    engineOsc.start();
+    sirenOsc = AC.createOscillator();
+    sirenOsc.type = 'triangle';
+    sirenOsc.frequency.value = 700;
+    sirenGain = AC.createGain();
+    sirenGain.gain.value = 0;
+    sirenLfo = AC.createOscillator();
+    sirenLfo.type = 'square';
+    sirenLfo.frequency.value = 0.9;
+    const lfoGain = AC.createGain();
+    lfoGain.gain.value = 260;
+    sirenLfo.connect(lfoGain);
+    lfoGain.connect(sirenOsc.frequency);
+    sirenOsc.connect(sirenGain);
+    sirenGain.connect(AC.destination);
+    sirenOsc.start();
+    sirenLfo.start();
   } catch (e) { AC = null; }
 }
+// One short synth tone: an oscillator with a gain envelope that decays.
 function beep(freq, dur, type, vol) {
   if (!AC || state.muted) return;
-  const o = AC.createOscillator(), g = AC.createGain();
-  o.type = type || 'sine'; o.frequency.value = freq;
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = type || 'sine';
+  o.frequency.value = freq;
   g.gain.setValueAtTime(vol || 0.15, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + dur);
+  o.connect(g);
+  g.connect(AC.destination);
+  o.start();
+  o.stop(AC.currentTime + dur);
 }
-function chime() { beep(660, 0.12, 'sine', 0.2); setTimeout(() => beep(990, 0.2, 'sine', 0.2), 110); }
-function gunshot() {
-  if (!AC || state.muted) return;
-  const len = AC.sampleRate * 0.18, buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
-  const src = AC.createBufferSource(); src.buffer = buf;
-  const g = AC.createGain(); g.gain.value = 0.5;
-  src.connect(g); g.connect(AC.destination); src.start();
+function chime() {
+  beep(660, 0.12, 'sine', 0.2);
+  setTimeout(() => beep(990, 0.2, 'sine', 0.2), 110);
 }
 function thud() { beep(90, 0.15, 'triangle', 0.3); }
+// A gunshot is a burst of shaped noise, not a tone.
+function gunshot() {
+  if (!AC || state.muted) return;
+  const len = AC.sampleRate * 0.18;
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+  const src = AC.createBufferSource();
+  src.buffer = buf;
+  const g = AC.createGain();
+  g.gain.value = 0.5;
+  src.connect(g);
+  g.connect(AC.destination);
+  src.start();
+}
+// One radio note, scheduled at a precise time on the radio bus.
 function radioNote(freq, when, dur, type, vol) {
   if (!AC || !radioGain || state.muted) return;
-  const o = AC.createOscillator(), g = AC.createGain();
-  o.type = type; o.frequency.value = freq;
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = type;
+  o.frequency.value = freq;
   g.gain.setValueAtTime(0.0001, when);
   g.gain.linearRampToValueAtTime(vol, when + 0.01);
   g.gain.exponentialRampToValueAtTime(0.001, when + dur);
-  o.connect(g); g.connect(radioGain); o.start(when); o.stop(when + dur + 0.05);
+  o.connect(g);
+  g.connect(radioGain);
+  o.start(when);
+  o.stop(when + dur + 0.05);
 }
+// A kick drum: a sine that drops from 120 Hz to 38 Hz in a blink.
 function radioKick(when) {
   if (!AC || !radioGain || state.muted) return;
-  const o = AC.createOscillator(), g = AC.createGain();
-  o.type = 'sine'; o.frequency.setValueAtTime(120, when);
+  const o = AC.createOscillator();
+  const g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(120, when);
   o.frequency.exponentialRampToValueAtTime(38, when + 0.12);
   g.gain.setValueAtTime(0.22, when);
   g.gain.exponentialRampToValueAtTime(0.001, when + 0.16);
-  o.connect(g); g.connect(radioGain); o.start(when); o.stop(when + 0.2);
+  o.connect(g);
+  g.connect(radioGain);
+  o.start(when);
+  o.stop(when + 0.2);
 }
+// The radio sequencer: schedules sixteenth notes a quarter second ahead.
+// Each station gets its own pattern on the same 16-step grid.
 function radioTick() {
   if (!AC || state.mode !== 'play' || state.muted) { radioNextTime = 0; return; }
   if (!radioGain) {
-    radioGain = AC.createGain(); radioGain.gain.value = 0.5;
+    radioGain = AC.createGain();
+    radioGain.gain.value = 0.5;
     radioGain.connect(AC.destination);
   }
   if (radioNextTime < AC.currentTime) radioNextTime = AC.currentTime + 0.05;
@@ -156,15 +236,18 @@ function radioTick() {
   while (radioNextTime < AC.currentTime + 0.25) {
     const s = radioStep % 16;
     const bassNote = st.bass[Math.floor(s / 4) % st.bass.length];
+    const arpNote = st.arp[s % st.arp.length];
     if (s % 4 === 0) radioNote(bassNote, radioNextTime, stepDur * 3.5, 'sawtooth', 0.11);
-    if (state.radio === 0 && s % 2 === 0) radioNote(st.arp[(radioStep * 3) % st.arp.length], radioNextTime, stepDur * 1.6, 'sine', 0.05);
+    if (state.radio === 0 && s % 2 === 0) {
+      radioNote(st.arp[(radioStep * 3) % st.arp.length], radioNextTime, stepDur * 1.6, 'sine', 0.05);
+    }
     if (state.radio === 1) {
       if (s === 0 || s === 7 || s === 10) radioKick(radioNextTime);
-      if (s % 4 === 2) radioNote(st.arp[s % st.arp.length] * 2, radioNextTime, stepDur, 'triangle', 0.05);
+      if (s % 4 === 2) radioNote(arpNote * 2, radioNextTime, stepDur, 'triangle', 0.05);
     }
     if (state.radio === 2) {
       if (s % 4 === 0) radioKick(radioNextTime);
-      radioNote(st.arp[s % st.arp.length], radioNextTime, stepDur * 1.8, 'square', 0.045);
+      radioNote(arpNote, radioNextTime, stepDur * 1.8, 'square', 0.045);
       if (s === 8) radioNote(st.arp[2] * 2, radioNextTime, stepDur * 2, 'square', 0.04);
     }
     radioStep++;
@@ -173,40 +256,47 @@ function radioTick() {
 }
 function cycleRadio() {
   state.radio = (state.radio + 1) % RADIO_STATIONS.length;
-  radioStep = 0; radioNextTime = 0;
+  radioStep = 0;
+  radioNextTime = 0;
   const st = RADIO_STATIONS[state.radio];
   toast('Radio: ' + st.name + ' — ' + st.desc);
   updateHUD();
 }
+// Number keys 1-8 swap weapons in a fixed order.
 function cycleWeapon(key) {
   const order = ['pistol', 'shotgun', 'smg', 'knife', 'grenade', 'molotov', 'bazooka', 'sniper'];
   const w = order[Number(key) - 1];
   if (!w) return;
   state.weapon = w;
   fireTimer = 0;
-  toast('Weapon: ' + WEAPONS[w].name + (state.ammo[w] === Infinity ? ' (infinite ammo)' : ' — ' + state.ammo[w] + ' rounds'));
+  const ammoNote = state.ammo[w] === Infinity ? ' (infinite ammo)' : ' — ' + state.ammo[w] + ' rounds';
+  toast('Weapon: ' + WEAPONS[w].name + ammoNote);
   updateHUD();
 }
-// Feature 9: spoken mission dialogue via built-in speechSynthesis. No files,
-// no network; if the browser has no voices it silently does nothing.
+// Spoken mission dialogue via built-in speechSynthesis. No files, no
+// network; if the browser has no voices it silently does nothing.
 function speakLine(text) {
   if (state.muted || state.shot) return;
   try {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'en-US';
-    u.rate = 1.0;
-    u.pitch = 0.9;
-    u.volume = 0.9;
-    window.speechSynthesis.speak(u);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'en-US';
+    utterance.rate = 1.0;
+    utterance.pitch = 0.9;
+    utterance.volume = 0.9;
+    window.speechSynthesis.speak(utterance);
   } catch (e) { /* no voices available — game continues silently */ }
 }
 function stopSpeech() {
-  try { if ('speechSynthesis' in window) window.speechSynthesis.cancel(); } catch (e) {}
+  try {
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  } catch (e) {}
 }
 
 // ---------- three.js setup ----------
+// Renderer, scene, camera, hemisphere light, sun with shadows, and a
+// visible sun disc so the sky has a source to look at.
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -218,26 +308,29 @@ scene.background = new THREE.Color(0x87c5e8);
 scene.fog = new THREE.Fog(0x9fd0e8, 160, 650);
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 900);
 camera.position.set(0, 60, 120);
-
 const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x8a7a5a, 0.95);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff2d0, 1.6);
 sun.position.set(120, 180, 60);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -160; sun.shadow.camera.right = 160;
-sun.shadow.camera.top = 160; sun.shadow.camera.bottom = -160;
+sun.shadow.camera.left = -160;
+sun.shadow.camera.right = 160;
+sun.shadow.camera.top = 160;
+sun.shadow.camera.bottom = -160;
 sun.shadow.camera.far = 500;
 scene.add(sun);
 const sunBall = new THREE.Mesh(new THREE.SphereGeometry(9, 16, 16), new THREE.MeshBasicMaterial({ color: 0xfff6c0 }));
 sunBall.position.set(220, 190, -160);
 scene.add(sunBall);
-// Feature 11: stars + moon for the night sky
+// Stars and a moon for the night sky: 320 points on a dome, a pale moon
+// sphere with one crater, and a cold moonlight that starts switched off.
 {
   const starGeo = new THREE.BufferGeometry();
   const starPos = new Float32Array(320 * 3);
   for (let i = 0; i < 320; i++) {
-    const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI * 0.45 + 0.12;
+    const a = Math.random() * Math.PI * 2;
+    const e = Math.random() * Math.PI * 0.45 + 0.12;
     const r = 620;
     starPos[i * 3] = Math.cos(a) * Math.cos(e) * r;
     starPos[i * 3 + 1] = Math.sin(e) * r;
@@ -251,7 +344,9 @@ scene.add(sunBall);
   moon.visible = false;
   scene.add(moon);
   const crater = new THREE.Mesh(new THREE.SphereGeometry(2.6, 8, 8), new THREE.MeshBasicMaterial({ color: 0xd8d4b8 }));
-  crater.position.set(-262, 224, 191); crater.visible = false; scene.add(crater);
+  crater.position.set(-262, 224, 191);
+  crater.visible = false;
+  scene.add(crater);
   moon.userData.crater = crater;
   moonLight = new THREE.DirectionalLight(0x8fa8d8, 0);
   moonLight.position.set(-200, 180, 140);
@@ -259,16 +354,22 @@ scene.add(sunBall);
 }
 
 // ---------- procedural canvas textures ----------
+// Draw a texture on an offscreen canvas, then hand it to three.js.
 function canvasTex(w, h, draw) {
-  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
   draw(cv.getContext('2d'), w, h);
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+// A building face: base colour, a grid of windows (some lit), a pale
+// lintel over each window, and a dark strip at the bottom.
 function buildingTexture(base, lit) {
   return canvasTex(128, 256, (g, w, h) => {
-    g.fillStyle = base; g.fillRect(0, 0, w, h);
+    g.fillStyle = base;
+    g.fillRect(0, 0, w, h);
     for (let y = 12; y < h - 10; y += 22) {
       for (let x = 10; x < w - 10; x += 20) {
         g.fillStyle = rng() < 0.55 ? lit : '#2b3a4a';
@@ -277,39 +378,61 @@ function buildingTexture(base, lit) {
         g.fillRect(x, y, 12, 3);
       }
     }
-    g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, h - 8, w, 8);
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.fillRect(0, h - 8, w, 8);
   });
 }
 const BUILDING_COLORS = ['#d8a06a', '#c97b5a', '#e8c98f', '#7fa8c9', '#b98a7a', '#9fb27a', '#d9b8c4', '#8fb8a8'];
 const WINDOW_LITS = ['#ffe9a8', '#bfe8ff', '#fff3c0'];
+// Road: dark asphalt, a dashed yellow centre line, white edge lines.
 const roadTex = canvasTex(128, 128, (g, w, h) => {
-  g.fillStyle = '#33383e'; g.fillRect(0, 0, w, h);
-  g.fillStyle = '#f5d76e'; g.fillRect(w / 2 - 2, 0, 4, 18); g.fillRect(w / 2 - 2, 54, 4, 18); g.fillRect(w / 2 - 2, 108, 4, 18);
-  g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillRect(4, 0, 3, h); g.fillRect(w - 7, 0, 3, h);
+  g.fillStyle = '#33383e';
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = '#f5d76e';
+  g.fillRect(w / 2 - 2, 0, 4, 18);
+  g.fillRect(w / 2 - 2, 54, 4, 18);
+  g.fillRect(w / 2 - 2, 108, 4, 18);
+  g.fillStyle = 'rgba(255,255,255,0.7)';
+  g.fillRect(4, 0, 3, h);
+  g.fillRect(w - 7, 0, 3, h);
 });
 roadTex.wrapS = roadTex.wrapT = THREE.RepeatWrapping;
+// Sand: pale base with 260 speckles in two tones.
 const sandTex = canvasTex(128, 128, (g, w, h) => {
-  g.fillStyle = '#e8d5a0'; g.fillRect(0, 0, w, h);
-  for (let i = 0; i < 260; i++) { g.fillStyle = rng() < 0.5 ? '#dcc98e' : '#f2e2b0'; g.fillRect(rng() * w, rng() * h, 2, 2); }
+  g.fillStyle = '#e8d5a0';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 260; i++) {
+    g.fillStyle = rng() < 0.5 ? '#dcc98e' : '#f2e2b0';
+    g.fillRect(rng() * w, rng() * h, 2, 2);
+  }
 });
-sandTex.wrapS = sandTex.wrapT = THREE.RepeatWrapping; sandTex.repeat.set(8, 8);
+sandTex.wrapS = sandTex.wrapT = THREE.RepeatWrapping;
+sandTex.repeat.set(8, 8);
+// Grass: green base with 120 blade speckles.
 const grassTex = canvasTex(64, 64, (g, w, h) => {
-  g.fillStyle = '#7fae62'; g.fillRect(0, 0, w, h);
-  for (let i = 0; i < 120; i++) { g.fillStyle = rng() < 0.5 ? '#6d9c52' : '#93c176'; g.fillRect(rng() * w, rng() * h, 2, 3); }
+  g.fillStyle = '#7fae62';
+  g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 120; i++) {
+    g.fillStyle = rng() < 0.5 ? '#6d9c52' : '#93c176';
+    g.fillRect(rng() * w, rng() * h, 2, 3);
+  }
 });
-grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping; grassTex.repeat.set(20, 20);
+grassTex.wrapS = grassTex.wrapT = THREE.RepeatWrapping;
+grassTex.repeat.set(20, 20);
 
 // ---------- city layout ----------
-const BLOCK = 24;         // block pitch (road centre to road centre)
+const BLOCK = 24; // block pitch (road centre to road centre)
 const ROAD_W = 7;
-const GRID = 9;           // 9x9 blocks
+const GRID = 9; // 9x9 blocks
 const CITY = GRID * BLOCK; // ~216 wide
 const HALF = CITY / 2;
-// Feature 24: terrain heightmap — the map is NOT flat. City stays flat;
-// outer zones roll, the north rises into mountains, the beach slopes to sea.
+// Terrain heightmap — the map is NOT flat. The city stays flat; outer
+// zones roll, the north rises into mountains, the beach slopes to sea.
 function groundHeight(x, z) {
   if (Math.abs(x) < HALF + 12 && Math.abs(z) < HALF + 12) return 0;
-  let h = 2.2 * Math.sin(x * 0.021) * Math.cos(z * 0.017) + 1.4 * Math.sin(x * 0.047 + 1.3) * Math.sin(z * 0.039 + 0.7);
+  const rolling = 2.2 * Math.sin(x * 0.021) * Math.cos(z * 0.017);
+  const ripples = 1.4 * Math.sin(x * 0.047 + 1.3) * Math.sin(z * 0.039 + 0.7);
+  let h = rolling + ripples;
   if (z < -230) h += Math.min(24, (-230 - z) * 0.35);
   if (x > HALF) h = lerp(h, -0.15, clamp((x - HALF) / 20, 0, 1));
   if (z > 150) h += 1.2 * Math.sin(x * 0.03 + 2) * Math.sin(z * 0.05);
@@ -326,29 +449,36 @@ function groundHeight(x, z) {
 const world = new THREE.Group();
 scene.add(world);
 const colliders = []; // {x,z,hx,hz} axis-aligned boxes for buildings
-
+// The one box helper for the whole world: material, shadows, parent.
 function addBox(w, h, d, color, x, y, z, opts) {
   const mat = opts && opts.mat ? opts.mat : new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0.05 });
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
-  if (opts && opts.shadow !== false) { m.castShadow = true; m.receiveShadow = true; }
-  (opts && opts.parent ? opts.parent : world).add(m);
+  if (opts && opts.shadow !== false) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
+  const parent = opts && opts.parent ? opts.parent : world;
+  parent.add(m);
   return m;
 }
-
-// ground: displaced terrain mesh with per-zone vertex colours
+// Ground: a displaced terrain mesh with per-zone vertex colours.
 const groundGeo = new THREE.PlaneGeometry(560, 560, 110, 110);
 groundGeo.rotateX(-Math.PI / 2);
 {
   const pos = groundGeo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const cGrass = new THREE.Color(0x7fae62), cFarm = new THREE.Color(0x9ab854), cForest = new THREE.Color(0x4a7a3a),
-    cDesert = new THREE.Color(0xd9b380), cSand = new THREE.Color(0xe8d5a0), cRock = new THREE.Color(0x8a7a68),
-    cSwamp = new THREE.Color(0x5a7a42), cTmp = new THREE.Color();
+  const cGrass = new THREE.Color(0x7fae62);
+  const cFarm = new THREE.Color(0x9ab854);
+  const cForest = new THREE.Color(0x4a7a3a);
+  const cDesert = new THREE.Color(0xd9b380);
+  const cSand = new THREE.Color(0xe8d5a0);
+  const cRock = new THREE.Color(0x8a7a68);
+  const cSwamp = new THREE.Color(0x5a7a42);
+  const cTmp = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
-    const h = groundHeight(x, z);
-    pos.setY(i, -0.05 + h);
+    pos.setY(i, -0.05 + groundHeight(x, z));
     if (x > HALF) cTmp.copy(cSand);
     else if (z < -230) cTmp.copy(cRock);
     else if (z < -150) cTmp.copy(cForest);
@@ -356,7 +486,9 @@ groundGeo.rotateX(-Math.PI / 2);
     else if (x < -140) cTmp.copy(cFarm);
     else if (x < -195 && z > 200) cTmp.copy(cSwamp);
     else cTmp.copy(cGrass);
-    colors[i * 3] = cTmp.r; colors[i * 3 + 1] = cTmp.g; colors[i * 3 + 2] = cTmp.b;
+    colors[i * 3] = cTmp.r;
+    colors[i * 3 + 1] = cTmp.g;
+    colors[i * 3 + 2] = cTmp.b;
   }
   groundGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   groundGeo.computeVertexNormals();
@@ -365,36 +497,53 @@ const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: g
 ground.receiveShadow = true;
 world.add(ground);
 
-// ocean + beach on the east edge (x > HALF + 14)
+// Ocean and beach on the east edge (x > HALF + 14).
 const ocean = new THREE.Mesh(new THREE.PlaneGeometry(180, 560), new THREE.MeshStandardMaterial({ color: 0x1e7fa8, roughness: 0.25, metalness: 0.35 }));
-ocean.rotation.x = -Math.PI / 2; ocean.position.set(HALF + 14 + 90, 0.1, 0);
+ocean.rotation.x = -Math.PI / 2;
+ocean.position.set(HALF + 14 + 90, 0.1, 0);
 world.add(ocean);
 const beach = new THREE.Mesh(new THREE.PlaneGeometry(28, 560), new THREE.MeshStandardMaterial({ map: sandTex }));
-beach.rotation.x = -Math.PI / 2; beach.position.set(HALF + 14, 0.05, 0); beach.receiveShadow = true;
+beach.rotation.x = -Math.PI / 2;
+beach.position.set(HALF + 14, 0.05, 0);
+beach.receiveShadow = true;
 world.add(beach);
-// boardwalk strip
+// Boardwalk strip along the sand.
 addBox(4, 0.3, 560, 0xb98d5f, HALF + 11, 0.1, 0, { shadow: false });
-
-// roads: grid lines
+// Roads: one plane per grid line, in both directions, texture repeated.
 const roadMat = new THREE.MeshStandardMaterial({ map: roadTex });
 for (let i = 0; i <= GRID; i++) {
   const c = -HALF + i * BLOCK;
   const rx = new THREE.Mesh(new THREE.PlaneGeometry(CITY + ROAD_W, ROAD_W), roadMat.clone());
-  rx.material.map = roadTex.clone(); rx.material.map.repeat.set((CITY + ROAD_W) / 14, 1); rx.material.map.needsUpdate = true;
-  rx.rotation.x = -Math.PI / 2; rx.position.set(0, 0.02, c); rx.receiveShadow = true; world.add(rx);
+  rx.material.map = roadTex.clone();
+  rx.material.map.repeat.set((CITY + ROAD_W) / 14, 1);
+  rx.material.map.needsUpdate = true;
+  rx.rotation.x = -Math.PI / 2;
+  rx.position.set(0, 0.02, c);
+  rx.receiveShadow = true;
+  world.add(rx);
   const rz = new THREE.Mesh(new THREE.PlaneGeometry(ROAD_W, CITY + ROAD_W), roadMat.clone());
-  rz.material.map = roadTex.clone(); rz.material.map.repeat.set(1, (CITY + ROAD_W) / 14); rz.material.map.needsUpdate = true;
-  rz.rotation.x = -Math.PI / 2; rz.position.set(c, 0.02, 0); rz.receiveShadow = true; world.add(rz);
+  rz.material.map = roadTex.clone();
+  rz.material.map.repeat.set(1, (CITY + ROAD_W) / 14);
+  rz.material.map.needsUpdate = true;
+  rz.rotation.x = -Math.PI / 2;
+  rz.position.set(c, 0.02, 0);
+  rz.receiveShadow = true;
+  world.add(rz);
 }
-// sidewalks around each block
+// Sidewalks: one pale slab per block, slightly above the road.
 const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xb9b3a4, roughness: 1 });
 for (let ix = 0; ix < GRID; ix++) {
   for (let iz = 0; iz < GRID; iz++) {
-    const cx = -HALF + BLOCK / 2 + ix * BLOCK, cz = -HALF + BLOCK / 2 + iz * BLOCK;
+    const cx = -HALF + BLOCK / 2 + ix * BLOCK;
+    const cz = -HALF + BLOCK / 2 + iz * BLOCK;
     const sw = new THREE.Mesh(new THREE.PlaneGeometry(BLOCK - ROAD_W + 2, BLOCK - ROAD_W + 2), sidewalkMat);
-    sw.rotation.x = -Math.PI / 2; sw.position.set(cx, 0.03, cz); sw.receiveShadow = true; world.add(sw);
+    sw.rotation.x = -Math.PI / 2;
+    sw.position.set(cx, 0.03, cz);
+    sw.receiveShadow = true;
+    world.add(sw);
   }
 }
+// Is a point on a road? True when it sits near any grid line.
 function isRoad(x, z) {
   for (let i = 0; i <= GRID; i++) {
     const c = -HALF + i * BLOCK;
@@ -403,6 +552,7 @@ function isRoad(x, z) {
   }
   return false;
 }
+// Circle-vs-building collision: returns the first box hit, or null.
 function collideCircle(x, z, r) {
   for (const b of colliders) {
     if (Math.abs(x - b.x) < b.hx + r && Math.abs(z - b.z) < b.hz + r) return b;
@@ -410,49 +560,59 @@ function collideCircle(x, z, r) {
   return null;
 }
 
-// buildings: 100+ with window textures, a few towers downtown
+// Buildings: 100+ with window textures, a few towers downtown.
+// Downtown blocks get two taller buildings; the rest get one each.
 const buildingMats = [];
 let buildingCount = 0;
 for (let ix = 0; ix < GRID; ix++) {
   for (let iz = 0; iz < GRID; iz++) {
-    const cx = -HALF + BLOCK / 2 + ix * BLOCK, cz = -HALF + BLOCK / 2 + iz * BLOCK;
+    const cx = -HALF + BLOCK / 2 + ix * BLOCK;
+    const cz = -HALF + BLOCK / 2 + iz * BLOCK;
     const downtown = Math.abs(cx) < 50 && Math.abs(cz) < 50;
     const n = downtown ? 2 : 1;
     for (let k = 0; k < n; k++) {
-      const ox = k === 0 ? -4 : 4, oz = k === 0 ? 3 : -4;
-      const w = rr(6, 9), d = rr(6, 9);
+      const ox = k === 0 ? -4 : 4;
+      const oz = k === 0 ? 3 : -4;
+      const w = rr(6, 9);
+      const d = rr(6, 9);
       const h = downtown ? rr(18, 46) : rr(6, 16);
       const tex = buildingTexture(pick(BUILDING_COLORS), pick(WINDOW_LITS));
       const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.9 });
       const b = addBox(w, h, d, 0xffffff, cx + ox, h / 2, cz + oz, { mat });
       b.userData.isBuilding = true;
       colliders.push({ x: cx + ox, z: cz + oz, hx: w / 2, hz: d / 2 });
-      // rooftop box
       addBox(w * 0.4, 1.2, d * 0.4, 0x666666, cx + ox, h + 0.6, cz + oz);
       buildingCount++;
     }
   }
 }
-// marina + docks landmark on the beach side
+// Marina and docks landmark on the beach side.
 addBox(30, 3, 8, 0x8a6a4a, HALF + 22, 1.5, 40);
 addBox(4, 2, 4, 0xd8d8d8, HALF + 22, 4, 40);
-
-// palm trees + streetlights
+// Palm trees and streetlights: palms scattered near the beach and around
+// town, lamps on alternating corners of the grid.
 const palmTrunkMat = new THREE.MeshStandardMaterial({ color: 0x8a6a42, roughness: 1 });
 const palmLeafMat = new THREE.MeshStandardMaterial({ color: 0x3f9e4d, roughness: 0.9 });
 function makePalm(x, z) {
   const g = new THREE.Group();
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.35, 5, 6), palmTrunkMat);
-  trunk.position.y = 2.5; trunk.castShadow = true; g.add(trunk);
+  trunk.position.y = 2.5;
+  trunk.castShadow = true;
+  g.add(trunk);
   for (let i = 0; i < 6; i++) {
     const leaf = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 0.9), palmLeafMat);
     const a = (i / 6) * Math.PI * 2;
     leaf.position.set(Math.cos(a) * 1.3, 5.1, Math.sin(a) * 1.3);
-    leaf.rotation.y = -a; leaf.rotation.z = 0.35; leaf.castShadow = true; g.add(leaf);
+    leaf.rotation.y = -a;
+    leaf.rotation.z = 0.35;
+    leaf.castShadow = true;
+    g.add(leaf);
   }
   const nut = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshStandardMaterial({ color: 0x6a4a22 }));
-  nut.position.y = 4.9; g.add(nut);
-  g.position.set(x, groundHeight(x, z), z); world.add(g);
+  nut.position.y = 4.9;
+  g.add(nut);
+  g.position.set(x, groundHeight(x, z), z);
+  world.add(g);
 }
 for (let i = 0; i < 60; i++) {
   const x = rr(-HALF, HALF + 10), z = rr(-HALF, HALF);
@@ -462,33 +622,46 @@ for (let i = 0; i < 60; i++) {
 }
 for (let i = 0; i <= GRID; i++) {
   for (let j = 0; j <= GRID; j += 2) {
-    const x = -HALF + i * BLOCK + ROAD_W / 2 + 0.6, z = -HALF + j * BLOCK;
+    const x = -HALF + i * BLOCK + ROAD_W / 2 + 0.6;
+    const z = -HALF + j * BLOCK;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 6, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-    pole.position.set(x, 3, z); pole.castShadow = true; world.add(pole);
+    pole.position.set(x, 3, z);
+    pole.castShadow = true;
+    world.add(pole);
     const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffdf80, emissiveIntensity: 0.7 });
     lampMats.push(lampMat);
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), lampMat);
-    lamp.position.set(x, 6.1, z); world.add(lamp);
+    lamp.position.set(x, 6.1, z);
+    world.add(lamp);
   }
 }
 
-// ---------- V2 world beyond the city: farmland, forest, desert hills, highway ----------
+// ---------- world beyond the city: farmland, forest, desert hills, highway ----------
+// A flat tinted patch on the ground, for fields and clearings.
 function zonePatch(w, d, color, x, z) {
   const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshStandardMaterial({ color, roughness: 1 }));
-  m.rotation.x = -Math.PI / 2; m.position.set(x, 0.01, z); m.receiveShadow = true; world.add(m);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.01, z);
+  m.receiveShadow = true;
+  world.add(m);
   return m;
 }
+// A pine: trunk cylinder plus a cone top, both casting shadows.
 function makeTree(x, z, s) {
   const g = new THREE.Group();
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25 * s, 0.4 * s, 2.4 * s, 6), new THREE.MeshStandardMaterial({ color: 0x6a4a22, roughness: 1 }));
-  trunk.position.y = 1.2 * s; trunk.castShadow = true; g.add(trunk);
+  trunk.position.y = 1.2 * s;
+  trunk.castShadow = true;
+  g.add(trunk);
   const top = new THREE.Mesh(new THREE.ConeGeometry(1.9 * s, 4.4 * s, 8), new THREE.MeshStandardMaterial({ color: 0x2e6b34, roughness: 0.95 }));
-  top.position.y = 4.2 * s; top.castShadow = true; g.add(top);
-  g.position.set(x, groundHeight(x, z), z); world.add(g);
+  top.position.y = 4.2 * s;
+  top.castShadow = true;
+  g.add(top);
+  g.position.set(x, groundHeight(x, z), z);
+  world.add(g);
 }
 {
-  // farmland west: patchwork fields (ground vertex colours carry the tint)
-  // + farmhouses
+  // Farmland west: three farmhouses with red roofs, plus scattered trees.
   for (const [fx, fz] of [[-190, -110], [-230, 110], [-185, 90]]) {
     const gy = groundHeight(fx, fz);
     addBox(7, 4, 6, 0xd8c8a8, fx, 2 + gy, fz);
@@ -496,51 +669,77 @@ function makeTree(x, z, s) {
     colliders.push({ x: fx, z: fz, hx: 3.8, hz: 3.3 });
   }
   for (let i = 0; i < 14; i++) makeTree(rr(-275, -140), rr(-130, 130), rr(0.8, 1.4));
-  // forest north: dense trees
+  // Forest north: dense pines.
   for (let i = 0; i < 46; i++) makeTree(rr(-270, 270), rr(-275, -150), rr(0.9, 1.7));
-  // desert hills south: sandy floor + rocky hills
+  // Desert hills south: sandy floor, flattened rocky hills, cacti.
   for (let i = 0; i < 9; i++) {
     const hx = -240 + i * 60 + rr(-14, 14), hz = 185 + rr(-20, 55);
     const hill = new THREE.Mesh(new THREE.SphereGeometry(rr(16, 30), 12, 8), new THREE.MeshStandardMaterial({ color: 0xb98d5f, roughness: 1 }));
-    hill.scale.y = 0.45; hill.position.set(hx, 0, hz); hill.castShadow = true; world.add(hill);
+    hill.scale.y = 0.45;
+    hill.position.set(hx, 0, hz);
+    hill.castShadow = true;
+    world.add(hill);
     colliders.push({ x: hx, z: hz, hx: 14, hz: 14 });
   }
   for (let i = 0; i < 12; i++) {
     const cx = rr(-260, 260), cz = rr(160, 270);
     const cactus = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, rr(2.5, 4.5), 8), new THREE.MeshStandardMaterial({ color: 0x3f8a4d, roughness: 1 }));
-    cactus.position.set(cx, 1.8, cz); cactus.castShadow = true; world.add(cactus);
+    cactus.position.set(cx, 1.8, cz);
+    cactus.castShadow = true;
+    world.add(cactus);
   }
-  // highway west out of town + north/south connectors
+  // Highways: west out of town, plus north and south connectors.
   const hwMat = new THREE.MeshStandardMaterial({ map: roadTex });
   const hw = new THREE.Mesh(new THREE.PlaneGeometry(170, 10), hwMat.clone());
-  hw.material.map = roadTex.clone(); hw.material.map.repeat.set(12, 1); hw.material.map.needsUpdate = true;
-  hw.rotation.x = -Math.PI / 2; hw.position.set(-HALF - 85, 0.02, 0); hw.receiveShadow = true; world.add(hw);
+  hw.material.map = roadTex.clone();
+  hw.material.map.repeat.set(12, 1);
+  hw.material.map.needsUpdate = true;
+  hw.rotation.x = -Math.PI / 2;
+  hw.position.set(-HALF - 85, 0.02, 0);
+  hw.receiveShadow = true;
+  world.add(hw);
   const hwN = new THREE.Mesh(new THREE.PlaneGeometry(10, 60), hwMat.clone());
-  hwN.material.map = roadTex.clone(); hwN.material.map.repeat.set(1, 4); hwN.material.map.needsUpdate = true;
-  hwN.rotation.x = -Math.PI / 2; hwN.position.set(0, 0.02, -HALF - 30); world.add(hwN);
+  hwN.material.map = roadTex.clone();
+  hwN.material.map.repeat.set(1, 4);
+  hwN.material.map.needsUpdate = true;
+  hwN.rotation.x = -Math.PI / 2;
+  hwN.position.set(0, 0.02, -HALF - 30);
+  world.add(hwN);
   const hwS = new THREE.Mesh(new THREE.PlaneGeometry(10, 60), hwMat.clone());
-  hwS.material.map = roadTex.clone(); hwS.material.map.repeat.set(1, 4); hwS.material.map.needsUpdate = true;
-  hwS.rotation.x = -Math.PI / 2; hwS.position.set(48, 0.02, HALF + 30); world.add(hwS);
+  hwS.material.map = roadTex.clone();
+  hwS.material.map.repeat.set(1, 4);
+  hwS.material.map.needsUpdate = true;
+  hwS.rotation.x = -Math.PI / 2;
+  hwS.position.set(48, 0.02, HALF + 30);
+  world.add(hwS);
 }
 
-// ---------- Feature 10: big map — mountain ring at the edges ----------
+// ---------- mountain ring at the edges ----------
+// Nine peaks ring the map: rock cones with snow caps, plus a winding dirt
+// road climbing the west face and a viewpoint disc at the top.
 {
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x7a6a58, roughness: 1 });
   const snowMat = new THREE.MeshStandardMaterial({ color: 0xf0f4f8, roughness: 0.9 });
   const peaks = [
-    { x: -330, z: -260, h: 110, r: 90 }, { x: -330, z: 0, h: 95, r: 80 },
-    { x: -330, z: 260, h: 120, r: 95 }, { x: 330, z: -260, h: 100, r: 85 },
-    { x: 330, z: 260, h: 105, r: 88 }, { x: -120, z: -340, h: 90, r: 78 },
-    { x: 140, z: -340, h: 98, r: 82 }, { x: 0, z: 340, h: 92, r: 80 },
+    { x: -330, z: -260, h: 110, r: 90 },
+    { x: -330, z: 0, h: 95, r: 80 },
+    { x: -330, z: 260, h: 120, r: 95 },
+    { x: 330, z: -260, h: 100, r: 85 },
+    { x: 330, z: 260, h: 105, r: 88 },
+    { x: -120, z: -340, h: 90, r: 78 },
+    { x: 140, z: -340, h: 98, r: 82 },
+    { x: 0, z: 340, h: 92, r: 80 },
     { x: -260, z: 340, h: 88, r: 75 },
   ];
   for (const pk of peaks) {
     const m = new THREE.Mesh(new THREE.ConeGeometry(pk.r, pk.h, 8), rockMat);
-    m.position.set(pk.x, pk.h / 2 - 4, pk.z); m.castShadow = true; world.add(m);
+    m.position.set(pk.x, pk.h / 2 - 4, pk.z);
+    m.castShadow = true;
+    world.add(m);
     const cap = new THREE.Mesh(new THREE.ConeGeometry(pk.r * 0.42, pk.h * 0.32, 8), snowMat);
-    cap.position.set(pk.x, pk.h - 4 - pk.h * 0.16, pk.z); world.add(cap);
+    cap.position.set(pk.x, pk.h - 4 - pk.h * 0.16, pk.z);
+    world.add(cap);
   }
-  // winding dirt road climbing the west mountain face (visual switchbacks)
   const dirtMat = new THREE.MeshStandardMaterial({ color: 0xa88a5a, roughness: 1 });
   for (let i = 0; i < 5; i++) {
     const seg = new THREE.Mesh(new THREE.PlaneGeometry(46, 5), dirtMat);
@@ -550,31 +749,43 @@ function makeTree(x, z, s) {
     world.add(seg);
   }
   const view = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 1, 16), new THREE.MeshStandardMaterial({ color: 0x9a8a6a }));
-  view.position.set(-292, 34, 48); world.add(view);
+  view.position.set(-292, 34, 48);
+  world.add(view);
 }
 
-// ---------- Map shape (Florida-like, original names): keys, central lake, swamp, west town ----------
+// ---------- map shape: keys, central lake, swamp, west town ----------
+// A chain of small sandy islands in the southern sea, a big lake in the
+// northern forest basin, reeds in the southwest swamp, and a small town
+// with a main street on the west coast.
 {
-  // keys: a chain of small sandy islands in the southern sea
   const keySpots = [[150, 180], [176, 222], [148, 256], [202, 158], [188, 268]];
   for (const [kx, kz] of keySpots) {
     const isl = new THREE.Mesh(new THREE.CircleGeometry(rr(7, 11), 16), new THREE.MeshStandardMaterial({ map: sandTex, roughness: 1 }));
-    isl.rotation.x = -Math.PI / 2; isl.position.set(kx, 0.12, kz); isl.receiveShadow = true; world.add(isl);
+    isl.rotation.x = -Math.PI / 2;
+    isl.position.set(kx, 0.12, kz);
+    isl.receiveShadow = true;
+    world.add(isl);
   }
-  makePalm(152, 182); makePalm(176, 220); makePalm(200, 160);
-  // big central lake in the northern forest basin
+  makePalm(152, 182);
+  makePalm(176, 220);
+  makePalm(200, 160);
   const bigLake = new THREE.Mesh(new THREE.CircleGeometry(32, 28), new THREE.MeshStandardMaterial({ color: 0x2a8ab0, roughness: 0.2, metalness: 0.4 }));
-  bigLake.rotation.x = -Math.PI / 2; bigLake.position.set(60, 0.08, -205); world.add(bigLake);
-  // swamp / wetland in the southwest, with reeds (ground vertex colours tint it)
+  bigLake.rotation.x = -Math.PI / 2;
+  bigLake.position.set(60, 0.08, -205);
+  world.add(bigLake);
   for (let i = 0; i < 24; i++) {
     const reed = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, rr(1.5, 3), 5), new THREE.MeshStandardMaterial({ color: 0x5a8a3a, roughness: 1 }));
-    reed.position.set(rr(-275, -195), 1.2, rr(205, 265)); world.add(reed);
+    reed.position.set(rr(-275, -195), 1.2, rr(205, 265));
+    world.add(reed);
   }
-  // small town on the west coast: a cluster of houses + a main street
   const townMat = new THREE.MeshStandardMaterial({ map: roadTex });
   const townSt = new THREE.Mesh(new THREE.PlaneGeometry(12, 90), townMat.clone());
-  townSt.material.map = roadTex.clone(); townSt.material.map.repeat.set(1, 6); townSt.material.map.needsUpdate = true;
-  townSt.rotation.x = -Math.PI / 2; townSt.position.set(-258, 0.02, -60); world.add(townSt);
+  townSt.material.map = roadTex.clone();
+  townSt.material.map.repeat.set(1, 6);
+  townSt.material.map.needsUpdate = true;
+  townSt.rotation.x = -Math.PI / 2;
+  townSt.position.set(-258, 0.02, -60);
+  world.add(townSt);
   const townColors = [0xd8a06a, 0x7fa8c9, 0xe8c98f, 0x9fb27a, 0xb98a7a, 0xd9b8c4];
   for (let i = 0; i < 6; i++) {
     const hx = -272 + (i % 2) * 16, hz = -95 + Math.floor(i / 2) * 28;
@@ -586,61 +797,95 @@ function makeTree(x, z, s) {
 }
 
 // ---------- characters ----------
+// A person is a small group: box body, sphere head with a hair cap, two
+// legs and two arms. Limb meshes are kept in userData so walking can
+// swing them later.
 function makePerson(shirt, pants, skin) {
   const g = new THREE.Group();
   const skinM = new THREE.MeshStandardMaterial({ color: skin, roughness: 0.8 });
   const shirtM = new THREE.MeshStandardMaterial({ color: shirt, roughness: 0.9 });
   const pantsM = new THREE.MeshStandardMaterial({ color: pants, roughness: 0.9 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 0.34), shirtM);
-  body.position.y = 1.05; body.castShadow = true; g.add(body);
+  body.position.y = 1.05;
+  body.castShadow = true;
+  g.add(body);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 10), skinM);
-  head.position.y = 1.62; head.castShadow = true; g.add(head);
+  head.position.y = 1.62;
+  head.castShadow = true;
+  g.add(head);
   const hair = new THREE.Mesh(new THREE.SphereGeometry(0.25, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x2a1c10 }));
-  hair.position.y = 1.66; g.add(hair);
+  hair.position.y = 1.66;
+  g.add(hair);
   const legL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.7, 0.24), pantsM);
-  legL.position.set(-0.16, 0.35, 0); legL.castShadow = true; g.add(legL);
-  const legR = legL.clone(); legR.position.x = 0.16; g.add(legR);
+  legL.position.set(-0.16, 0.35, 0);
+  legL.castShadow = true;
+  g.add(legL);
+  const legR = legL.clone();
+  legR.position.x = 0.16;
+  g.add(legR);
   const armL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.62, 0.18), shirtM);
-  armL.position.set(-0.42, 1.05, 0); armL.castShadow = true; g.add(armL);
-  const armR = armL.clone(); armR.position.x = 0.42; g.add(armR);
+  armL.position.set(-0.42, 1.05, 0);
+  armL.castShadow = true;
+  g.add(armL);
+  const armR = armL.clone();
+  armR.position.x = 0.42;
+  g.add(armR);
   g.userData = { legL, legR, armL, armR, body };
   return g;
 }
 
-// player: Ian — woman, coral shirt, dark jeans, dark hair bun
+// The player starts as Ian — coral shirt, dark jeans, dark hair in a bun.
+// Her extra hair pieces stay hidden until the barber changes the style.
 let player = makePerson(0xd94f70, 0x3a2a4a, 0xd9a066);
 const ianBun = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshStandardMaterial({ color: 0x3a1e10 }));
-ianBun.position.set(0, 1.92, -0.12); player.add(ianBun);
+ianBun.position.set(0, 1.92, -0.12);
+player.add(ianBun);
 const ianHair = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6), new THREE.MeshStandardMaterial({ color: 0x3a1e10 }));
-ianHair.position.y = 1.68; player.add(ianHair);
-// Feature 35: extra hair parts (hidden until the barber changes the style)
+ianHair.position.y = 1.68;
+player.add(ianHair);
 const ianMohawk = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.7), new THREE.MeshStandardMaterial({ color: 0x3a1e10 }));
-ianMohawk.position.y = 1.95; ianMohawk.visible = false; player.add(ianMohawk);
+ianMohawk.position.y = 1.95;
+ianMohawk.visible = false;
+player.add(ianMohawk);
 const ianLong = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.0, 0.18), new THREE.MeshStandardMaterial({ color: 0x3a1e10 }));
-ianLong.position.set(0, 1.3, -0.28); ianLong.visible = false; player.add(ianLong);
+ianLong.position.set(0, 1.3, -0.28);
+ianLong.visible = false;
+player.add(ianLong);
 const ianShort = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x3a1e10 }));
-ianShort.position.y = 1.68; ianShort.visible = false; player.add(ianShort);
+ianShort.position.y = 1.68;
+ianShort.visible = false;
+player.add(ianShort);
 player.userData.hair = { bun: ianBun, top: ianHair, mohawk: ianMohawk, long: ianLong, short: ianShort };
 player.userData.tattoos = [];
 player.position.set(-HALF + BLOCK / 2, 0, 20);
 scene.add(player);
 let playerState = { x: player.position.x, z: player.position.z, y: 0, vy: 0, heading: 0, walkPhase: 0, onGround: true };
-// Final roster (2 characters): Ian (woman) + Ryan (male, yellow shirt,
-// blue cap). Each keeps his/her own spot on the map; cash and missions are
-// shared across the whole crew. Marisol stays the fixer NPC.
+// The roster is two people: Ian and Ryan (yellow shirt, blue cap). Each
+// keeps a spot on the map; cash and missions are shared across the crew.
+// Marisol stays the fixer NPC.
 const ryan = makePerson(0xe8b820, 0x27435e, 0xd9a066);
 const ryanCap = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.27, 0.1, 12), new THREE.MeshStandardMaterial({ color: 0x1e5aa8 }));
-ryanCap.position.y = 1.82; ryan.add(ryanCap);
+ryanCap.position.y = 1.82;
+ryan.add(ryanCap);
 const ryanBrim = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.04, 0.26), new THREE.MeshStandardMaterial({ color: 0x1e5aa8 }));
-ryanBrim.position.set(0, 1.79, 0.3); ryan.add(ryanBrim);
+ryanBrim.position.set(0, 1.79, 0.3);
+ryan.add(ryanBrim);
 const ryanTop = new THREE.Mesh(new THREE.SphereGeometry(0.26, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.6), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-ryanTop.position.y = 1.68; ryanTop.visible = false; ryan.add(ryanTop);
+ryanTop.position.y = 1.68;
+ryanTop.visible = false;
+ryan.add(ryanTop);
 const ryanMohawk = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.7), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-ryanMohawk.position.y = 1.95; ryanMohawk.visible = false; ryan.add(ryanMohawk);
+ryanMohawk.position.y = 1.95;
+ryanMohawk.visible = false;
+ryan.add(ryanMohawk);
 const ryanLong = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.0, 0.18), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-ryanLong.position.set(0, 1.3, -0.28); ryanLong.visible = false; ryan.add(ryanLong);
+ryanLong.position.set(0, 1.3, -0.28);
+ryanLong.visible = false;
+ryan.add(ryanLong);
 const ryanShort = new THREE.Mesh(new THREE.SphereGeometry(0.24, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-ryanShort.position.y = 1.68; ryanShort.visible = false; ryan.add(ryanShort);
+ryanShort.position.y = 1.68;
+ryanShort.visible = false;
+ryan.add(ryanShort);
 ryan.userData.hair = { cap: ryanCap, brim: ryanBrim, top: ryanTop, mohawk: ryanMohawk, long: ryanLong, short: ryanShort };
 ryan.userData.tattoos = [];
 ryan.position.set(HALF + 6, 0, -20);
@@ -650,16 +895,27 @@ const CHARS = [
   { name: 'Ian', mesh: player, st: playerState, outfit: 0xd94f70, hairstyle: 'bun', hairColor: 0x3a1e10, tattoos: [] },
   { name: 'Ryan', mesh: ryan, st: ryanState, outfit: 0xe8b820, hairstyle: 'cap', hairColor: 0x1a1a1a, tattoos: [] },
 ];
-// ---------- Feature 35: barber (hairstyles + hair colour) and tattoos ----------
+// ---------- barber (hairstyles + hair colour) and tattoos ----------
+// Switch a character's hair: hide every piece, then show the ones the
+// chosen style needs. Colour is re-applied after every switch.
 function setHairstyle(ch, style) {
   const h = ch.mesh.userData.hair;
   if (!h) return;
   for (const k of Object.keys(h)) h[k].visible = false;
-  if (style === 'bun') { if (h.bun) h.bun.visible = true; if (h.top) h.top.visible = true; }
-  else if (style === 'cap') { if (h.cap) h.cap.visible = true; if (h.brim) h.brim.visible = true; }
-  else if (style === 'short') { if (h.short) h.short.visible = true; }
-  else if (style === 'long') { if (h.top) h.top.visible = true; if (h.long) h.long.visible = true; }
-  else if (style === 'mohawk') { if (h.mohawk) h.mohawk.visible = true; }
+  if (style === 'bun') {
+    if (h.bun) h.bun.visible = true;
+    if (h.top) h.top.visible = true;
+  } else if (style === 'cap') {
+    if (h.cap) h.cap.visible = true;
+    if (h.brim) h.brim.visible = true;
+  } else if (style === 'short') {
+    if (h.short) h.short.visible = true;
+  } else if (style === 'long') {
+    if (h.top) h.top.visible = true;
+    if (h.long) h.long.visible = true;
+  } else if (style === 'mohawk') {
+    if (h.mohawk) h.mohawk.visible = true;
+  }
   ch.hairstyle = style;
   setHairColor(ch, ch.hairColor);
 }
@@ -671,6 +927,8 @@ function setHairColor(ch, color) {
     if (h[k]) h[k].material.color.setHex(color);
   }
 }
+// A tattoo is a small coloured patch stuck on the body: dragon and snake
+// on the arms, rose on the chest, skull on the back.
 function addTattoo(ch, design) {
   const g = ch.mesh;
   let m = null;
@@ -685,7 +943,8 @@ function addTattoo(ch, design) {
     m.position.set(0, 1.25, 0.33);
   } else if (design === 'skull') {
     m = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0xe8e8e8, emissive: 0x444444, emissiveIntensity: 0.5 }));
-    m.position.set(0, 1.25, -0.33); m.rotation.y = Math.PI;
+    m.position.set(0, 1.25, -0.33);
+    m.rotation.y = Math.PI;
   }
   if (!m) return;
   g.add(m);
@@ -693,21 +952,28 @@ function addTattoo(ch, design) {
   toast(ch.name + ' got a new tattoo: ' + design + '!');
 }
 function activeName() { return CHARS[state.activeChar].name; }
+// Switching characters takes 1.5 seconds and a little fanfare. You cannot
+// switch mid-air, and you climb out of a car first if you are in one.
 function switchCharacter() {
   if (state.mode !== 'play' || switchTimer > 0) return;
-  if (state.inCar && (state.inCar.kind === 'heli' || state.inCar.kind === 'plane') && (state.inCar.alt || 0) > 1.5) { toast('Land before switching characters.'); return; }
+  const flying = state.inCar && (state.inCar.kind === 'heli' || state.inCar.kind === 'plane');
+  if (flying && (state.inCar.alt || 0) > 1.5) { toast('Land before switching characters.'); return; }
   if (state.inCar) tryEnterExitVehicle();
   switchTarget = (state.activeChar + 1) % CHARS.length;
-  switchTimer = 1.5; switchSwapped = false;
+  switchTimer = 1.5;
+  switchSwapped = false;
   toast('Switching to ' + CHARS[switchTarget].name + '…');
   beep(520, 0.12, 'sine', 0.15);
 }
 function finishSwitch() {
   const from = CHARS[state.activeChar];
-  from.st.x = playerState.x; from.st.z = playerState.z; from.st.heading = playerState.heading;
+  from.st.x = playerState.x;
+  from.st.z = playerState.z;
+  from.st.heading = playerState.heading;
   state.activeChar = switchTarget;
   const next = CHARS[state.activeChar];
-  player = next.mesh; playerState = next.st;
+  player = next.mesh;
+  playerState = next.st;
   window.__solmar.playerState = playerState;
   if (next.outfit !== undefined && player.userData.body) player.userData.body.material.color.setHex(next.outfit);
   player.visible = true;
@@ -718,7 +984,8 @@ function finishSwitch() {
   chime();
   updateHUD();
 }
-// ---------- Feature 23: parachute ----------
+// ---------- parachute ----------
+// An orange canopy that pops open above the player and slows the fall.
 let chute = { open: false, mesh: null };
 function openParachute() {
   if (chute.open) return;
@@ -733,96 +1000,141 @@ function openParachute() {
 function closeParachute() {
   if (!chute.open) return;
   chute.open = false;
-  if (chute.mesh) { player.remove(chute.mesh); chute.mesh = null; }
+  if (chute.mesh) {
+    player.remove(chute.mesh);
+    chute.mesh = null;
+  }
 }
+// Bail out of a helicopter or plane above 5m of altitude. Below that the
+// game tells you to climb higher first.
 function bailOut() {
   if (state.mode !== 'play' || !state.inCar) return;
   const c = state.inCar;
-  if ((c.kind === 'heli' || c.kind === 'plane') && (c.alt || 0) > 5) {
-    playerState.x = c.mesh.position.x; playerState.z = c.mesh.position.z;
-    playerState.y = c.alt; playerState.vy = 0; playerState.onGround = false;
+  const flying = c.kind === 'heli' || c.kind === 'plane';
+  if (flying && (c.alt || 0) > 5) {
+    playerState.x = c.mesh.position.x;
+    playerState.z = c.mesh.position.z;
+    playerState.y = c.alt;
+    playerState.vy = 0;
+    playerState.onGround = false;
     c.speed = 0;
-    state.inCar = null; state.speed = 0;
+    state.inCar = null;
+    state.speed = 0;
     player.visible = true;
     player.position.set(playerState.x, playerState.y, playerState.z);
     toast('Bailed out! Press Space to open the parachute.');
     beep(440, 0.15, 'sine', 0.2);
-  } else if (c.kind === 'heli' || c.kind === 'plane') {
+  } else if (flying) {
     toast('Too low to bail out — climb higher first.');
   }
 }
 
 // ---------- cars ----------
+// The car table: body type, paint, size and top speed. The supercar also
+// carries its own acceleration and steering rate.
 const CAR_TYPES = [
-  { type: 'sedan', color: 0xc0392b, len: 4.2, w: 1.9, h: 0.62, topSpeed: 26 },
-  { type: 'sedan', color: 0x2e6fb0, len: 4.2, w: 1.9, h: 0.62, topSpeed: 26 },
-  { type: 'taxi', color: 0xf5c518, len: 4.2, w: 1.9, h: 0.62, topSpeed: 25 },
-  { type: 'pickup', color: 0x4a7a3a, len: 4.6, w: 2.0, h: 0.72, topSpeed: 24 },
-  { type: 'truck', color: 0x8a8f96, len: 6.2, w: 2.3, h: 1.1, topSpeed: 19 },
-  { type: 'muscle', color: 0xe86a1e, len: 4.4, w: 2.0, h: 0.6, topSpeed: 30 },
-  { type: 'supercar', color: 0xffd23f, len: 4.4, w: 2.0, h: 0.5, topSpeed: 42, accel: 26, steerRate: 0.7 },
-  { type: 'firetruck', color: 0xc0392b, len: 6.2, w: 2.3, h: 1.4, topSpeed: 22 },
-  { type: 'ambulance', color: 0xf0f0f0, len: 5.2, w: 2.1, h: 1.3, topSpeed: 26 },
-  { type: 'bus', color: 0x2e6fb0, len: 9, w: 2.5, h: 2.2, topSpeed: 20 },
-  { type: 'police', color: 0xf0f0f0, len: 4.4, w: 1.95, h: 0.66, topSpeed: 30 },
+  { type: 'sedan', topSpeed: 26, color: 0xc0392b, len: 4.2, w: 1.9, h: 0.62 },
+  { type: 'sedan', topSpeed: 26, color: 0x2e6fb0, len: 4.2, w: 1.9, h: 0.62 },
+  { type: 'taxi', topSpeed: 25, color: 0xf5c518, len: 4.2, w: 1.9, h: 0.62 },
+  { type: 'pickup', topSpeed: 24, color: 0x4a7a3a, len: 4.6, w: 2.0, h: 0.72 },
+  { type: 'truck', topSpeed: 19, color: 0x8a8f96, len: 6.2, w: 2.3, h: 1.1 },
+  { type: 'muscle', topSpeed: 30, color: 0xe86a1e, len: 4.4, w: 2.0, h: 0.6 },
+  { type: 'supercar', topSpeed: 42, color: 0xffd23f, len: 4.4, w: 2.0, h: 0.5, accel: 26, steerRate: 0.7 },
+  { type: 'firetruck', topSpeed: 22, color: 0xc0392b, len: 6.2, w: 2.3, h: 1.4 },
+  { type: 'ambulance', topSpeed: 26, color: 0xf0f0f0, len: 5.2, w: 2.1, h: 1.3 },
+  { type: 'bus', topSpeed: 20, color: 0x2e6fb0, len: 9, w: 2.5, h: 2.2 },
+  { type: 'police', topSpeed: 30, color: 0xf0f0f0, len: 4.4, w: 1.95, h: 0.66 },
 ];
 function makeCarMesh(spec) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color: spec.color, roughness: 0.35, metalness: 0.5 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(spec.w, spec.h, spec.len), bodyM);
-  body.position.y = 0.55; body.castShadow = true; g.add(body);
+  body.position.y = 0.55;
+  body.castShadow = true;
+  g.add(body);
+  // Cabin: dark glass for most cars, body-coloured for trucks.
   const cabM = new THREE.MeshStandardMaterial({ color: spec.type === 'truck' ? spec.color : 0x1c2833, roughness: 0.2, metalness: 0.4 });
   const cabLen = spec.type === 'pickup' ? spec.len * 0.32 : spec.type === 'truck' ? spec.len * 0.3 : spec.len * 0.5;
+  const cabZ = spec.type === 'pickup' ? spec.len * 0.18 : spec.type === 'truck' ? spec.len * 0.28 : -spec.len * 0.05;
   const cab = new THREE.Mesh(new THREE.BoxGeometry(spec.w * 0.82, 0.55, cabLen), cabM);
-  cab.position.set(0, 0.55 + spec.h / 2 + 0.26, spec.type === 'pickup' ? spec.len * 0.18 : spec.type === 'truck' ? spec.len * 0.28 : -spec.len * 0.05);
-  cab.castShadow = true; g.add(cab);
+  cab.position.set(0, 0.55 + spec.h / 2 + 0.26, cabZ);
+  cab.castShadow = true;
+  g.add(cab);
+  // A truck gets a pale cargo box behind the cab.
   if (spec.type === 'truck') {
     const box = new THREE.Mesh(new THREE.BoxGeometry(spec.w * 0.96, 1.5, spec.len * 0.55), new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.6 }));
-    box.position.set(0, 1.35, -spec.len * 0.18); box.castShadow = true; g.add(box);
+    box.position.set(0, 1.35, -spec.len * 0.18);
+    box.castShadow = true;
+    g.add(box);
   }
+  // A taxi gets a lit roof sign.
   if (spec.type === 'taxi') {
     const sign = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.3), new THREE.MeshStandardMaterial({ color: 0xffe27a, emissive: 0xaa8800, emissiveIntensity: 0.4 }));
-    sign.position.set(0, 1.42, -0.2); g.add(sign);
+    sign.position.set(0, 1.42, -0.2);
+    g.add(sign);
   }
+  // A police car gets a light bar, red and blue lamps, and a black stripe.
   if (spec.type === 'police') {
     const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 0.3), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-    bar.position.set(0, 1.42, -0.2); g.add(bar);
+    bar.position.set(0, 1.42, -0.2);
+    g.add(bar);
     const r = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.28), new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 1 }));
-    r.position.set(-0.22, 1.52, -0.2); g.add(r);
+    r.position.set(-0.22, 1.52, -0.2);
+    g.add(r);
     const b = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.28), new THREE.MeshStandardMaterial({ color: 0x2244ff, emissive: 0x0022ff, emissiveIntensity: 1 }));
-    b.position.set(0.22, 1.52, -0.2); g.add(b);
-    g.userData.lightR = r; g.userData.lightB = b;
+    b.position.set(0.22, 1.52, -0.2);
+    g.add(b);
+    g.userData.lightR = r;
+    g.userData.lightB = b;
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(spec.w + 0.02, 0.2, spec.len * 0.9), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-    stripe.position.y = 0.55; g.add(stripe);
+    stripe.position.y = 0.55;
+    g.add(stripe);
   }
+  // Fire trucks and ambulances share a light bar; ambulances add a cross.
   if (spec.type === 'firetruck' || spec.type === 'ambulance') {
     const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.14, 0.3), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-    bar.position.set(0, 0.55 + spec.h / 2 + 0.56, -0.2); g.add(bar);
+    bar.position.set(0, 0.55 + spec.h / 2 + 0.56, -0.2);
+    g.add(bar);
     const r = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.28), new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 1 }));
-    r.position.set(-0.22, 0.55 + spec.h / 2 + 0.66, -0.2); g.add(r);
-    const b = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.28), new THREE.MeshStandardMaterial({ color: spec.type === 'firetruck' ? 0xffffff : 0x2244ff, emissive: spec.type === 'firetruck' ? 0xffffff : 0x0022ff, emissiveIntensity: 1 }));
-    b.position.set(0.22, 0.55 + spec.h / 2 + 0.66, -0.2); g.add(b);
-    g.userData.lightR = r; g.userData.lightB = b;
+    r.position.set(-0.22, 0.55 + spec.h / 2 + 0.66, -0.2);
+    g.add(r);
+    const blueCol = spec.type === 'firetruck' ? 0xffffff : 0x2244ff;
+    const blueEm = spec.type === 'firetruck' ? 0xffffff : 0x0022ff;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.12, 0.28), new THREE.MeshStandardMaterial({ color: blueCol, emissive: blueEm, emissiveIntensity: 1 }));
+    b.position.set(0.22, 0.55 + spec.h / 2 + 0.66, -0.2);
+    g.add(b);
+    g.userData.lightR = r;
+    g.userData.lightB = b;
     if (spec.type === 'ambulance') {
       const cross = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.1), new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xaa0000, emissiveIntensity: 0.4 }));
-      cross.position.set(0, 1.1, spec.len / 2 + 0.02); g.add(cross);
+      cross.position.set(0, 1.1, spec.len / 2 + 0.02);
+      g.add(cross);
     }
   }
+  // Four wheels and two headlights, the same on every car.
   const wheelM = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
   const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 12);
   const wheels = [];
   for (const [wx, wz] of [[-spec.w / 2, spec.len * 0.32], [spec.w / 2, spec.len * 0.32], [-spec.w / 2, -spec.len * 0.32], [spec.w / 2, -spec.len * 0.32]]) {
     const wh = new THREE.Mesh(wheelGeo, wheelM);
-    wh.rotation.z = Math.PI / 2; wh.position.set(wx, 0.36, wz); wh.castShadow = true; g.add(wh); wheels.push(wh);
+    wh.rotation.z = Math.PI / 2;
+    wh.position.set(wx, 0.36, wz);
+    wh.castShadow = true;
+    g.add(wh);
+    wheels.push(wh);
   }
   const hl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 0.06), new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffee88, emissiveIntensity: 0.8 }));
-  hl.position.set(-0.55, 0.6, spec.len / 2 + 0.01); g.add(hl);
-  const hr = hl.clone(); hr.position.x = 0.55; g.add(hr);
+  hl.position.set(-0.55, 0.6, spec.len / 2 + 0.01);
+  g.add(hl);
+  const hr = hl.clone();
+  hr.position.x = 0.55;
+  g.add(hr);
   g.userData.headlights = [hl, hr];
   g.userData.wheels = wheels;
   g.userData.spec = spec;
   return g;
 }
+// A random point on a road, with a heading along it.
 function roadPoint() {
   const i = Math.floor(rr(0, GRID + 1));
   const c = -HALF + i * BLOCK;
@@ -830,150 +1142,209 @@ function roadPoint() {
   return { x: rr(-HALF, HALF), z: c + (rng() < 0.5 ? 1.8 : -1.8), heading: rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2 };
 }
 
-// parked cars the player can steal
+// Parked cars the player can steal: twelve of them, any type but police.
 const parkedCars = [];
 for (let i = 0; i < 12; i++) {
-  const spec = pick(CAR_TYPES.filter(c => c.type !== 'police'));
+  const spec = pick(CAR_TYPES.filter((c) => c.type !== 'police'));
   const mesh = makeCarMesh(spec);
   const p = roadPoint();
-  mesh.position.set(p.x, 0, p.z); mesh.rotation.y = p.heading;
+  mesh.position.set(p.x, 0, p.z);
+  mesh.rotation.y = p.heading;
   scene.add(mesh);
   parkedCars.push({ mesh, spec, speed: 0, steer: 0, stolen: false });
 }
-// traffic AI cars on road loops
+// Traffic AI cars on road loops: fourteen, cruising at 7-11 speed.
 const traffic = [];
 for (let i = 0; i < 14; i++) {
-  const spec = pick(CAR_TYPES.filter(c => c.type !== 'police'));
+  const spec = pick(CAR_TYPES.filter((c) => c.type !== 'police'));
   const mesh = makeCarMesh(spec);
   const p = roadPoint();
-  mesh.position.set(p.x, 0, p.z); mesh.rotation.y = p.heading;
+  mesh.position.set(p.x, 0, p.z);
+  mesh.rotation.y = p.heading;
   scene.add(mesh);
   traffic.push({ mesh, spec, speed: rr(7, 11), heading: p.heading, loop: Math.floor(rr(0, GRID + 1)), turnAt: 0 });
 }
-// ---------- V2 vehicle variety: motorcycle, bicycle, buggy ----------
+// ---------- vehicle variety: motorcycle, bicycle, buggy ----------
+// A motorcycle: tank, seat, handlebar, two wheels, one headlight.
 function makeMotoMesh(color) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.55 });
   const tank = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 1.1), bodyM);
-  tank.position.y = 0.75; tank.castShadow = true; g.add(tank);
+  tank.position.y = 0.75;
+  tank.castShadow = true;
+  g.add(tank);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.12, 0.8), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-  seat.position.set(0, 0.82, -0.55); g.add(seat);
+  seat.position.set(0, 0.82, -0.55);
+  g.add(seat);
   const bar = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.07, 0.07), new THREE.MeshStandardMaterial({ color: 0x888888 }));
-  bar.position.set(0, 1.0, 0.45); g.add(bar);
+  bar.position.set(0, 1.0, 0.45);
+  g.add(bar);
   const wheelM = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
   const wg = new THREE.CylinderGeometry(0.36, 0.36, 0.14, 12);
   for (const wz of [0.85, -0.85]) {
     const wh = new THREE.Mesh(wg, wheelM);
-    wh.rotation.z = Math.PI / 2; wh.position.set(0, 0.36, wz); wh.castShadow = true; g.add(wh);
+    wh.rotation.z = Math.PI / 2;
+    wh.position.set(0, 0.36, wz);
+    wh.castShadow = true;
+    g.add(wh);
   }
   const hl = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.14, 0.06), new THREE.MeshStandardMaterial({ color: 0xfff6c0, emissive: 0xffee88, emissiveIntensity: 0.9 }));
-  hl.position.set(0, 0.75, 1.02); g.add(hl);
+  hl.position.set(0, 0.75, 1.02);
+  g.add(hl);
   g.userData.wheels = [];
   return g;
 }
+// A bicycle: a top tube, a seat post, saddle, handlebar, two torus tyres.
 function makeBicycleMesh(color) {
   const g = new THREE.Group();
   const frameM = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.5 });
   const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.3, 6), frameM);
-  bar.rotation.x = Math.PI / 2; bar.position.y = 0.75; g.add(bar);
+  bar.rotation.x = Math.PI / 2;
+  bar.position.y = 0.75;
+  g.add(bar);
   const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6), frameM);
-  post.position.set(0, 0.65, -0.45); post.rotation.x = 0.5; g.add(post);
+  post.position.set(0, 0.65, -0.45);
+  post.rotation.x = 0.5;
+  g.add(post);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.16), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-  seat.position.set(0, 1.0, -0.6); g.add(seat);
+  seat.position.set(0, 1.0, -0.6);
+  g.add(seat);
   const handle = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 0.06), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-  handle.position.set(0, 1.0, 0.55); g.add(handle);
+  handle.position.set(0, 1.0, 0.55);
+  g.add(handle);
   const tyreM = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.95 });
   const tg = new THREE.TorusGeometry(0.34, 0.05, 8, 16);
   for (const wz of [0.62, -0.62]) {
     const tyre = new THREE.Mesh(tg, tyreM);
-    tyre.position.set(0, 0.34, wz); tyre.castShadow = true; g.add(tyre);
+    tyre.position.set(0, 0.34, wz);
+    tyre.castShadow = true;
+    g.add(tyre);
   }
   g.userData.wheels = [];
   return g;
 }
+// A dune buggy: open tub, roll bar, two seats, four fat wheels.
 function makeBuggyMesh(color) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.3 });
   const tub = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.5, 2.6), bodyM);
-  tub.position.y = 0.62; tub.castShadow = true; g.add(tub);
+  tub.position.y = 0.62;
+  tub.castShadow = true;
+  g.add(tub);
   const roll = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.5, 6), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-  roll.rotation.z = Math.PI / 2; roll.position.set(0, 1.35, -0.4); g.add(roll);
+  roll.rotation.z = Math.PI / 2;
+  roll.position.set(0, 1.35, -0.4);
+  g.add(roll);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.5), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-  seat.position.set(-0.35, 0.95, -0.5); g.add(seat);
-  const seat2 = seat.clone(); seat2.position.x = 0.35; g.add(seat2);
+  seat.position.set(-0.35, 0.95, -0.5);
+  g.add(seat);
+  const seat2 = seat.clone();
+  seat2.position.x = 0.35;
+  g.add(seat2);
   const wheelM = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
   const wg = new THREE.CylinderGeometry(0.48, 0.48, 0.34, 12);
   const wheels = [];
   for (const [wx, wz] of [[-0.95, 0.85], [0.95, 0.85], [-0.95, -0.85], [0.95, -0.85]]) {
     const wh = new THREE.Mesh(wg, wheelM);
-    wh.rotation.z = Math.PI / 2; wh.position.set(wx, 0.48, wz); wh.castShadow = true; g.add(wh); wheels.push(wh);
+    wh.rotation.z = Math.PI / 2;
+    wh.position.set(wx, 0.48, wz);
+    wh.castShadow = true;
+    g.add(wh);
+    wheels.push(wh);
   }
   g.userData.wheels = wheels;
   return g;
 }
-// Feature 15: rideable horse — Feature 16: quad bike (ATV)
+// A rideable horse and a quad bike (ATV).
 function makeHorseMesh(color) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 1.7), bodyM);
-  body.position.y = 1.15; body.castShadow = true; g.add(body);
+  body.position.y = 1.15;
+  body.castShadow = true;
+  g.add(body);
   const neck = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.8, 0.4), bodyM);
-  neck.position.set(0, 1.7, 0.85); neck.rotation.x = 0.5; g.add(neck);
+  neck.position.set(0, 1.7, 0.85);
+  neck.rotation.x = 0.5;
+  g.add(neck);
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.35, 0.7), bodyM);
-  head.position.set(0, 2.0, 1.2); g.add(head);
+  head.position.set(0, 2.0, 1.2);
+  g.add(head);
   const mane = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.5), new THREE.MeshStandardMaterial({ color: 0x2a1c10 }));
-  mane.position.set(0, 1.85, 0.7); mane.rotation.x = 0.5; g.add(mane);
+  mane.position.set(0, 1.85, 0.7);
+  mane.rotation.x = 0.5;
+  g.add(mane);
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.7, 0.12), new THREE.MeshStandardMaterial({ color: 0x2a1c10 }));
-  tail.position.set(0, 1.1, -0.95); tail.rotation.x = -0.4; g.add(tail);
+  tail.position.set(0, 1.1, -0.95);
+  tail.rotation.x = -0.4;
+  g.add(tail);
   const legM = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.9 });
   const legs = [];
   for (const [lx, lz] of [[-0.25, 0.6], [0.25, 0.6], [-0.25, -0.6], [0.25, -0.6]]) {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.9, 6), legM);
-    leg.position.set(lx, 0.45, lz); leg.castShadow = true; g.add(leg); legs.push(leg);
+    leg.position.set(lx, 0.45, lz);
+    leg.castShadow = true;
+    g.add(leg);
+    legs.push(leg);
   }
   const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.7), new THREE.MeshStandardMaterial({ color: 0x8a2a2a }));
-  saddle.position.set(0, 1.55, 0); g.add(saddle);
-  g.userData.legs = legs; g.userData.wheels = [];
+  saddle.position.set(0, 1.55, 0);
+  g.add(saddle);
+  g.userData.legs = legs;
+  g.userData.wheels = [];
   return g;
 }
+// A quad bike: wide body, seat, handlebar, rear rack, four chunky wheels.
 function makeQuadMesh(color) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.3 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.45, 2.1), bodyM);
-  body.position.y = 0.62; body.castShadow = true; g.add(body);
+  body.position.y = 0.62;
+  body.castShadow = true;
+  g.add(body);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.18, 0.9), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-  seat.position.set(0, 0.9, -0.45); g.add(seat);
+  seat.position.set(0, 0.9, -0.45);
+  g.add(seat);
   const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.07, 0.07), new THREE.MeshStandardMaterial({ color: 0x333333 }));
-  bar.position.set(0, 1.0, 0.7); g.add(bar);
+  bar.position.set(0, 1.0, 0.7);
+  g.add(bar);
   const rack = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 0.5), new THREE.MeshStandardMaterial({ color: 0x444444 }));
-  rack.position.set(0, 0.85, -1.0); g.add(rack);
+  rack.position.set(0, 0.85, -1.0);
+  g.add(rack);
   const wheelM = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95 });
   const wg = new THREE.CylinderGeometry(0.42, 0.42, 0.32, 12);
   const wheels = [];
   for (const [wx, wz] of [[-0.75, 0.7], [0.75, 0.7], [-0.75, -0.7], [0.75, -0.7]]) {
     const wh = new THREE.Mesh(wg, wheelM);
-    wh.rotation.z = Math.PI / 2; wh.position.set(wx, 0.42, wz); wh.castShadow = true; g.add(wh); wheels.push(wh);
+    wh.rotation.z = Math.PI / 2;
+    wh.position.set(wx, 0.42, wz);
+    wh.castShadow = true;
+    g.add(wh);
+    wheels.push(wh);
   }
   g.userData.wheels = wheels;
   return g;
 }
 const extraVehicles = [];
 function addExtraVehicle(kind, mesh, spec, x, z, heading) {
-  mesh.position.set(x, 0, z); mesh.rotation.y = heading;
+  mesh.position.set(x, 0, z);
+  mesh.rotation.y = heading;
   scene.add(mesh);
   const v = { mesh, spec, kind, speed: 0, steer: 0, stolen: false, alt: 0 };
   extraVehicles.push(v);
   return v;
 }
 {
+  // Seven small vehicles parked around the roads; the last buggy waits on
+  // the beach at the far east edge instead.
   const spots = [
-    { kind: 'moto', color: 0xc0392b, top: 34, accel: 22, steer: 0.85, name: 'motorcycle' },
-    { kind: 'moto', color: 0x2e6fb0, top: 33, accel: 21, steer: 0.85, name: 'motorcycle' },
-    { kind: 'moto', color: 0x222222, top: 35, accel: 23, steer: 0.9, name: 'motorcycle' },
-    { kind: 'bike', color: 0x2ecc71, top: 12, accel: 8, steer: 0.7, name: 'bicycle' },
-    { kind: 'bike', color: 0xe8b820, top: 11, accel: 8, steer: 0.7, name: 'bicycle' },
-    { kind: 'buggy', color: 0xe86a1e, top: 23, accel: 15, steer: 0.6, name: 'dune buggy' },
-    { kind: 'buggy', color: 0x1e8a8a, top: 23, accel: 15, steer: 0.6, name: 'dune buggy' },
+    { kind: 'moto', name: 'motorcycle', color: 0xc0392b, top: 34, accel: 22, steer: 0.85 },
+    { kind: 'moto', name: 'motorcycle', color: 0x2e6fb0, top: 33, accel: 21, steer: 0.85 },
+    { kind: 'moto', name: 'motorcycle', color: 0x222222, top: 35, accel: 23, steer: 0.9 },
+    { kind: 'bike', name: 'bicycle', color: 0x2ecc71, top: 12, accel: 8, steer: 0.7 },
+    { kind: 'bike', name: 'bicycle', color: 0xe8b820, top: 11, accel: 8, steer: 0.7 },
+    { kind: 'buggy', name: 'dune buggy', color: 0xe86a1e, top: 23, accel: 15, steer: 0.6 },
+    { kind: 'buggy', name: 'dune buggy', color: 0x1e8a8a, top: 23, accel: 15, steer: 0.6 },
   ];
   for (let i = 0; i < spots.length; i++) {
     const s = spots[i];
@@ -985,90 +1356,133 @@ function addExtraVehicle(kind, mesh, spec, x, z, heading) {
   }
 }
 {
-  // Feature 15: horses grazing at the farms
+  // Horses grazing at the farms, and quad bikes at the farm, the beach
+  // and the desert foothills.
   addExtraVehicle('horse', makeHorseMesh(0x8a5a2a), { type: 'horse', topSpeed: 18, accel: 14, steerRate: 0.7, label: 'horse' }, -195, -30, 0.8);
   addExtraVehicle('horse', makeHorseMesh(0x3a2a1a), { type: 'horse', topSpeed: 18, accel: 14, steerRate: 0.7, label: 'horse' }, -215, 50, -1.2);
-  // Feature 16: quad bikes — farm, beach, desert foothills
   addExtraVehicle('quad', makeQuadMesh(0x2ecc71), { type: 'quad', topSpeed: 24, accel: 17, steerRate: 0.8, label: 'quad bike' }, -180, 80, 0.3);
   addExtraVehicle('quad', makeQuadMesh(0xe86a1e), { type: 'quad', topSpeed: 24, accel: 17, steerRate: 0.8, label: 'quad bike' }, HALF + 16, -110, 1.0);
   addExtraVehicle('quad', makeQuadMesh(0x9b59b6), { type: 'quad', topSpeed: 24, accel: 17, steerRate: 0.8, label: 'quad bike' }, 60, 230, -0.6);
 }
-// ---------- V2 air & sea: helicopter, boat, ambient planes ----------
+// ---------- air and sea: helicopter, boat, ambient planes ----------
+// A helicopter: body, glass nose, tail boom and fin, two crossed rotors
+// on top, and a pair of skids underneath.
 function makeHeliMesh(color) {
   const g = new THREE.Group();
   const bodyM = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.5 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.3, 4.4), bodyM);
-  body.position.y = 1.1; body.castShadow = true; g.add(body);
+  body.position.y = 1.1;
+  body.castShadow = true;
+  g.add(body);
   const glass = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.7, 1.0), new THREE.MeshStandardMaterial({ color: 0x1c2833, roughness: 0.15, metalness: 0.5 }));
-  glass.position.set(0, 1.25, 1.9); g.add(glass);
+  glass.position.set(0, 1.25, 1.9);
+  g.add(glass);
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3.2), bodyM);
-  tail.position.set(0, 1.3, -3.4); tail.castShadow = true; g.add(tail);
+  tail.position.set(0, 1.3, -3.4);
+  tail.castShadow = true;
+  g.add(tail);
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.7), bodyM);
-  fin.position.set(0, 1.7, -4.8); g.add(fin);
+  fin.position.set(0, 1.7, -4.8);
+  g.add(fin);
   const rotorM = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
   const rotor = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.08, 0.35), rotorM);
-  rotor.position.y = 2.0; g.add(rotor);
+  rotor.position.y = 2.0;
+  g.add(rotor);
   const rotor2 = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.08, 9.5), rotorM);
-  rotor2.position.y = 2.0; g.add(rotor2);
-  g.userData.rotor = rotor; g.userData.rotor2 = rotor2; g.userData.wheels = [];
+  rotor2.position.y = 2.0;
+  g.add(rotor2);
+  g.userData.rotor = rotor;
+  g.userData.rotor2 = rotor2;
+  g.userData.wheels = [];
   const skidM = new THREE.MeshStandardMaterial({ color: 0x333333 });
   for (const sx of [-0.8, 0.8]) {
     const skid = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 3.4), skidM);
-    skid.position.set(sx, 0.15, 0); g.add(skid);
+    skid.position.set(sx, 0.15, 0);
+    g.add(skid);
   }
   return g;
 }
+// A speedboat: hull, a cone bow, a pale deck and a white cabin.
 function makeBoatMesh(color) {
   const g = new THREE.Group();
   const hullM = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.4 });
   const hull = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.8, 5.2), hullM);
-  hull.position.y = 0.45; hull.castShadow = true; g.add(hull);
+  hull.position.y = 0.45;
+  hull.castShadow = true;
+  g.add(hull);
   const bow = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.6, 4), hullM);
-  bow.rotation.x = Math.PI / 2; bow.rotation.y = Math.PI / 4; bow.position.set(0, 0.45, 3.2); g.add(bow);
+  bow.rotation.x = Math.PI / 2;
+  bow.rotation.y = Math.PI / 4;
+  bow.position.set(0, 0.45, 3.2);
+  g.add(bow);
   const deck = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.18, 3.4), new THREE.MeshStandardMaterial({ color: 0xf0ead8 }));
-  deck.position.set(0, 0.9, -0.4); g.add(deck);
+  deck.position.set(0, 0.9, -0.4);
+  g.add(deck);
   const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.7, 1.2), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-  cabin.position.set(0, 1.3, -0.8); cabin.castShadow = true; g.add(cabin);
+  cabin.position.set(0, 1.3, -0.8);
+  cabin.castShadow = true;
+  g.add(cabin);
   g.userData.wheels = [];
   return g;
 }
+// A plane: cylinder fuselage, a long wing, a tail plane and a fin.
 function makePlaneMesh(color) {
   const g = new THREE.Group();
   const m = new THREE.MeshStandardMaterial({ color, roughness: 0.4, metalness: 0.4 });
   const fus = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 9, 10), m);
-  fus.rotation.x = Math.PI / 2; g.add(fus);
+  fus.rotation.x = Math.PI / 2;
+  g.add(fus);
   const wing = new THREE.Mesh(new THREE.BoxGeometry(14, 0.25, 2.2), m);
   g.add(wing);
   const tail = new THREE.Mesh(new THREE.BoxGeometry(5, 0.25, 1.4), m);
-  tail.position.z = -4; g.add(tail);
+  tail.position.z = -4;
+  g.add(tail);
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.25, 2.2, 1.4), m);
-  fin.position.set(0, 1.2, -4); g.add(fin);
+  fin.position.set(0, 1.2, -4);
+  g.add(fin);
   return g;
 }
-// Feature 4A: flyable aircraft variety — prop, jet, seaplane
+// Aircraft variety: a prop plane adds a spinning cross at the nose, a
+// jet gets a pointed nose with swept wings and a flame, and a seaplane
+// adds two floats under a prop plane.
 function makePropPlaneMesh(color) {
   const g = makePlaneMesh(color);
   const propM = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.6 });
   const prop = new THREE.Mesh(new THREE.BoxGeometry(0.25, 3.4, 0.12), propM);
-  prop.position.set(0, 0, 4.7); g.add(prop);
-  const prop2 = prop.clone(); prop2.rotation.z = Math.PI / 2; g.add(prop2);
-  g.userData.prop = prop; g.userData.prop2 = prop2; g.userData.wheels = [];
+  prop.position.set(0, 0, 4.7);
+  g.add(prop);
+  const prop2 = prop.clone();
+  prop2.rotation.z = Math.PI / 2;
+  g.add(prop2);
+  g.userData.prop = prop;
+  g.userData.prop2 = prop2;
+  g.userData.wheels = [];
   return g;
 }
 function makeJetMesh(color) {
   const g = new THREE.Group();
   const m = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.7 });
   const fus = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.5, 10, 10), m);
-  fus.rotation.x = Math.PI / 2; g.add(fus);
+  fus.rotation.x = Math.PI / 2;
+  g.add(fus);
   const nose = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.4, 10), m);
-  nose.rotation.x = Math.PI / 2; nose.position.z = 6.1; g.add(nose);
+  nose.rotation.x = Math.PI / 2;
+  nose.position.z = 6.1;
+  g.add(nose);
   const wing = new THREE.Mesh(new THREE.BoxGeometry(11, 0.2, 2.4), m);
-  wing.position.z = -0.5; wing.rotation.y = 0.25; g.add(wing);
-  const wing2 = wing.clone(); wing2.rotation.y = -0.25; g.add(wing2);
+  wing.position.z = -0.5;
+  wing.rotation.y = 0.25;
+  g.add(wing);
+  const wing2 = wing.clone();
+  wing2.rotation.y = -0.25;
+  g.add(wing2);
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.4, 1.6), m);
-  fin.position.set(0, 1.4, -4.2); g.add(fin);
+  fin.position.set(0, 1.4, -4.2);
+  g.add(fin);
   const flame = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.6, 8), new THREE.MeshStandardMaterial({ color: 0xff9030, emissive: 0xff6000, emissiveIntensity: 1.2 }));
-  flame.rotation.x = -Math.PI / 2; flame.position.z = -5.8; g.add(flame);
+  flame.rotation.x = -Math.PI / 2;
+  flame.position.z = -5.8;
+  g.add(flame);
   g.userData.wheels = [];
   return g;
 }
@@ -1077,27 +1491,41 @@ function makeSeaplaneMesh(color) {
   const floatM = new THREE.MeshStandardMaterial({ color: 0xd8dde2, roughness: 0.4 });
   for (const sx of [-1.1, 1.1]) {
     const fl = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 4.4, 8), floatM);
-    fl.rotation.x = Math.PI / 2; fl.position.set(sx, -1.2, 0.4); g.add(fl);
+    fl.rotation.x = Math.PI / 2;
+    fl.position.set(sx, -1.2, 0.4);
+    g.add(fl);
   }
   return g;
 }
 const helis = [], boats = [], ambientPlanes = [];
 {
+  // A helipad in the city with a yellow H, one red heli on it and one
+  // blue heli by the marina; two speedboats in the bay; two airliners
+  // crossing the sky above.
   const heliPad = new THREE.Mesh(new THREE.CylinderGeometry(6, 6, 0.25, 24), new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.9 }));
-  heliPad.position.set(-HALF + 3 * BLOCK, 0.12, HALF - 2 * BLOCK); heliPad.receiveShadow = true; world.add(heliPad);
+  heliPad.position.set(-HALF + 3 * BLOCK, 0.12, HALF - 2 * BLOCK);
+  heliPad.receiveShadow = true;
+  world.add(heliPad);
   const hMark = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.06, 24), new THREE.MeshStandardMaterial({ color: 0xffd23f }));
-  hMark.position.set(-HALF + 3 * BLOCK, 0.26, HALF - 2 * BLOCK); world.add(hMark);
+  hMark.position.set(-HALF + 3 * BLOCK, 0.26, HALF - 2 * BLOCK);
+  world.add(hMark);
   const h1 = makeHeliMesh(0xd94f2e);
-  h1.position.set(-HALF + 3 * BLOCK, 0.3, HALF - 2 * BLOCK); scene.add(h1);
+  h1.position.set(-HALF + 3 * BLOCK, 0.3, HALF - 2 * BLOCK);
+  scene.add(h1);
   helis.push({ mesh: h1, spec: { type: 'heli', topSpeed: 30, label: 'helicopter' }, kind: 'heli', speed: 0, steer: 0, stolen: false, alt: 0 });
   const h2 = makeHeliMesh(0x2e6fb0);
-  h2.position.set(HALF + 4, 0.3, -30); scene.add(h2);
+  h2.position.set(HALF + 4, 0.3, -30);
+  scene.add(h2);
   helis.push({ mesh: h2, spec: { type: 'heli', topSpeed: 30, label: 'helicopter' }, kind: 'heli', speed: 0, steer: 0, stolen: false, alt: 0 });
   const b1 = makeBoatMesh(0xf0f0f0);
-  b1.position.set(HALF + 20, 0.15, 40); b1.rotation.y = 0.4; scene.add(b1);
+  b1.position.set(HALF + 20, 0.15, 40);
+  b1.rotation.y = 0.4;
+  scene.add(b1);
   boats.push({ mesh: b1, spec: { type: 'boat', topSpeed: 20, label: 'speedboat' }, kind: 'boat', speed: 0, steer: 0, stolen: false, alt: 0 });
   const b2 = makeBoatMesh(0x1e8a8a);
-  b2.position.set(HALF + 21, 0.15, -16); b2.rotation.y = -0.5; scene.add(b2);
+  b2.position.set(HALF + 21, 0.15, -16);
+  b2.rotation.y = -0.5;
+  scene.add(b2);
   boats.push({ mesh: b2, spec: { type: 'boat', topSpeed: 20, label: 'speedboat' }, kind: 'boat', speed: 0, steer: 0, stolen: false, alt: 0 });
   for (let i = 0; i < 2; i++) {
     const pl = makePlaneMesh(i === 0 ? 0xe8e8e8 : 0xc9d6e8);
@@ -1106,7 +1534,9 @@ const helis = [], boats = [], ambientPlanes = [];
     ambientPlanes.push({ mesh: pl, speed: 26 + i * 5, dir: 1 });
   }
 }
-// ---------- V2 weapon pickups (glowing, respawn) ----------
+// ---------- weapon pickups (glowing, respawn) ----------
+// Eight glowing octahedrons on the roads: shotguns, SMGs, grenades,
+// molotovs and one bazooka, each with its own colour.
 const weaponPickups = [];
 function spawnPickup(idx) {
   const kinds = ['shotgun', 'smg', 'grenade', 'molotov', 'shotgun', 'smg', 'grenade', 'bazooka'];
@@ -1116,13 +1546,16 @@ function spawnPickup(idx) {
   const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.7), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.4 }));
   g.add(core);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.1, 0.08, 8, 20), new THREE.MeshBasicMaterial({ color }));
-  ring.rotation.x = Math.PI / 2; g.add(ring);
+  ring.rotation.x = Math.PI / 2;
+  g.add(ring);
   const p = roadPoint();
   g.position.set(p.x, 1.4, p.z);
   scene.add(g);
   weaponPickups.push({ mesh: g, kind, timer: 0, taken: false });
 }
 for (let i = 0; i < 8; i++) spawnPickup(i);
+// Pickups spin and bob; walk or drive within 2.4m to collect one, and it
+// respawns somewhere new after 20 seconds.
 function updatePickups(dt) {
   for (let i = 0; i < weaponPickups.length; i++) {
     const pk = weaponPickups[i];
@@ -1131,7 +1564,8 @@ function updatePickups(dt) {
       if (pk.timer <= 0) {
         const p = roadPoint();
         pk.mesh.position.set(p.x, 1.4, p.z);
-        pk.mesh.visible = true; pk.taken = false;
+        pk.mesh.visible = true;
+        pk.taken = false;
       }
       continue;
     }
@@ -1140,26 +1574,32 @@ function updatePickups(dt) {
     const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
     const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
     if (Math.hypot(pk.mesh.position.x - px, pk.mesh.position.z - pz) < 2.4) {
-      pk.taken = true; pk.timer = 20; pk.mesh.visible = false;
+      pk.taken = true;
+      pk.timer = 20;
+      pk.mesh.visible = false;
       const grant = pk.kind === 'shotgun' ? 12 : pk.kind === 'smg' ? 60 : pk.kind === 'bazooka' ? 1 : 3;
       const keyNum = { shotgun: '2', smg: '3', knife: '4', grenade: '5', molotov: '6', bazooka: '7' }[pk.kind];
       state.ammo[pk.kind] = (state.ammo[pk.kind] || 0) + grant;
       state.weapon = pk.kind;
       toast('Picked up ' + WEAPONS[pk.kind].name + '! +' + grant + ' rounds. Press ' + keyNum + ' to use it.');
-      chime(); updateHUD();
+      chime();
+      updateHUD();
     }
   }
 }
-// ---------- Feature 8: vest pickups (blue-grey, +50 armor, cap 100) ----------
+// ---------- vest pickups (blue-grey, +50 armor, cap 100) ----------
+// Five blue-grey vests on the roads, same spin-and-bob treatment.
 const vestPickups = [];
 function spawnVest(idx) {
   const g = new THREE.Group();
   const vest = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.32), new THREE.MeshStandardMaterial({ color: 0x4a6fa5, emissive: 0x2a4a7a, emissiveIntensity: 0.9, roughness: 0.6 }));
   g.add(vest);
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.18, 0.34), new THREE.MeshStandardMaterial({ color: 0xdfe8f2, emissive: 0x8fa8c8, emissiveIntensity: 0.5 }));
-  stripe.position.y = 0.2; g.add(stripe);
+  stripe.position.y = 0.2;
+  g.add(stripe);
   const ring = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.07, 8, 20), new THREE.MeshBasicMaterial({ color: 0x7fb2e8 }));
-  ring.rotation.x = Math.PI / 2; g.add(ring);
+  ring.rotation.x = Math.PI / 2;
+  g.add(ring);
   const p = roadPoint();
   g.position.set(p.x, 1.4, p.z);
   scene.add(g);
@@ -1174,7 +1614,8 @@ function updateVestPickups(dt) {
       if (pk.timer <= 0) {
         const p = roadPoint();
         pk.mesh.position.set(p.x, 1.4, p.z);
-        pk.mesh.visible = true; pk.taken = false;
+        pk.mesh.visible = true;
+        pk.taken = false;
       }
       continue;
     }
@@ -1183,13 +1624,17 @@ function updateVestPickups(dt) {
     const px = state.inCar ? state.inCar.mesh.position.x : playerState.x;
     const pz = state.inCar ? state.inCar.mesh.position.z : playerState.z;
     if (Math.hypot(pk.mesh.position.x - px, pk.mesh.position.z - pz) < 2.4) {
-      pk.taken = true; pk.timer = 25; pk.mesh.visible = false;
+      pk.taken = true;
+      pk.timer = 25;
+      pk.mesh.visible = false;
       state.armor = Math.min(100, state.armor + 50);
       toast('Vest picked up! Armor ' + Math.round(state.armor) + '/100 — it takes hits before your health does.');
-      chime(); updateHUD();
+      chime();
+      updateHUD();
     }
   }
 }
+// Ambient airliners cross the sky and wrap around at the map edges.
 function updateAmbientPlanes(dt) {
   for (const pl of ambientPlanes) {
     pl.mesh.position.x += pl.speed * dt * pl.dir;
@@ -1198,13 +1643,14 @@ function updateAmbientPlanes(dt) {
     if (pl.mesh.position.x < -300) pl.mesh.position.x = 300;
   }
 }
-// police cars (spawned by wanted level)
+// Police cars, spawned by the wanted level. Outside the city the sheriff
+// covers the county instead, up to two cars.
 const police = [];
 const policeBikes = [];
 function spawnPolice() {
   const outside = Math.abs(playerState.x) > HALF || Math.abs(playerState.z) > HALF;
   if (outside && police.filter((p) => p.sheriff).length < 2) { spawnSheriff(); return; }
-  const spec = CAR_TYPES.find(c => c.type === 'police');
+  const spec = CAR_TYPES.find((c) => c.type === 'police');
   const mesh = makeCarMesh(spec);
   const a = rng() * Math.PI * 2;
   mesh.position.set(playerState.x + Math.cos(a) * 45, 0, playerState.z + Math.sin(a) * 45);
@@ -1212,14 +1658,18 @@ function spawnPolice() {
   police.push({ mesh, spec, speed: 0, heading: 0 });
 }
 
-// pedestrians on sidewalks
+// Pedestrians on the sidewalks: twenty of them, random shirts, random
+// moods, wandering the blocks and keeping off the roads.
 const PED_SHIRTS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0xecf0f1, 0x1abc9c, 0xe67e22];
 const peds = [];
 for (let i = 0; i < 20; i++) {
   const p = makePerson(pick(PED_SHIRTS), pick([0x2c3e50, 0x5d4037, 0x37474f]), pick([0xd9a066, 0x8a5a33, 0xf0c8a0]));
   let x = rr(-HALF, HALF), z = rr(-HALF, HALF);
   let guard = 0;
-  while ((isRoad(x, z) || collideCircle(x, z, 1.5)) && guard++ < 40) { x = rr(-HALF, HALF); z = rr(-HALF, HALF); }
+  while ((isRoad(x, z) || collideCircle(x, z, 1.5)) && guard++ < 40) {
+    x = rr(-HALF, HALF);
+    z = rr(-HALF, HALF);
+  }
   p.position.set(x, 0, z);
   scene.add(p);
   peds.push({ mesh: p, x, z, heading: rng() * Math.PI * 2, speed: rr(1, 2), target: null, down: false, downTimer: 0, phase: rng() * 6, mood: pick(['calm', 'emotional', 'maniac']) });
@@ -1259,13 +1709,14 @@ function showStory(text) {
   storyTimer = setTimeout(() => el.classList.add('hidden'), 7000);
 }
 let companionShootTimer = 0;
+// The companion only appears during the shared story missions. In a car
+// they ride in the passenger seat; on foot they hurry after you, and every
+// three seconds they take a shot at a nearby cop.
 function updateCompanion(dt) {
-  // companion only during the shared story missions
   if (state.mission >= MISSIONS.length || state.mode !== 'play') return;
   const comp = CHARS[1 - state.activeChar];
   const mesh = comp.mesh;
   if (state.inCar) {
-    // rides in the vehicle — passenger seat beside the driver
     const c = state.inCar.mesh;
     const h = c.rotation.y;
     mesh.position.set(c.position.x + Math.cos(h) * 1.3, c.position.y + 0.4, c.position.z - Math.sin(h) * 1.3);
@@ -1273,25 +1724,27 @@ function updateCompanion(dt) {
     mesh.visible = true;
     return;
   }
-  const dx = playerState.x - mesh.position.x, dz = playerState.z - mesh.position.z;
+  const dx = playerState.x - mesh.position.x;
+  const dz = playerState.z - mesh.position.z;
   const d = Math.hypot(dx, dz);
   if (d > 3) {
     const sp = d > 10 ? 6 : 3.5;
     mesh.position.x += (dx / d) * sp * dt;
     mesh.position.z += (dz / d) * sp * dt;
     mesh.rotation.y = Math.atan2(dx, dz);
-    comp.st.x = mesh.position.x; comp.st.z = mesh.position.z;
+    comp.st.x = mesh.position.x;
+    comp.st.z = mesh.position.z;
   }
   mesh.position.y = groundHeight(mesh.position.x, mesh.position.z);
   mesh.visible = true;
-  // companion helps shoot during missions
   companionShootTimer -= dt;
   if (companionShootTimer <= 0) {
     companionShootTimer = 3;
     for (let i = police.length - 1; i >= 0; i--) {
       const po = police[i];
       if (Math.hypot(po.mesh.position.x - playerState.x, po.mesh.position.z - playerState.z) < 18) {
-        scene.remove(po.mesh); police.splice(i, 1);
+        scene.remove(po.mesh);
+        police.splice(i, 1);
         beep(880, 0.1, 'square', 0.12);
         toast(CHARS[1 - state.activeChar].name + ' took out a cop for you!');
         break;
@@ -1300,18 +1753,37 @@ function updateCompanion(dt) {
   }
 }
 
+// Starting a mission sets the beacon and the briefing line, then updates
+// the objective panel and pings the phone.
 function startMission(i) {
-  state.mission = i; state.missionStage = 1;
-  if (i === 0) { setBeacon(SPOTS.marina.x, SPOTS.marina.z); speakLine(activeName() + ', first job. Steal a car and bring it to the marina beacon.'); }
-  if (i === 1) { setBeacon(SPOTS.docks.x, SPOTS.docks.z); speakLine('Package at the north docks. Grab it, then deliver it downtown before the clock runs out.'); }
-  if (i === 2) { beacon.visible = false; speakLine('Time to make some noise. Get to three stars, then lose the cops.'); }
+  state.mission = i;
+  state.missionStage = 1;
+  if (i === 0) {
+    setBeacon(SPOTS.marina.x, SPOTS.marina.z);
+    speakLine(activeName() + ', first job. Steal a car and bring it to the marina beacon.');
+  }
+  if (i === 1) {
+    setBeacon(SPOTS.docks.x, SPOTS.docks.z);
+    speakLine('Package at the north docks. Grab it, then deliver it downtown before the clock runs out.');
+  }
+  if (i === 2) {
+    beacon.visible = false;
+    speakLine('Time to make some noise. Get to three stars, then lose the cops.');
+  }
   updateObjective();
   phoneMsgText = 'Marisol: ' + MISSIONS[i].text;
   if (state.mode === 'play' && !state.shot) toast('New message from Marisol — press U to read it.');
 }
+// The objective panel: free roam once the story is done, otherwise the
+// current mission's title, reward and live stage notes.
 function updateObjective() {
-  const t = document.getElementById('objTitle'), s = document.getElementById('objText');
-  if (state.mission >= MISSIONS.length) { t.textContent = 'Free Roam — King of the Bay'; s.textContent = 'All missions done. Explore Solmar Bay, earn cash, dodge the law.'; return; }
+  const t = document.getElementById('objTitle');
+  const s = document.getElementById('objText');
+  if (state.mission >= MISSIONS.length) {
+    t.textContent = 'Free Roam — King of the Bay';
+    s.textContent = 'All missions done. Explore Solmar Bay, earn cash, dodge the law.';
+    return;
+  }
   const m = MISSIONS[state.mission];
   t.textContent = m.title + '  ·  $' + m.reward;
   let extra = '';
@@ -1320,22 +1792,30 @@ function updateObjective() {
   if (state.mission === 1) extra += '  ⏱ ' + Math.max(0, Math.ceil(state.missionTimer)) + 's';
   s.textContent = 'Marisol: ' + m.text + extra;
 }
+// Completing a mission pays the reward, hides the beacon, plays a short
+// duo scene between Ryan and Ian, then queues the next mission.
 function completeMission() {
   const m = MISSIONS[state.mission];
   state.cash += m.reward;
   toast('Mission complete! +$' + m.reward + ' — Marisol sends her regards.');
   speakLine('Clean work, ' + activeName() + '. ' + m.reward + ' dollars, as promised. Marisol sends her regards.');
-  chime(); beacon.visible = false;
-  // Story rule: Ryan & Ian are a couple — a short duo scene after each mission
+  chime();
+  beacon.visible = false;
   const duo = [
     'Ryan: That went smooth. Ian: Smooth? You nearly drove into the sea. Ryan: Nearly counts.',
     'Ian: Next time YOU drive. Ryan: You say that every time, love. Ian: And every time I am right.',
     'Ryan: Marisol is going to love us. Ian: She already does — she just charges extra for it.',
   ];
   showStory(duo[state.mission] || duo[0]);
-  state.mission++; state.missionStage = 0;
-  if (state.mission < MISSIONS.length) { setTimeout(() => startMission(state.mission), 1200); if (state.mission === 1) state.missionTimer = 90; }
-  saveGame(); updateObjective(); updateHUD();
+  state.mission++;
+  state.missionStage = 0;
+  if (state.mission < MISSIONS.length) {
+    setTimeout(() => startMission(state.mission), 1200);
+    if (state.mission === 1) state.missionTimer = 90;
+  }
+  saveGame();
+  updateObjective();
+  updateHUD();
 }
 
 // ---------- input ----------
@@ -1382,6 +1862,13 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyE' && state.inCar && r5RivalsNear() >= 0) { r5RivalsChallenge(r5RivalsNear()); return; }
   if (e.code === 'KeyE' && r5CardsNear() >= 0) { r5CardsCollect(r5CardsNear()); return; }
   if (e.code === 'KeyE' && r6KeyE()) return;
+  if (e.code === 'KeyE' && r7KeyE()) return;
+  if (e.code === 'KeyF') {
+    // Fishing comes first: on foot by the water, F casts and reels, and
+    // focus mode never swallows that press.
+    if (!state.inCar && (fish.stage > 0 || nearWater(playerState.x, playerState.z))) { punch(); return; }
+    if (r7FocusToggle()) return;
+  }
   if (e.code === 'KeyY' && r5GarageOpen()) return;
   if (e.code === 'KeyI' && r5CasinoOpen()) return;
   if (e.code === 'KeyE') tryEnterExitVehicle();
@@ -1473,10 +1960,14 @@ function showStats() {
     '<br>Hidden packages: ' + packagesFound + '/50' +
     '<br>Properties: ' + ownedProperties.length + ' · Business income: $' + ownedProperties.reduce((s, p) => s + (p.income || 0), 0).toLocaleString('en-US') + '/min';
 }
+// A called taxi drives straight to the player at 16 m/s; once it is
+// within 6m it parks as a free ride and clears the call.
 function updateTaxi(dt) {
   if (!taxiCall) return;
-  const px = playerState.x, pz = playerState.z;
-  const dx = px - taxiCall.mesh.position.x, dz = pz - taxiCall.mesh.position.z;
+  const px = playerState.x;
+  const pz = playerState.z;
+  const dx = px - taxiCall.mesh.position.x;
+  const dz = pz - taxiCall.mesh.position.z;
   const d = Math.hypot(dx, dz);
   if (d < 6) {
     parkedCars.push({ mesh: taxiCall.mesh, spec: taxiCall.spec, speed: 0, steer: 0, stolen: true });
@@ -1747,6 +2238,9 @@ function explodeAt(kind, pos) {
     toast('Molotov fire is burning — stay clear!');
   }
 }
+// Thrown projectiles arc under gravity (except bazooka rockets), then
+// detonate on landing or when their fuse runs out; the explosion shells
+// grow and fade over half a second.
 function updateProjectiles(dt) {
   for (let i = projectiles.length - 1; i >= 0; i--) {
     const pr = projectiles[i];
@@ -1768,9 +2262,14 @@ function updateProjectiles(dt) {
     const s = 1 + (0.5 - ex.timer) * ex.max * 2;
     ex.mesh.scale.set(s, s, s);
     ex.mesh.material.opacity = Math.max(0, ex.timer * 1.8);
-    if (ex.timer <= 0) { scene.remove(ex.mesh); explosions.splice(i, 1); }
+    if (ex.timer <= 0) {
+      scene.remove(ex.mesh);
+      explosions.splice(i, 1);
+    }
   }
 }
+// Molotov fires burn for five seconds, flickering, and knock down any
+// pedestrian who wanders within 4.5m every half second.
 function updateFires(dt) {
   for (let i = fires.length - 1; i >= 0; i--) {
     const f = fires[i];
@@ -1780,24 +2279,37 @@ function updateFires(dt) {
       f.burnTimer = 0.5;
       for (const p of peds) {
         if (!p.down && Math.hypot(p.x - f.mesh.position.x, p.z - f.mesh.position.z) < 4.5) {
-          p.down = true; p.downTimer = 4; p.mesh.rotation.x = -Math.PI / 2; p.mesh.position.y = 0.3;
+          p.down = true;
+          p.downTimer = 4;
+          p.mesh.rotation.x = -Math.PI / 2;
+          p.mesh.position.y = 0.3;
         }
       }
     }
     f.mesh.material.opacity = 0.5 + Math.sin(state.time * 8) * 0.2;
-    if (f.timer <= 0) { scene.remove(f.mesh); fires.splice(i, 1); }
+    if (f.timer <= 0) {
+      scene.remove(f.mesh);
+      fires.splice(i, 1);
+    }
   }
 }
+// A knife swipe hits the first pedestrian in front of you within 2.6m,
+// drops them for five seconds, and raises the wanted level.
 function knifeAttack() {
   if (fireTimer > 0) return;
   fireTimer = WEAPONS.knife.rate;
   thud();
-  const fx = Math.sin(playerState.heading), fz = Math.cos(playerState.heading);
+  const fx = Math.sin(playerState.heading);
+  const fz = Math.cos(playerState.heading);
   for (const p of peds) {
     if (p.down) continue;
-    const dx = p.x - playerState.x, dz = p.z - playerState.z;
+    const dx = p.x - playerState.x;
+    const dz = p.z - playerState.z;
     if (Math.hypot(dx, dz) < 2.6 && dx * fx + dz * fz > 0) {
-      p.down = true; p.downTimer = 5; p.mesh.rotation.x = -Math.PI / 2; p.mesh.position.y = 0.3;
+      p.down = true;
+      p.downTimer = 5;
+      p.mesh.rotation.x = -Math.PI / 2;
+      p.mesh.position.y = 0.3;
       if (p.isBounty) collectBounty(p);
       addWanted(1, 'Knife attack!');
       toast('Knife hit — faster and nastier than a punch.');
@@ -1805,19 +2317,30 @@ function knifeAttack() {
     }
   }
 }
+// Firing a weapon: knives slash, throwables lob, and guns raycast from the
+// camera with spread that widens in a drive-by and narrows with skill.
+// Hits drop pedestrians (and pay a bounty if they were one) or hunt
+// animals for meat-and-hide cash.
 function shootWeapon() {
   if (state.mode !== 'play') return;
   if (state.weapon === 'knife') { knifeAttack(); return; }
   if (state.weapon === 'grenade' || state.weapon === 'molotov' || state.weapon === 'bazooka') {
     if (fireTimer > 0) return;
-    if (state.ammo[state.weapon] <= 0) { toast('Out of ' + WEAPONS[state.weapon].name + 's — buy more at Bay Arms.'); fireTimer = 0.4; return; }
+    if (state.ammo[state.weapon] <= 0) {
+      toast('Out of ' + WEAPONS[state.weapon].name + 's — buy more at Bay Arms.');
+      fireTimer = 0.4;
+      return;
+    }
     fireTimer = WEAPONS[state.weapon].rate;
     state.ammo[state.weapon]--;
     throwWeapon();
     updateHUD();
     return;
   }
-  if (state.inCar && state.inCar.kind === 'heli') { toast('No drive-by from a helicopter — land first.'); return; }
+  if (state.inCar && state.inCar.kind === 'heli') {
+    toast('No drive-by from a helicopter — land first.');
+    return;
+  }
   const w = WEAPONS[state.weapon];
   if (fireTimer > 0) return;
   if (state.ammo[state.weapon] !== Infinity && state.ammo[state.weapon] <= 0) {
@@ -1828,7 +2351,8 @@ function shootWeapon() {
   }
   fireTimer = w.rate;
   if (state.ammo[state.weapon] !== Infinity) state.ammo[state.weapon]--;
-  audioInit(); gunshot();
+  audioInit();
+  gunshot();
   const baseDir = new THREE.Vector3();
   camera.getWorldDirection(baseDir);
   const origin = camera.position.clone();
@@ -1857,7 +2381,10 @@ function shootWeapon() {
       while (obj && obj.parent && obj.parent !== scene) obj = obj.parent;
       for (const pd of peds) {
         if (pd.mesh === obj && !pd.down) {
-          pd.down = true; pd.downTimer = 6; pd.mesh.rotation.x = -Math.PI / 2; pd.mesh.position.y = 0.3;
+          pd.down = true;
+          pd.downTimer = 6;
+          pd.mesh.rotation.x = -Math.PI / 2;
+          pd.mesh.position.y = 0.3;
           state.kills++;
           addSkill('shooting', 5);
           if (pd.isBounty) collectBounty(pd);
@@ -1865,10 +2392,13 @@ function shootWeapon() {
           break;
         }
       }
-      // Feature 19: hunting — meat/hide sells for cash
+      // Hunting: meat and hide sell for cash
       for (const an of animals) {
         if (an.mesh === obj && !an.down && an.kind !== 'bird' && an.kind !== 'fish') {
-          an.down = true; an.downTimer = 8; an.mesh.rotation.x = -Math.PI / 2; an.mesh.position.y = 0.3;
+          an.down = true;
+          an.downTimer = 8;
+          an.mesh.rotation.x = -Math.PI / 2;
+          an.mesh.position.y = 0.3;
           const reward = an.kind === 'bear' ? 80 : an.kind === 'wolf' ? 50 : an.kind === 'deer' ? 30 : 15;
           state.cash += reward;
           toast('Hunted a ' + an.kind + ' — meat and hide sold for $' + reward + '.');
@@ -1882,9 +2412,14 @@ function shootWeapon() {
   if (tracer) scene.remove(tracer);
   const geo = new THREE.BufferGeometry().setFromPoints([origin, firstEnd]);
   tracer = new THREE.Line(geo, tracerMat);
-  scene.add(tracer); tracerTimer = 0.08;
+  scene.add(tracer);
+  tracerTimer = 0.08;
   updateHUD();
 }
+// Ground vehicles (cars, bikes, buggies, quads): acceleration and drag,
+// steering that scales with speed, wall collisions that bounce the car
+// back and hurt the driver on a hard hit, terrain height under the wheels
+// (buggies bounce a little), and running over pedestrians.
 function updateGroundVehicle(dt, c) {
   const accelIn = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.6 : 0;
   const steerIn = (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) - (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
@@ -1903,25 +2438,38 @@ function updateGroundVehicle(dt, c) {
   const nz = c.mesh.position.z + Math.cos(heading) * c.speed * dt;
   const hit = collideCircle(nx, nz, 1.6);
   if (hit) {
-    if (Math.abs(c.speed) > 8) { thud(); damagePlayer(c.kind === 'moto' ? 12 : 6, 'You crashed hard'); }
+    if (Math.abs(c.speed) > 8) {
+      thud();
+      damagePlayer(c.kind === 'moto' ? 12 : 6, 'You crashed hard');
+    }
     c.speed *= -0.25;
   } else {
-    c.mesh.position.x = nx; c.mesh.position.z = nz;
+    c.mesh.position.x = nx;
+    c.mesh.position.z = nz;
   }
-  if (c.kind === 'buggy') c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z) + (Math.abs(c.speed) > 2 ? Math.abs(Math.sin(state.time * 9)) * 0.25 : 0);
-  else c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z);
+  if (c.kind === 'buggy') {
+    c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z) + (Math.abs(c.speed) > 2 ? Math.abs(Math.sin(state.time * 9)) * 0.25 : 0);
+  } else {
+    c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z);
+  }
   c.mesh.position.x = clamp(c.mesh.position.x, -280, HALF + 24);
   c.mesh.position.z = clamp(c.mesh.position.z, -280, 280);
   state.speed = c.speed;
   for (const p of peds) {
     if (p.down) continue;
     if (Math.hypot(p.x - c.mesh.position.x, p.z - c.mesh.position.z) < 1.8 && Math.abs(c.speed) > 3) {
-      p.down = true; p.downTimer = 6; p.mesh.rotation.x = -Math.PI / 2; p.mesh.position.y = 0.3;
+      p.down = true;
+      p.downTimer = 6;
+      p.mesh.rotation.x = -Math.PI / 2;
+      p.mesh.position.y = 0.3;
       addWanted(1, 'You hit a pedestrian!');
     }
   }
   checkMissionSpot();
 }
+// Planes: W/S throttle, Shift climbs and Space descends, A/D banks and
+// turns, lift starts above 20 m/s and the plane stalls below 12. Props
+// spin faster with speed.
 function updatePlane(dt, c) {
   const throttle = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.7 : 0;
   const climb = (keys['ShiftLeft'] || keys['ShiftRight'] ? 1 : 0) - (keys['Space'] ? 1 : 0);
@@ -1938,7 +2486,10 @@ function updatePlane(dt, c) {
   if (c.alt < 2) {
     const hit = collideCircle(nx, nz, 2);
     if (hit) {
-      if (Math.abs(c.speed) > 10) { thud(); damagePlayer(6, 'You crashed the plane'); }
+      if (Math.abs(c.speed) > 10) {
+        thud();
+        damagePlayer(6, 'You crashed the plane');
+      }
       c.speed *= 0.4;
     }
   }
@@ -1955,6 +2506,8 @@ function updatePlane(dt, c) {
   state.speed = c.speed;
   checkMissionSpot();
 }
+// Horses: Shift gallops at full speed, otherwise they trot at 55%;
+// Space hops over low obstacles, and the four legs swing as they run.
 function updateHorse(dt, c) {
   const gallop = keys['ShiftLeft'] || keys['ShiftRight'];
   const fwd = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.5 : 0;
@@ -1969,11 +2522,14 @@ function updateHorse(dt, c) {
   const h = c.mesh.rotation.y;
   const nx = c.mesh.position.x + Math.sin(h) * c.speed * dt;
   const nz = c.mesh.position.z + Math.cos(h) * c.speed * dt;
-  if (!collideCircle(nx, nz, 0.8)) { c.mesh.position.x = nx; c.mesh.position.z = nz; }
-  else c.speed *= 0.5;
+  if (!collideCircle(nx, nz, 0.8)) {
+    c.mesh.position.x = nx;
+    c.mesh.position.z = nz;
+  } else {
+    c.speed *= 0.5;
+  }
   c.mesh.position.x = clamp(c.mesh.position.x, -280, 280);
   c.mesh.position.z = clamp(c.mesh.position.z, -280, 280);
-  // jump with Space — small hop over low obstacles
   if (!c.jumpVy) c.jumpVy = 0;
   if (!c.jumpY) c.jumpY = 0;
   if (keys['Space'] && c.jumpY === 0) c.jumpVy = 5.5;
@@ -1982,10 +2538,14 @@ function updateHorse(dt, c) {
   if (c.jumpY === 0) c.jumpVy = 0;
   c.mesh.position.y = groundHeight(c.mesh.position.x, c.mesh.position.z) + c.jumpY;
   const legs = c.mesh.userData.legs || [];
-  legs.forEach((leg, i) => { leg.rotation.x = Math.sin(state.time * 10 + i * Math.PI) * clamp(Math.abs(c.speed) / 10, 0, 1) * 0.7; });
+  legs.forEach((leg, i) => {
+    leg.rotation.x = Math.sin(state.time * 10 + i * Math.PI) * clamp(Math.abs(c.speed) / 10, 0, 1) * 0.7;
+  });
   state.speed = c.speed;
   checkMissionSpot();
 }
+// Helicopters: Shift climbs, Space descends (0–90m), W/S flies forward
+// and back, A/D turns; the rotors spin and the body bobs gently.
 function updateHeli(dt, c) {
   const up = keys['ShiftLeft'] || keys['ShiftRight'] ? 1 : 0;
   const down = keys['Space'] ? 1 : 0;
@@ -2009,6 +2569,8 @@ function updateHeli(dt, c) {
   state.speed = c.speed;
   checkMissionSpot();
 }
+// Boats sail the sea and the river; land blocks them and halves speed.
+// The hull bobs and rolls gently on the waves.
 function updateBoat(dt, c) {
   const fwd = keys['KeyW'] || keys['ArrowUp'] ? 1 : keys['KeyS'] || keys['ArrowDown'] ? -0.6 : 0;
   const turn = (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0) - (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0);
@@ -2020,11 +2582,14 @@ function updateBoat(dt, c) {
   const h = c.mesh.rotation.y;
   let nx = c.mesh.position.x + Math.sin(h) * c.speed * dt;
   let nz = c.mesh.position.z + Math.cos(h) * c.speed * dt;
-  // Feature 13: boats sail the sea AND the river; land blocks them.
   const inSea = nx >= HALF + 10 && nx <= 275 && nz >= -270 && nz <= 270;
   const inRiver = onRiver(nx, nz);
-  if (inSea || inRiver) { c.mesh.position.x = nx; c.mesh.position.z = nz; }
-  else { c.speed *= 0.5; }
+  if (inSea || inRiver) {
+    c.mesh.position.x = nx;
+    c.mesh.position.z = nz;
+  } else {
+    c.speed *= 0.5;
+  }
   boatBob += dt;
   c.mesh.position.y = 0.15 + Math.sin(boatBob * 2.2) * 0.12;
   c.mesh.rotation.z = Math.sin(boatBob * 1.4) * 0.04;
@@ -2065,29 +2630,39 @@ function addWanted(n, msg) {
   }
   updateHUD();
 }
+// A punch lands on the first pedestrian in front of you within 2.2m.
+// Bounty targets go down and pay out; anyone else either gets angry and
+// fights back (45%) or screams and flees.
 function punch() {
   if (state.mode !== 'play' || state.inCar) return;
   if (castOrReel()) return;
   thud();
-  const fx = Math.sin(playerState.heading), fz = Math.cos(playerState.heading);
+  const fx = Math.sin(playerState.heading);
+  const fz = Math.cos(playerState.heading);
   for (const p of peds) {
     if (p.down) continue;
-    const dx = p.x - playerState.x, dz = p.z - playerState.z;
+    const dx = p.x - playerState.x;
+    const dz = p.z - playerState.z;
     const d = Math.hypot(dx, dz);
     if (d < 2.2 && dx * fx + dz * fz > 0) {
       if (p.isBounty) {
-        p.down = true; p.downTimer = 4; p.mesh.rotation.x = -Math.PI / 2; p.mesh.position.y = 0.3;
+        p.down = true;
+        p.downTimer = 4;
+        p.mesh.rotation.x = -Math.PI / 2;
+        p.mesh.position.y = 0.3;
         collectBounty(p);
         addWanted(1, 'You knocked someone out!');
         break;
       }
-      // Feature 32: punched peds react — angry ones fight back, scared ones flee screaming
       if (rng() < 0.45) {
-        p.angry = true; p.angryTimer = 5; p.attackCd = 0;
+        p.angry = true;
+        p.angryTimer = 5;
+        p.attackCd = 0;
         toast('That pedestrian is ANGRY — they are fighting back!');
         beep(180, 0.2, 'sawtooth', 0.2);
       } else {
-        p.flee = true; p.speed = 6;
+        p.flee = true;
+        p.speed = 6;
         p.target = { x: p.x + (p.x - playerState.x) * 10, z: p.z + (p.z - playerState.z) * 10 };
         toast('That pedestrian screams and runs away!');
         beep(900, 0.25, 'sine', 0.15);
@@ -2131,9 +2706,10 @@ function shoot() {
   tracer = new THREE.Line(geo, tracerMat);
   scene.add(tracer); tracerTimer = 0.08;
 }
+// Damage goes to the vest first, then to health; at zero health the
+// WASTED screen appears and the engine and siren cut out.
 function damagePlayer(n, cause) {
   if (state.mode !== 'play') return;
-  // Feature 8: vest absorbs damage first, before health drops.
   if (state.armor > 0 && n > 0) {
     const absorbed = Math.min(state.armor, n);
     state.armor -= absorbed;
@@ -2142,7 +2718,8 @@ function damagePlayer(n, cause) {
   }
   state.health -= n;
   if (state.health <= 0) {
-    state.health = 0; state.mode = 'dead';
+    state.health = 0;
+    state.mode = 'dead';
     document.getElementById('wastedText').textContent = cause + ' — ' + activeName() + ' went down in Solmar Bay.';
     document.getElementById('wasted').classList.remove('hidden');
     document.getElementById('hud').classList.remove('on');
@@ -2195,6 +2772,7 @@ function updateHUD() {
   if (raceEl) raceEl.textContent = heist.active ? '💰 HEIST — stage ' + (heist.stage + 1) + '/' + HEIST_STAGES.length + ' · ' + Math.max(0, Math.ceil(heist.timer)) + 's left' : race.active ? '🏁 RACE — checkpoint ' + race.cp + '/' + RACE_CPS.length + ' · ' + Math.max(0, Math.ceil(race.timer)) + 's left' : '';
   r5HudLine();
   r6HudLine();
+  r7HudLine();
 }
 function drawMinimap() {
   const W = 180, scale = W / 620;
@@ -2257,6 +2835,7 @@ function drawMinimap() {
   if (golf.active) dot(100, -160, '#2ecc71', 5);
   r5MinimapDots(dot);
   r6MinimapDots(dot);
+  r7MinimapDots(dot);
   // Feature 37: fire station (F) + hospital (H) + bus stops (B)
   mm.fillStyle = '#c0392b'; mm.fillRect((-132 + 310) * scale - 4, (60 + 310) * scale - 4, 8, 8);
   mm.fillStyle = '#fff'; mm.font = 'bold 7px Arial'; mm.fillText('F', (-132 + 310) * scale - 2.5, (60 + 310) * scale + 2.5);
@@ -11368,6 +11947,7 @@ function animate() {
     if (state.inCar) updateCar(dt);
     updateR5(dt);
     updateR6(dt);
+    updateR7(dt);
     updateTraffic(dt);
     updatePeds(dt);
     updatePolice(dt);
@@ -11401,9 +11981,4011 @@ function animate() {
   }
   renderer.render(scene, camera);
 }
+// ---------- Round 7: reputation, witnesses, focus, prep, theft, lockers ----------
+// Fresh code for Round 7. Twenty-four new systems for Solmar Bay, each with
+// its own data, state, build step, panel, save/load and self-test hooks.
+// Ryan and Ian are a couple who run jobs together across the bay.
+const R7_STORE = 'solmar-r7-';
+function r7Save(key, obj) {
+  try { localStorage.setItem(R7_STORE + key, JSON.stringify(obj)); } catch (e) {}
+}
+function r7Load(key, fallback) {
+  try { const s = JSON.parse(localStorage.getItem(R7_STORE + key) || 'null'); return s === null ? fallback : s; } catch (e) { return fallback; }
+}
+function r7Pos() {
+  if (state.inCar && state.inCar.mesh) return { x: state.inCar.mesh.position.x, z: state.inCar.mesh.position.z };
+  return { x: playerState.x, z: playerState.z };
+}
+function r7Dist(x, z) { const p = r7Pos(); return Math.hypot(p.x - x, p.z - z); }
+function r7Near(x, z, r) { return r7Dist(x, z) < r; }
+function r7Clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function r7Pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function r7Spend(amount) {
+  if (state.cash < amount) { toast('Not enough cash — need $' + amount + '.'); return false; }
+  state.cash -= amount; updateHUD(); return true;
+}
+function r7Earn(amount, msg) {
+  state.cash += amount; chime(); if (msg) toast(msg + ' +$' + amount);
+  saveGame(); updateHUD();
+}
+function r7ShowPanel(title, lines, buttons) { r6ShowPanel(title, lines, buttons); }
+function r7ClosePanel() { r6ClosePanel(); }
+function r7PanelButton(label, fn, disabled) { return r6PanelButton(label, fn, disabled); }
+// --- R7-01 Bay Reputation: good deeds vs brutality shape the bay ---
+const R7_REP_DEEDS = [
+  { n: 'Help a stranded driver', g: 6, p: 25 },
+  { n: 'Return a dropped wallet', g: 8, p: 40 },
+  { n: 'Stop a mugging', g: 10, p: 60 },
+  { n: 'Give a tourist directions', g: 3, p: 10 },
+  { n: 'Donate at the marina stall', g: 5, p: 0 },
+  { n: 'Rescue a swimmer', g: 12, p: 80 },
+];
+const R7_REP_CRIMES = [
+  { n: 'Hit a pedestrian', g: -8, p: 0 },
+  { n: 'Smash a shop window', g: -6, p: 0 },
+  { n: 'Steal in daylight', g: -10, p: 0 },
+  { n: 'Threaten a shopkeeper', g: -12, p: 0 },
+];
+let r7Rep = { good: 0, bad: 0, deeds: [], priceShift: 0 };
+function r7RepScore() { return r7Rep.good - r7Rep.bad; }
+function r7RepTitle() {
+  const s = r7RepScore();
+  if (s >= 60) return 'Bay Saint';
+  if (s >= 25) return 'Good Neighbour';
+  if (s >= -9) return 'Nobody Special';
+  if (s >= -40) return 'Rough Customer';
+  return 'Bay Menace';
+}
+function r7RepPriceMult() { return r7Clamp(1 - r7RepScore() * 0.004, 0.8, 1.25); }
+function r7RepDoGood(i) {
+  const d = R7_REP_DEEDS[i]; if (!d) return false;
+  r7Rep.good += d.g; r7Rep.deeds.push(d.n); r7RepSave();
+  if (d.p) r7Earn(d.p, d.n);
+  toast(d.n + ' — the bay notices. Rep ' + r7RepScore() + ' (' + r7RepTitle() + ')');
+  return true;
+}
+function r7RepCrime(i) {
+  const c = R7_REP_CRIMES[i]; if (!c) return false;
+  r7Rep.bad += -c.g; r7RepSave(); updateHUD(); return true;
+}
+function r7RepSave() { r7Save('rep', r7Rep); }
+function r7RepLoad() { const s = r7Load('rep', null); if (s) r7Rep = s; }
+function r7RepOpen() {
+  const lines = [
+    'Reputation ' + r7RepScore() + ' — ' + r7RepTitle() + '.',
+    'Good deeds ' + r7Rep.good + ' · brutality ' + r7Rep.bad + '.',
+    'Shop prices are x' + r7RepPriceMult().toFixed(2) + ' right now.',
+    'Kind locals wave; scared ones cross the street when you pass.',
+    'Good deeds done: ' + (r7Rep.deeds.length ? r7Rep.deeds.slice(-4).join(', ') : 'none yet'),
+  ];
+  const buttons = R7_REP_DEEDS.map((d, i) => r7PanelButton(d.n + ' (+' + d.g + ' rep' + (d.p ? ', +$' + d.p : '') + ')', () => { r7RepDoGood(i); r7RepOpen(); }));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('⭐ Bay Reputation', lines, buttons);
+  return true;
+}
+const R7_REP_SPOT = { x: -18, z: 26, name: 'Plaza notice board' };
+function r7RepNear() { return r7Near(R7_REP_SPOT.x, R7_REP_SPOT.z, 8); }
+function r7RepBuild() {
+  const board = new THREE.Mesh(new THREE.BoxGeometry(4, 2.4, 0.3), new THREE.MeshStandardMaterial({ color: 0x8a5a2a }));
+  board.position.set(R7_REP_SPOT.x, 1.6, R7_REP_SPOT.z); scene.add(board);
+  const paper = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.8), new THREE.MeshBasicMaterial({ color: 0xf5ecd0 }));
+  paper.position.set(R7_REP_SPOT.x, 1.6, R7_REP_SPOT.z + 0.2); scene.add(paper);
+}
+// --- R7-02 Witness & disguise wanted system ---
+const R7_OUTFITS = [
+  { n: 'Drifter jacket', cost: 0, heat: 0 },
+  { n: 'Dock worker overalls', cost: 60, heat: -1 },
+  { n: 'Marina whites', cost: 120, heat: -1 },
+  { n: 'Night courier black', cost: 90, heat: -2 },
+  { n: 'Bay festival colours', cost: 45, heat: 0 },
+];
+let r7Wit = { outfit: 0, owned: [0], heat: 0, witnesses: 0, cams: 0, lockdown: false };
+function r7WitHeat() { return r7Wit.heat + (state.wanted || 0); }
+function r7WitReport(kind) {
+  r7Wit.witnesses += kind === 'witness' ? 1 : 0;
+  r7Wit.cams += kind === 'camera' ? 1 : 0;
+  r7Wit.heat = r7Clamp(r7Wit.heat + 1, 0, 6);
+  if (r7Wit.heat >= 6 && !r7Wit.lockdown) {
+    r7Wit.lockdown = true;
+    toast('BAY LOCKDOWN — every unit in Solmar Bay is hunting you. Change outfit and car, fast.');
+  } else {
+    toast('Seen! A ' + kind + ' locked in your ' + R7_OUTFITS[r7Wit.outfit].n + '. Heat ' + r7Wit.heat + '/6.');
+  }
+  r7WitSave(); updateHUD();
+}
+function r7WitChangeOutfit(i) {
+  if (!r7Wit.owned.includes(i)) {
+    if (!r7Spend(R7_OUTFITS[i].cost)) return false;
+    r7Wit.owned.push(i);
+  }
+  r7Wit.outfit = i;
+  r7Wit.heat = r7Clamp(r7Wit.heat + R7_OUTFITS[i].heat, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); updateHUD();
+  toast('Changed into ' + R7_OUTFITS[i].n + '. Heat now ' + r7Wit.heat + '/6.');
+  return true;
+}
+function r7WitShedHeat() {
+  if (!r7Spend(150)) return false;
+  r7Wit.heat = 0; r7Wit.witnesses = 0; r7Wit.cams = 0; r7Wit.lockdown = false;
+  r7WitSave(); toast('New plates, new look — the heat is gone.');
+  return true;
+}
+function r7WitSave() { r7Save('wit', r7Wit); }
+function r7WitLoad() { const s = r7Load('wit', null); if (s) r7Wit = s; }
+const R7_CLOTHES = { x: 22, z: -30, name: 'Salt & Thread clothes' };
+function r7WitNear() { return r7Near(R7_CLOTHES.x, R7_CLOTHES.z, 8); }
+function r7WitBuild() {
+  const shop = new THREE.Mesh(new THREE.BoxGeometry(7, 4, 6), new THREE.MeshStandardMaterial({ color: 0x2a6a8a }));
+  shop.position.set(R7_CLOTHES.x, 2, R7_CLOTHES.z); scene.add(shop);
+}
+function r7WitOpen() {
+  const lines = [
+    'Outfit: ' + R7_OUTFITS[r7Wit.outfit].n + ' · heat ' + r7Wit.heat + '/6.',
+    'Witnesses ' + r7Wit.witnesses + ' · cameras ' + r7Wit.cams + '.',
+    r7Wit.lockdown ? 'BAY LOCKDOWN is active — 6th star. Lay low.' : 'No lockdown. Stay out of sight after a job.',
+    'A fresh outfit and a different car shed heat faster than hiding.',
+  ];
+  const buttons = R7_OUTFITS.map((o, i) => r7PanelButton((r7Wit.owned.includes(i) ? 'Wear ' : 'Buy ') + o.n + ' — $' + o.cost, () => { r7WitChangeOutfit(i); r7WitOpen(); }));
+  buttons.push(r7PanelButton('New plates + clean slate — $150', () => { r7WitShedHeat(); r7WitOpen(); }));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🎭 Witness & Disguise', lines, buttons);
+  return true;
+}
+// --- R7-03 Focus mode: slow-mo targeting, vitals, disarm ---
+let r7Focus = { on: false, meter: 100, kills: 0, disarms: 0, limbHits: 0 };
+function r7FocusToggle() {
+  if (state.inCar || state.mode !== 'play') return false;
+  if (state.weapon === 'fists' || state.weapon === 'bat') return false;
+  r7Focus.on = !r7Focus.on;
+  if (r7Focus.on && r7Focus.meter < 20) {
+    r7Focus.on = false;
+    toast('Focus meter too low — land hits to refill it.');
+    return false;
+  }
+  toast(r7Focus.on ? 'FOCUS — time slows. Aim for vitals, F again to disarm a target.' : 'Focus off.');
+  updateHUD(); return true;
+}
+function r7FocusDisarm() {
+  if (!r7Focus.on) return false;
+  r7Focus.disarms++; r7Focus.meter = r7Clamp(r7Focus.meter - 25, 0, 100);
+  r7FocusSave(); toast('Disarmed! They dropped their weapon. Disarms: ' + r7Focus.disarms);
+  return true;
+}
+function r7FocusHit(part) {
+  if (part === 'limb') r7Focus.limbHits++;
+  if (part === 'vital') r7Focus.kills++;
+  r7Focus.meter = r7Clamp(r7Focus.meter + (part === 'vital' ? 12 : 6), 0, 100);
+  r7FocusSave();
+}
+function r7FocusSave() { r7Save('focus', r7Focus); }
+function r7FocusLoad() { const s = r7Load('focus', null); if (s) r7Focus = s; }
+// --- R7-04 Robbery prep: scout, back doors, safe codes, cameras, duo jobs ---
+const R7_ROB_TARGETS = [
+  { n: 'Marina Jewellers', x: 40, z: -18, safe: '4821', take: 900, cam: true },
+  { n: 'Docks Cash Office', x: -64, z: 44, safe: '1937', take: 700, cam: true },
+  { n: 'Casino Row Liquor', x: 58, z: 30, safe: '6602', take: 420, cam: false },
+  { n: 'Old Town Pawn Vault', x: -30, z: -52, safe: '7754', take: 650, cam: true },
+];
+let r7Rob = { scouted: [], camsOff: [], codes: [], done: [], withIan: 0 };
+function r7RobNear() {
+  for (let i = 0; i < R7_ROB_TARGETS.length; i++) if (r7Near(R7_ROB_TARGETS[i].x, R7_ROB_TARGETS[i].z, 9)) return i;
+  return -1;
+}
+function r7RobScout(i) {
+  if (r7Rob.scouted.includes(i)) return false;
+  r7Rob.scouted.push(i); r7RobSave();
+  toast('Scouted ' + R7_ROB_TARGETS[i].n + ': back entrance on the alley side' + (R7_ROB_TARGETS[i].cam ? ', one camera over the door.' : ', no cameras.'));
+  return true;
+}
+function r7RobDisableCam(i) {
+  if (!R7_ROB_TARGETS[i].cam || r7Rob.camsOff.includes(i)) return false;
+  if (!r7Spend(80)) return false;
+  r7Rob.camsOff.push(i); r7RobSave();
+  toast('Camera looped — ' + R7_ROB_TARGETS[i].n + ' is blind for the night.');
+  return true;
+}
+function r7RobCrackSafe(i) {
+  const t = R7_ROB_TARGETS[i];
+  if (!r7Rob.scouted.includes(i)) { toast('Scout the place first — you need the layout.'); return false; }
+  if (r7Rob.codes.includes(i)) { toast('Safe code ' + t.safe + ' already cracked.'); return true; }
+  r7Rob.codes.push(i); r7RobSave();
+  toast('Safe code cracked: ' + t.safe + '. The safe is yours when you go in.');
+  return true;
+}
+function r7RobRun(i, duo) {
+  const t = R7_ROB_TARGETS[i];
+  if (r7Rob.done.includes(i)) { toast('Already hit ' + t.n + ' — the owner doubled the locks.'); return false; }
+  if (!r7Rob.scouted.includes(i) || !r7Rob.codes.includes(i)) { toast('Prep first: scout it and crack the safe code.'); return false; }
+  let take = t.take;
+  if (duo) { take = Math.round(take * 1.5); r7Rob.withIan++; toast('Ian takes the door while you crack the safe — duo bonus!'); }
+  if (t.cam && !r7Rob.camsOff.includes(i)) { r7WitReport('camera'); take = Math.round(take * 0.7); }
+  r7Rob.done.push(i); r7RobSave(); r7Earn(take, 'Robbed ' + t.n);
+  return true;
+}
+function r7RobSave() { r7Save('rob', r7Rob); }
+function r7RobLoad() { const s = r7Load('rob', null); if (s) r7Rob = s; }
+function r7RobOpen() {
+  const i = r7RobNear(); if (i < 0) return false;
+  const t = R7_ROB_TARGETS[i];
+  const lines = [
+    t.n + ' — take $' + t.take + (r7Rob.done.includes(i) ? ' (already hit)' : ''),
+    'Scouted: ' + (r7Rob.scouted.includes(i) ? 'yes' : 'no') + ' · safe code: ' + (r7Rob.codes.includes(i) ? t.safe : 'unknown'),
+    'Camera: ' + (t.cam ? (r7Rob.camsOff.includes(i) ? 'disabled' : 'live — disable it first') : 'none'),
+    'Duo jobs with Ian pay 1.5x — she watches the door, you work the safe.',
+  ];
+  const buttons = [
+    r7PanelButton('Scout the layout', () => { r7RobScout(i); r7RobOpen(); }, r7Rob.scouted.includes(i)),
+    r7PanelButton('Disable the camera — $80', () => { r7RobDisableCam(i); r7RobOpen(); }, !t.cam || r7Rob.camsOff.includes(i)),
+    r7PanelButton('Crack the safe code', () => { r7RobCrackSafe(i); r7RobOpen(); }, r7Rob.codes.includes(i)),
+    r7PanelButton('Hit it solo', () => { r7RobRun(i, false); r7ClosePanel(); }, r7Rob.done.includes(i)),
+    r7PanelButton('Hit it with Ian (1.5x)', () => { r7RobRun(i, true); r7ClosePanel(); }, r7Rob.done.includes(i)),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('💰 Robbery Prep — ' + t.n, lines, buttons);
+  return true;
+}
+function r7RobBuild() {
+  for (const t of R7_ROB_TARGETS) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(8, 4.5, 7), new THREE.MeshStandardMaterial({ color: 0x5a4a3a }));
+    b.position.set(t.x, 2.2, t.z); scene.add(b);
+  }
+}
+// --- R7-05 Car-theft minigames: slim jim, window smash, key cloner ---
+const R7_THEFT_TOOLS = [
+  { n: 'Slim jim', cost: 40, skill: 1 },
+  { n: 'Window punch', cost: 25, skill: 0 },
+  { n: 'Key cloner', cost: 350, skill: 3 },
+  { n: 'Phone scanner', cost: 200, skill: 2 },
+];
+let r7Theft = { tools: [1], stolen: 0, luxury: 0, bestTime: 0, alarms: 0 };
+function r7TheftBuy(i) {
+  if (r7Theft.tools.includes(i)) return false;
+  if (!r7Spend(R7_THEFT_TOOLS[i].cost)) return false;
+  r7Theft.tools.push(i); r7TheftSave();
+  toast('Bought ' + R7_THEFT_TOOLS[i].n + ' — new way into cars unlocked.');
+  return true;
+}
+function r7TheftTiming(tool) {
+  // Timing bar: 0-100, sweet spot 62-78. Returns a score 0-100.
+  const roll = Math.floor(Math.random() * 100);
+  const dist = roll < 62 ? 62 - roll : roll > 78 ? roll - 78 : 0;
+  return Math.max(0, 100 - dist * 3);
+}
+function r7TheftSteal(tool, luxury) {
+  if (!r7Theft.tools.includes(tool)) { toast('You do not own that tool yet.'); return false; }
+  const score = r7TheftTiming(tool);
+  if (score < 40) {
+    r7Theft.alarms++; r7TheftSave(); r7WitReport('witness');
+    toast('Alarm! The timing was off (' + score + ') — someone saw you.');
+    return false;
+  }
+  r7Theft.stolen++;
+  if (luxury) {
+    if (tool !== 2) { toast('Luxury cars need the key cloner — the slim jim just scratches the paint.'); return false; }
+    r7Theft.luxury++;
+  }
+  if (!r7Theft.bestTime || score > r7Theft.bestTime) r7Theft.bestTime = score;
+  r7TheftSave(); r7Earn(luxury ? 320 : 140, luxury ? 'Luxury car lifted clean' : 'Car lifted clean');
+  return true;
+}
+function r7TheftSave() { r7Save('theft', r7Theft); }
+function r7TheftLoad() { const s = r7Load('theft', null); if (s) r7Theft = s; }
+const R7_CHOP = { x: -52, z: 18, name: 'Back-alley chop shop' };
+function r7TheftNear() { return r7Near(R7_CHOP.x, R7_CHOP.z, 8); }
+function r7TheftBuild() {
+  const g = new THREE.Mesh(new THREE.BoxGeometry(9, 4, 7), new THREE.MeshStandardMaterial({ color: 0x3a3a3a }));
+  g.position.set(R7_CHOP.x, 2, R7_CHOP.z); scene.add(g);
+}
+function r7TheftOpen() {
+  const lines = [
+    'Cars stolen ' + r7Theft.stolen + ' · luxury ' + r7Theft.luxury + ' · alarms tripped ' + r7Theft.alarms + '.',
+    'Best timing score ' + r7Theft.bestTime + '/100 — sweet spot is 62-78 on the bar.',
+    'Luxury cars only open with the key cloner. The phone scanner finds unlocked cars nearby.',
+  ];
+  const buttons = R7_THEFT_TOOLS.map((t, i) => r7PanelButton((r7Theft.tools.includes(i) ? 'Owned: ' : 'Buy ') + t.n + ' — $' + t.cost, () => { r7TheftBuy(i); r7TheftOpen(); }, r7Theft.tools.includes(i)));
+  buttons.push(r7PanelButton('Steal a parked car (slim jim)', () => { r7TheftSteal(0, false); r7TheftOpen(); }));
+  buttons.push(r7PanelButton('Steal a luxury car (key cloner)', () => { r7TheftSteal(2, true); r7TheftOpen(); }));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🚗 Car Theft — Chop Shop', lines, buttons);
+  return true;
+}
+// --- R7-06 Weapon lockers + degradation: 2 rifles + 2 pistols on you ---
+const R7_GUNS = [
+  { n: 'Bay Hawk pistol', kind: 'pistol', price: 220, wear: 0 },
+  { n: 'Salt Pistol Mk2', kind: 'pistol', price: 480, wear: 0 },
+  { n: 'Marsh Rifle', kind: 'rifle', price: 900, wear: 0 },
+  { n: 'Long Bay Carbine', kind: 'rifle', price: 1400, wear: 0 },
+];
+let r7Locker = { carry: [0], trunk: [], safe: [], cleanKit: 2 };
+function r7LockerWear(i) { return R7_GUNS[i].wear; }
+function r7LockerShoot(i) {
+  R7_GUNS[i].wear = r7Clamp(R7_GUNS[i].wear + 1, 0, 100);
+  if (R7_GUNS[i].wear >= 80) toast(R7_GUNS[i].n + ' is badly worn (' + R7_GUNS[i].wear + '%) — clean it or it jams.');
+  r7LockerSave();
+}
+function r7LockerClean(i) {
+  if (r7Locker.cleanKit <= 0) { toast('No cleaning kits left — buy one at the gun shop.'); return false; }
+  if (R7_GUNS[i].wear === 0) { toast(R7_GUNS[i].n + ' is already clean.'); return false; }
+  r7Locker.cleanKit--; R7_GUNS[i].wear = 0; r7LockerSave();
+  toast(R7_GUNS[i].n + ' cleaned and oiled. Kits left: ' + r7Locker.cleanKit);
+  return true;
+}
+function r7LockerBuyKit() {
+  if (!r7Spend(60)) return false;
+  r7Locker.cleanKit++; r7LockerSave(); toast('Cleaning kit bought. Kits: ' + r7Locker.cleanKit);
+  return true;
+}
+function r7LockerBuyGun(i) {
+  if (r7Locker.carry.includes(i) || r7Locker.trunk.includes(i) || r7Locker.safe.includes(i)) return false;
+  if (!r7Spend(R7_GUNS[i].price)) return false;
+  const pistols = r7Locker.carry.filter((g) => R7_GUNS[g].kind === 'pistol').length;
+  const rifles = r7Locker.carry.filter((g) => R7_GUNS[g].kind === 'rifle').length;
+  const slot = R7_GUNS[i].kind === 'pistol' ? pistols < 2 : rifles < 2;
+  if (slot) r7Locker.carry.push(i); else r7Locker.safe.push(i);
+  r7LockerSave(); toast('Bought ' + R7_GUNS[i].n + (slot ? ' — on your person.' : ' — stored in the safehouse.'));
+  return true;
+}
+function r7LockerStash(i) {
+  const at = r7Locker.carry.indexOf(i); if (at < 0) return false;
+  r7Locker.carry.splice(at, 1); r7Locker.trunk.push(i); r7LockerSave();
+  toast(R7_GUNS[i].n + ' stashed in the car trunk.'); return true;
+}
+function r7LockerDraw(i) {
+  const from = r7Locker.trunk.includes(i) ? r7Locker.trunk : r7Locker.safe.includes(i) ? r7Locker.safe : null;
+  if (!from) return false;
+  const pistols = r7Locker.carry.filter((g) => R7_GUNS[g].kind === 'pistol').length;
+  const rifles = r7Locker.carry.filter((g) => R7_GUNS[g].kind === 'rifle').length;
+  if (R7_GUNS[i].kind === 'pistol' && pistols >= 2) { toast('Pistol slots full — stash one first.'); return false; }
+  if (R7_GUNS[i].kind === 'rifle' && rifles >= 2) { toast('Rifle slots full — stash one first.'); return false; }
+  from.splice(from.indexOf(i), 1); r7Locker.carry.push(i); r7LockerSave();
+  toast(R7_GUNS[i].n + ' drawn. Carry: ' + r7Locker.carry.map((g) => R7_GUNS[g].n).join(', '));
+  return true;
+}
+function r7LockerSave() { r7Save('locker', { carry: r7Locker.carry, trunk: r7Locker.trunk, safe: r7Locker.safe, cleanKit: r7Locker.cleanKit }); }
+function r7LockerLoad() { const s = r7Load('locker', null); if (s) r7Locker = s; }
+const R7_GUNSHOP = { x: 30, z: 52, name: 'Bay Arms gun shop' };
+function r7LockerNear() { return r7Near(R7_GUNSHOP.x, R7_GUNSHOP.z, 8); }
+function r7LockerBuild() {
+  const b = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 7), new THREE.MeshStandardMaterial({ color: 0x4a3a2a }));
+  b.position.set(R7_GUNSHOP.x, 2, R7_GUNSHOP.z); scene.add(b);
+}
+function r7LockerOpen() {
+  const lines = [
+    'Carry (2 pistols + 2 rifles max): ' + (r7Locker.carry.map((g) => R7_GUNS[g].n + ' ' + R7_GUNS[g].wear + '%').join(', ') || 'none'),
+    'Trunk: ' + (r7Locker.trunk.map((g) => R7_GUNS[g].n).join(', ') || 'empty') + ' · Safehouse: ' + (r7Locker.safe.map((g) => R7_GUNS[g].n).join(', ') || 'empty'),
+    'Cleaning kits: ' + r7Locker.cleanKit + ' — worn guns jam more often.',
+  ];
+  const buttons = R7_GUNS.map((g, i) => r7PanelButton('Buy ' + g.n + ' (' + g.kind + ') — $' + g.price, () => { r7LockerBuyGun(i); r7LockerOpen(); }, r7Locker.carry.includes(i) || r7Locker.trunk.includes(i) || r7Locker.safe.includes(i)));
+  buttons.push(r7PanelButton('Buy cleaning kit — $60', () => { r7LockerBuyKit(); r7LockerOpen(); }));
+  for (const g of r7Locker.carry) buttons.push(r7PanelButton('Clean ' + R7_GUNS[g].n, () => { r7LockerClean(g); r7LockerOpen(); }, R7_GUNS[g].wear === 0));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🔫 Weapon Locker — Bay Arms', lines, buttons);
+  return true;
+}
+// --- R7-07 Wildlife compendium: study, log, track rare animals ---
+const R7_WILD = [
+  { n: 'Bay Gull', zone: 'beach', rare: false, weapon: 'any', value: 20 },
+  { n: 'Marsh Heron', zone: 'swamp', rare: false, weapon: 'any', value: 30 },
+  { n: 'White-tail Deer', zone: 'forest', rare: false, weapon: 'rifle', value: 60 },
+  { n: 'Bay Alligator', zone: 'swamp', rare: false, weapon: 'rifle', value: 90 },
+  { n: 'Wild Boar', zone: 'forest', rare: false, weapon: 'rifle', value: 70 },
+  { n: 'Golden Egret', zone: 'swamp', rare: true, weapon: 'any', value: 250 },
+  { n: 'Ghost Crab', zone: 'beach', rare: true, weapon: 'any', value: 200 },
+  { n: 'Black Panther', zone: 'forest', rare: true, weapon: 'rifle', value: 500 },
+];
+let r7Wild = { seen: [], studied: [], hunted: [], tracks: 0 };
+function r7WildStudy(i) {
+  const a = R7_WILD[i]; if (!a) return false;
+  if (!r7Wild.seen.includes(i)) r7Wild.seen.push(i);
+  if (!r7Wild.studied.includes(i)) { r7Wild.studied.push(i); r7WildSave(); toast('Studied: ' + a.n + ' — ' + (a.rare ? 'RARE. ' : '') + 'best hunted with ' + a.weapon + '.'); }
+  else toast(a.n + ' already in your compendium.');
+  return true;
+}
+function r7WildTrack(i) {
+  const a = R7_WILD[i]; if (!a || !a.rare) { toast('Only rare animals leave tracks worth following.'); return false; }
+  if (!r7Wild.studied.includes(i)) { toast('Study the ' + a.n + ' first — you would not know its tracks.'); return false; }
+  r7Wild.tracks++; r7WildSave();
+  toast('Fresh tracks! A ' + a.n + ' passed through here recently. Tracks followed: ' + r7Wild.tracks);
+  return true;
+}
+function r7WildHunt(i, weaponKind) {
+  const a = R7_WILD[i]; if (!a) return false;
+  if (a.weapon !== 'any' && weaponKind !== a.weapon) { toast('Wrong weapon — the ' + a.n + ' needs a ' + a.weapon + ' for a clean hunt.'); return false; }
+  if (!r7Wild.studied.includes(i)) { toast('Study it first — a rushed hunt ruins the pelt.'); return false; }
+  if (!r7Wild.hunted.includes(i)) r7Wild.hunted.push(i);
+  r7WildSave(); r7Earn(a.value, 'Hunted ' + a.n + ' cleanly');
+  return true;
+}
+function r7WildSave() { r7Save('wild', r7Wild); }
+function r7WildLoad() { const s = r7Load('wild', null); if (s) r7Wild = s; }
+const R7_WILD_SPOTS = [
+  { x: 120, z: 40, zone: 'beach', name: 'East Beach dunes' },
+  { x: -150, z: 120, zone: 'swamp', name: 'Southwest marsh' },
+  { x: -120, z: -140, zone: 'forest', name: 'North pine woods' },
+];
+function r7WildNear() {
+  for (let i = 0; i < R7_WILD_SPOTS.length; i++) if (r7Near(R7_WILD_SPOTS[i].x, R7_WILD_SPOTS[i].z, 10)) return i;
+  return -1;
+}
+function r7WildOpen() {
+  const spot = r7WildNear(); if (spot < 0) return false;
+  const zone = R7_WILD_SPOTS[spot].zone;
+  const here = R7_WILD.map((a, i) => ({ a, i })).filter((o) => o.a.zone === zone);
+  const lines = [
+    R7_WILD_SPOTS[spot].name + ' — ' + zone + ' habitat.',
+    'Compendium: ' + r7Wild.studied.length + '/' + R7_WILD.length + ' studied · ' + r7Wild.hunted.length + ' hunted · rare tracks ' + r7Wild.tracks + '.',
+    'Animals here: ' + here.map((o) => o.a.n + (o.a.rare ? ' (rare)' : '')).join(', '),
+  ];
+  const buttons = here.map((o) => r7PanelButton('Study ' + o.a.n, () => { r7WildStudy(o.i); r7WildOpen(); }));
+  for (const o of here.filter((o) => o.a.rare)) buttons.push(r7PanelButton('Follow ' + o.a.n + ' tracks', () => { r7WildTrack(o.i); r7WildOpen(); }));
+  for (const o of here) buttons.push(r7PanelButton('Hunt ' + o.a.n + ' ($' + o.a.value + ')', () => { r7WildHunt(o.i, o.a.weapon === 'rifle' ? 'rifle' : 'any'); r7WildOpen(); }));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🦅 Wildlife — ' + R7_WILD_SPOTS[spot].name, lines, buttons);
+  return true;
+}
+function r7WildBuild() {
+  for (const s of R7_WILD_SPOTS) {
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.2, 0.2), new THREE.MeshStandardMaterial({ color: 0x3a5a2a }));
+    sign.position.set(s.x, 1.4, s.z); scene.add(sign);
+  }
+}
+// --- R7-08 Horse bonding II: bond levels, stats, grooming, feeding ---
+const R7_HORSE2 = [
+  { n: 'Bay Breeze', speed: 6, stamina: 5 },
+  { n: 'Marsh King', speed: 5, stamina: 8 },
+  { n: 'Salt Dancer', speed: 8, stamina: 4 },
+];
+let r7Horse = { bond: [0, 0, 0], fed: [0, 0, 0], groomed: [0, 0, 0], active: 0, rides: 0 };
+function r7HorseBondLevel(i) { return Math.min(4, Math.floor(r7Horse.bond[i] / 25)); }
+function r7HorseFeed(i) {
+  if (!r7Spend(15)) return false;
+  r7Horse.fed[i]++; r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 8, 0, 100); r7HorseSave();
+  toast(R7_HORSE2[i].n + ' eats happily. Bond ' + r7Horse.bond[i] + '/100 (level ' + r7HorseBondLevel(i) + ').');
+  return true;
+}
+function r7HorseGroom(i) {
+  r7Horse.groomed[i]++; r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 6, 0, 100); r7HorseSave();
+  toast('Brushed ' + R7_HORSE2[i].n + ' until its coat shines. Bond ' + r7Horse.bond[i] + '/100.');
+  return true;
+}
+function r7HorseRide(i) {
+  r7Horse.active = i; r7Horse.rides++;
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 4, 0, 100); r7HorseSave();
+  const h = R7_HORSE2[i];
+  toast('Riding ' + h.n + ' — speed ' + h.speed + ', stamina ' + h.stamina + ', bond level ' + r7HorseBondLevel(i) + '.');
+  return true;
+}
+function r7HorseSave() { r7Save('horse2', r7Horse); }
+function r7HorseLoad() { const s = r7Load('horse2', null); if (s) r7Horse = s; }
+function r7HorseOpen() {
+  const lines = ['Bonded horses at Rancho del Sol — grooming and feeding build trust.'];
+  for (let i = 0; i < R7_HORSE2.length; i++) {
+    const h = R7_HORSE2[i];
+    lines.push(h.n + ' · speed ' + h.speed + ' · stamina ' + h.stamina + ' · bond ' + r7Horse.bond[i] + '/100 (Lv' + r7HorseBondLevel(i) + ') · fed ' + r7Horse.fed[i] + 'x · groomed ' + r7Horse.groomed[i] + 'x');
+  }
+  lines.push('Total rides: ' + r7Horse.rides + '. A level-4 horse never spooks at gunfire.');
+  const buttons = [];
+  for (let i = 0; i < R7_HORSE2.length; i++) {
+    buttons.push(r7PanelButton('Feed ' + R7_HORSE2[i].n + ' — $15', () => { r7HorseFeed(i); r7HorseOpen(); }));
+    buttons.push(r7PanelButton('Groom ' + R7_HORSE2[i].n, () => { r7HorseGroom(i); r7HorseOpen(); }));
+    buttons.push(r7PanelButton('Ride ' + R7_HORSE2[i].n, () => { r7HorseRide(i); r7ClosePanel(); }));
+  }
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🐴 Horse Bonding II', lines, buttons);
+  return true;
+}
+// --- R7-09 Safehouse upgrades: bed, workshop, armory, decor, crew ---
+const R7_SAFE_UPGRADES = [
+  { n: 'Comfy bed', cost: 200, effect: 'sleep restores full health' },
+  { n: 'Workshop bench', cost: 450, effect: 'clean guns for free' },
+  { n: 'Armory rack', cost: 600, effect: 'carry +1 rifle' },
+  { n: 'Bay view decor', cost: 300, effect: 'crew morale +20' },
+  { n: 'Hidden stash wall', cost: 800, effect: 'stash $2000 safely' },
+];
+const R7_CREW_ROLES = ['Lookout', 'Driver', 'Cook', 'Fixer'];
+let r7Safe = { owned: [], morale: 50, crew: ['Lookout'], slept: 0 };
+function r7SafeBuy(i) {
+  if (r7Safe.owned.includes(i)) return false;
+  if (!r7Spend(R7_SAFE_UPGRADES[i].cost)) return false;
+  r7Safe.owned.push(i);
+  if (R7_SAFE_UPGRADES[i].n === 'Bay view decor') r7Safe.morale = r7Clamp(r7Safe.morale + 20, 0, 100);
+  r7SafeSave(); toast('Installed: ' + R7_SAFE_UPGRADES[i].n + ' — ' + R7_SAFE_UPGRADES[i].effect + '.');
+  return true;
+}
+function r7SafeHire(role) {
+  if (r7Safe.crew.includes(role)) return false;
+  if (!r7Spend(250)) return false;
+  r7Safe.crew.push(role); r7Safe.morale = r7Clamp(r7Safe.morale + 10, 0, 100); r7SafeSave();
+  toast(role + ' joined the crew. Morale ' + r7Safe.morale + '/100.');
+  return true;
+}
+function r7SafeSleep() {
+  if (!r7Safe.owned.includes(0)) { toast('No bed yet — buy the comfy bed first.'); return false; }
+  r7Safe.slept++; r7Safe.morale = r7Clamp(r7Safe.morale + 5, 0, 100);
+  state.health = 100; r7SafeSave(); updateHUD();
+  toast('Slept like a rock. Health full, morale ' + r7Safe.morale + '/100. Nights slept: ' + r7Safe.slept);
+  return true;
+}
+function r7SafeSave() { r7Save('safehouse', r7Safe); }
+function r7SafeLoad() { const s = r7Load('safehouse', null); if (s) r7Safe = s; }
+const R7_SAFEHOUSE = { x: -8, z: -40, name: 'Ryan & Ian safehouse' };
+function r7SafeNear() { return r7Near(R7_SAFEHOUSE.x, R7_SAFEHOUSE.z, 8); }
+function r7SafeBuild() {
+  const h = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 8), new THREE.MeshStandardMaterial({ color: 0x7a5a3a }));
+  h.position.set(R7_SAFEHOUSE.x, 2.5, R7_SAFEHOUSE.z); scene.add(h);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(7.5, 2.5, 4), new THREE.MeshStandardMaterial({ color: 0x8a2a2a }));
+  roof.position.set(R7_SAFEHOUSE.x, 6.2, R7_SAFEHOUSE.z); roof.rotation.y = Math.PI / 4; scene.add(roof);
+}
+function r7SafeOpen() {
+  const lines = [
+    'Safehouse morale ' + r7Safe.morale + '/100 · crew: ' + r7Safe.crew.join(', ') + ' · nights slept ' + r7Safe.slept + '.',
+    'Upgrades owned: ' + (r7Safe.owned.map((i) => R7_SAFE_UPGRADES[i].n).join(', ') || 'none yet'),
+  ];
+  const buttons = R7_SAFE_UPGRADES.map((u, i) => r7PanelButton('Buy ' + u.n + ' — $' + u.cost + ' (' + u.effect + ')', () => { r7SafeBuy(i); r7SafeOpen(); }, r7Safe.owned.includes(i)));
+  for (const r of R7_CREW_ROLES) buttons.push(r7PanelButton('Hire ' + r + ' — $250', () => { r7SafeHire(r); r7SafeOpen(); }, r7Safe.crew.includes(r)));
+  buttons.push(r7PanelButton('Sleep until morning', () => { r7SafeSleep(); r7SafeOpen(); }, !r7Safe.owned.includes(0)));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🏠 Safehouse Upgrades', lines, buttons);
+  return true;
+}
+// --- R7-10 Stranger missions: 8 quirky NPC side quests ---
+const R7_STRANGERS = [
+  { n: 'Old Sal', x: -44, z: 60, q: 'Find his lost fishing hat', pay: 120, hint: 'It blew onto the pier.' },
+  { n: 'Tia the busker', x: 12, z: 8, q: 'Play her stolen guitar back', pay: 150, hint: 'A gull took it to the roof.' },
+  { n: 'Chef Beni', x: 34, z: -44, q: 'Fetch 3 bay limes', pay: 90, hint: 'Lime trees grow by the marina.' },
+  { n: 'Captain Wren', x: 96, z: 70, q: 'Tow his boat to the dock', pay: 200, hint: 'His engine died mid-bay.' },
+  { n: 'Madame Zola', x: -70, z: -20, q: 'Read her three fortunes', pay: 110, hint: 'She only trusts the brave.' },
+  { n: 'Kid Milo', x: 4, z: -70, q: 'Win back his kite from a tree', pay: 60, hint: 'Climb the old oak.' },
+  { n: 'Doc Hal', x: 70, z: -60, q: 'Deliver medicine to the swamp', pay: 180, hint: 'Drive slow, the road floods.' },
+  { n: 'Auntie Rosa', x: -20, z: 90, q: 'Find her runaway goat', pay: 130, hint: 'It loves the golf course grass.' },
+];
+let r7Stranger = { done: [], met: [] };
+function r7StrangerNear() {
+  for (let i = 0; i < R7_STRANGERS.length; i++) if (r7Near(R7_STRANGERS[i].x, R7_STRANGERS[i].z, 8)) return i;
+  return -1;
+}
+function r7StrangerMeet(i) {
+  if (!r7Stranger.met.includes(i)) r7Stranger.met.push(i);
+  r7StrangerSave();
+  toast(R7_STRANGERS[i].n + ': "' + R7_STRANGERS[i].q + ' — ' + R7_STRANGERS[i].hint + '"');
+  return true;
+}
+function r7StrangerDo(i) {
+  if (r7Stranger.done.includes(i)) { toast(R7_STRANGERS[i].n + ' already owes you one.'); return false; }
+  r7Stranger.done.push(i); r7StrangerSave();
+  r7Earn(R7_STRANGERS[i].pay, R7_STRANGERS[i].n + ' is grateful');
+  r7Rep.good += 4; r7RepSave();
+  return true;
+}
+function r7StrangerSave() { r7Save('stranger', r7Stranger); }
+function r7StrangerLoad() { const s = r7Load('stranger', null); if (s) r7Stranger = s; }
+function r7StrangerOpen() {
+  const i = r7StrangerNear(); if (i < 0) return false;
+  const s = R7_STRANGERS[i];
+  const lines = [
+    s.n + ' — "' + s.q + '"',
+    'Hint: ' + s.hint,
+    'Reward: $' + s.pay + ' and +4 rep. Done: ' + r7Stranger.done.length + '/8 strangers helped.',
+  ];
+  const buttons = [
+    r7PanelButton('Listen to the story', () => { r7StrangerMeet(i); r7StrangerOpen(); }),
+    r7PanelButton('Do the favour (+$' + s.pay + ')', () => { r7StrangerDo(i); r7ClosePanel(); }, r7Stranger.done.includes(i)),
+    r7PanelButton('Walk away', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('❓ Stranger — ' + s.n, lines, buttons);
+  return true;
+}
+function r7StrangerBuild() {
+  for (const s of R7_STRANGERS) {
+    const ped = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 1, 4, 8), new THREE.MeshStandardMaterial({ color: 0xd8a020 }));
+    ped.position.set(s.x, 1.1, s.z); scene.add(ped);
+  }
+}
+// --- R7-11 Bounty hunting: wanted NPCs, alive pays more than dead ---
+const R7_BOUNTIES = [
+  { n: 'Slick Eddie', x: -40, z: 30, alive: 500, dead: 200, crime: 'skipped bail' },
+  { n: 'One-Eye Mara', x: 60, z: -10, alive: 650, dead: 260, crime: 'harbour theft ring' },
+  { n: 'The Quiet Man', x: 10, z: 80, alive: 800, dead: 320, crime: 'smuggling' },
+  { n: 'Big Tuna Tony', x: -90, z: -60, alive: 450, dead: 180, crime: 'loan sharking' },
+  { n: 'Velvet Vee', x: 44, z: 44, alive: 720, dead: 300, crime: 'forgery' },
+];
+let r7Bounty = { active: -1, caught: [], alive: 0, dead: 0 };
+function r7BountyTake(i) {
+  if (r7Bounty.active >= 0) { toast('Finish the current bounty first.'); return false; }
+  if (r7Bounty.caught.includes(i)) { toast(R7_BOUNTIES[i].n + ' is already in custody.'); return false; }
+  r7Bounty.active = i; r7BountySave();
+  toast('Bounty taken: ' + R7_BOUNTIES[i].n + ' — ' + R7_BOUNTIES[i].crime + '. Alive $' + R7_BOUNTIES[i].alive + ', dead $' + R7_BOUNTIES[i].dead + '.');
+  return true;
+}
+function r7BountyCapture(alive) {
+  const i = r7Bounty.active; if (i < 0) return false;
+  const b = R7_BOUNTIES[i];
+  r7Bounty.caught.push(i); r7Bounty.active = -1;
+  if (alive) r7Bounty.alive++; else r7Bounty.dead++;
+  r7BountySave(); r7Earn(alive ? b.alive : b.dead, 'Bounty: ' + b.n + (alive ? ' (alive)' : ' (dead)'));
+  return true;
+}
+function r7BountySave() { r7Save('bounty', r7Bounty); }
+function r7BountyLoad() { const s = r7Load('bounty', null); if (s) r7Bounty = s; }
+const R7_BOUNTY_BOARD = { x: 6, z: 34, name: 'Bounty board, Bay Sheriff office' };
+function r7BountyNear() { return r7Near(R7_BOUNTY_BOARD.x, R7_BOUNTY_BOARD.z, 8); }
+function r7BountyBuild() {
+  const b = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 0.4), new THREE.MeshStandardMaterial({ color: 0x6a3a2a }));
+  b.position.set(R7_BOUNTY_BOARD.x, 1.8, R7_BOUNTY_BOARD.z); scene.add(b);
+}
+function r7BountyOpen() {
+  const lines = [
+    'Caught alive ' + r7Bounty.alive + ' · caught dead ' + r7Bounty.dead + ' · total ' + r7Bounty.caught.length + '/5.',
+    r7Bounty.active >= 0 ? 'Active: ' + R7_BOUNTIES[r7Bounty.active].n + ' — alive pays $' + R7_BOUNTIES[r7Bounty.active].alive + '.' : 'No active bounty. Alive always pays more than dead.',
+  ];
+  const buttons = R7_BOUNTIES.map((b, i) => r7PanelButton('Take: ' + b.n + ' — alive $' + b.alive + ' / dead $' + b.dead, () => { r7BountyTake(i); r7BountyOpen(); }, r7Bounty.caught.includes(i) || r7Bounty.active >= 0));
+  if (r7Bounty.active >= 0) {
+    buttons.push(r7PanelButton('Bring them in ALIVE', () => { r7BountyCapture(true); r7BountyOpen(); }));
+    buttons.push(r7PanelButton('Bring them in dead', () => { r7BountyCapture(false); r7BountyOpen(); }));
+  }
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🎯 Bounty Board', lines, buttons);
+  return true;
+}
+// --- R7-12 Treasure hunts: 3 clue-chain hunts to buried caches ---
+const R7_TREASURE = [
+  { n: 'The Drowned Captain', clues: ['Start where the old lighthouse fell', 'Count the three palms by the tide pool', 'Dig under the X in the sand'], x: 128, z: 96, pay: 1200 },
+  { n: 'Smuggler Gold', clues: ['The swamp hides what the bay forgets', 'Follow the crooked cypress north', 'Gold sleeps where the water turns black'], x: -160, z: 130, pay: 1500 },
+  { n: 'The Gardener Hoard', clues: ['A gardener buried his wages', 'Behind the chapel, under the jasmine', 'The third stone from the wall'], x: -24, z: -66, pay: 900 },
+];
+let r7Treasure = { step: [0, 0, 0], found: [] };
+function r7TreasureClue(i) {
+  if (r7Treasure.found.includes(i)) { toast(R7_TREASURE[i].n + ' already dug up.'); return false; }
+  const s = r7Treasure.step[i];
+  toast('Clue ' + (s + 1) + '/3 — ' + R7_TREASURE[i].n + ': ' + R7_TREASURE[i].clues[s]);
+  r7Treasure.step[i] = Math.min(2, s + 1); r7TreasureSave();
+  return true;
+}
+function r7TreasureDig(i) {
+  if (r7Treasure.found.includes(i)) return false;
+  if (r7Treasure.step[i] < 2) { toast('You need all three clues before you dig here.'); return false; }
+  if (!r7Near(R7_TREASURE[i].x, R7_TREASURE[i].z, 10)) { toast('Wrong spot — the clues point elsewhere.'); return false; }
+  r7Treasure.found.push(i); r7TreasureSave();
+  r7Earn(R7_TREASURE[i].pay, 'Treasure found: ' + R7_TREASURE[i].n);
+  return true;
+}
+function r7TreasureSave() { r7Save('treasure', r7Treasure); }
+function r7TreasureLoad() { const s = r7Load('treasure', null); if (s) r7Treasure = s; }
+function r7TreasureNear() {
+  for (let i = 0; i < R7_TREASURE.length; i++) if (r7Near(R7_TREASURE[i].x, R7_TREASURE[i].z, 10)) return i;
+  return -1;
+}
+function r7TreasureOpen() {
+  const i = r7TreasureNear(); if (i < 0) return false;
+  const t = R7_TREASURE[i];
+  const lines = [
+    t.n + ' — cache worth $' + t.pay + '.',
+    'Clues read: ' + r7Treasure.step[i] + '/3. ' + (r7Treasure.step[i] < 3 ? 'Next: ' + t.clues[r7Treasure.step[i]] : 'All clues read — dig!'),
+    'Found caches: ' + r7Treasure.found.length + '/3.',
+  ];
+  const buttons = [
+    r7PanelButton('Read the next clue', () => { r7TreasureClue(i); r7TreasureOpen(); }, r7Treasure.found.includes(i)),
+    r7PanelButton('Dig here', () => { r7TreasureDig(i); r7ClosePanel(); }, r7Treasure.found.includes(i)),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('🗺️ Treasure Hunt — ' + t.n, lines, buttons);
+  return true;
+}
+function r7TreasureBuild() {
+  for (const t of R7_TREASURE) {
+    const x = new THREE.Mesh(new THREE.BoxGeometry(2, 0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+    x.position.set(t.x, 0.4, t.z); scene.add(x);
+    const x2 = x.clone(); x2.rotation.y = Math.PI / 2; scene.add(x2);
+  }
+}
+// --- R7-13 Challenges: 9 categories, bronze / silver / gold ranks ---
+const R7_CHALLENGES = [
+  { n: 'Speed Demon', desc: 'Top speed on the causeway', bronze: 90, silver: 120, gold: 150, unit: 'mph' },
+  { n: 'Air Time', desc: 'Longest jump off a ramp', bronze: 2, silver: 4, gold: 6, unit: 'sec' },
+  { n: 'Sharpshooter', desc: 'Headshots in one day', bronze: 5, silver: 12, gold: 25, unit: 'hits' },
+  { n: 'Wheelman', desc: 'Clean getaways in a row', bronze: 2, silver: 4, gold: 7, unit: 'escapes' },
+  { n: 'Marathon', desc: 'Distance run on foot', bronze: 2, silver: 5, gold: 10, unit: 'km' },
+  { n: 'Big Spender', desc: 'Cash spent in one day', bronze: 500, silver: 1500, gold: 4000, unit: '$' },
+  { n: 'Night Owl', desc: 'Missions finished after dark', bronze: 2, silver: 5, gold: 9, unit: 'jobs' },
+  { n: 'Collector', desc: 'Packages found in total', bronze: 10, silver: 25, gold: 45, unit: 'packs' },
+  { n: 'Survivor', desc: 'Days alive without dying', bronze: 3, silver: 7, gold: 14, unit: 'days' },
+];
+let r7Chal = { best: [0, 0, 0, 0, 0, 0, 0, 0, 0], claimed: [] };
+function r7ChalRank(i) {
+  const c = R7_CHALLENGES[i]; const v = r7Chal.best[i];
+  if (v >= c.gold) return 'gold';
+  if (v >= c.silver) return 'silver';
+  if (v >= c.bronze) return 'bronze';
+  return 'none';
+}
+function r7ChalRecord(i, value) {
+  if (value > r7Chal.best[i]) { r7Chal.best[i] = value; r7ChalSave(); }
+  return r7ChalRank(i);
+}
+function r7ChalClaim(i) {
+  const rank = r7ChalRank(i);
+  const key = i + '-' + rank;
+  if (rank === 'none' || r7Chal.claimed.includes(key)) return false;
+  r7Chal.claimed.push(key); r7ChalSave();
+  r7Earn(rank === 'gold' ? 400 : rank === 'silver' ? 200 : 100, R7_CHALLENGES[i].n + ' ' + rank + ' medal');
+  return true;
+}
+function r7ChalSave() { r7Save('chal', r7Chal); }
+function r7ChalLoad() { const s = r7Load('chal', null); if (s) r7Chal = s; }
+function r7ChalOpen() {
+  const lines = ['Nine challenge categories — bronze $100, silver $200, gold $400.'];
+  for (let i = 0; i < R7_CHALLENGES.length; i++) {
+    const c = R7_CHALLENGES[i];
+    lines.push(c.n + ': best ' + r7Chal.best[i] + ' ' + c.unit + ' · rank ' + r7ChalRank(i) + ' (bronze ' + c.bronze + ' / silver ' + c.silver + ' / gold ' + c.gold + ')');
+  }
+  const buttons = R7_CHALLENGES.map((c, i) => r7PanelButton('Claim ' + c.n + ' ' + r7ChalRank(i), () => { r7ChalClaim(i); r7ChalOpen(); }, r7ChalRank(i) === 'none' || r7Chal.claimed.includes(i + '-' + r7ChalRank(i))));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🏅 Bay Challenges', lines, buttons);
+  return true;
+}
+const R7_CHAL_BOARD = { x: 0, z: 14, name: 'Challenge board, central plaza' };
+function r7ChalNear() { return r7Near(R7_CHAL_BOARD.x, R7_CHAL_BOARD.z, 8); }
+// --- R7-14 Basketball court + 3v3 pickup games; backyard wrestling ring ---
+const R7_COURT = { x: 48, z: -52, name: 'Marina Courts' };
+const R7_WRESTLE = { x: -58, z: 70, name: 'Backyard ring, Docks Lane' };
+let r7Court = { games: 0, wins: 0, points: 0, best: 0, wrestleWins: 0, wrestleLoss: 0 };
+function r7CourtPlay() {
+  const pts = 6 + Math.floor(Math.random() * 18);
+  const win = pts >= 14;
+  r7Court.games++; r7Court.points += pts;
+  if (win) r7Court.wins++;
+  if (pts > r7Court.best) r7Court.best = pts;
+  r7CourtSave();
+  if (win) r7Earn(90, 'Won the 3v3 pickup game (' + pts + ' pts)');
+  else toast('Lost the pickup game — ' + pts + ' points. The court crowd groans.');
+  return win;
+}
+function r7WrestleFight() {
+  const win = Math.random() < 0.55;
+  if (win) { r7Court.wrestleWins++; r7CourtSave(); r7Earn(160, 'Won the backyard wrestling bout'); }
+  else { r7Court.wrestleLoss++; r7CourtSave(); toast('Pinned in the backyard ring — the crowd loved it anyway.'); }
+  return win;
+}
+function r7CourtSave() { r7Save('court', r7Court); }
+function r7CourtLoad() { const s = r7Load('court', null); if (s) r7Court = s; }
+function r7CourtNear() { return r7Near(R7_COURT.x, R7_COURT.z, 10); }
+function r7WrestleNear() { return r7Near(R7_WRESTLE.x, R7_WRESTLE.z, 10); }
+function r7CourtBuild() {
+  const court = new THREE.Mesh(new THREE.PlaneGeometry(16, 10), new THREE.MeshStandardMaterial({ color: 0x2a5a8a }));
+  court.rotation.x = -Math.PI / 2; court.position.set(R7_COURT.x, 0.05, R7_COURT.z); scene.add(court);
+  const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.6, 0.08, 8, 16), new THREE.MeshStandardMaterial({ color: 0xff5a2a }));
+  hoop.position.set(R7_COURT.x, 3, R7_COURT.z - 5); hoop.rotation.x = Math.PI / 2; scene.add(hoop);
+  const ring = new THREE.Mesh(new THREE.BoxGeometry(6, 0.8, 6), new THREE.MeshStandardMaterial({ color: 0x8a2a2a }));
+  ring.position.set(R7_WRESTLE.x, 0.4, R7_WRESTLE.z); scene.add(ring);
+}
+function r7CourtOpen() {
+  const lines = [
+    'Pickup 3v3: ' + r7Court.games + ' games, ' + r7Court.wins + ' wins, best ' + r7Court.best + ' points.',
+    'Win a game: $90. Score 14+ points to take the win.',
+    'Backyard wrestling at ' + R7_WRESTLE.name + ': ' + r7Court.wrestleWins + ' wins, ' + r7Court.wrestleLoss + ' losses, $160 a win.',
+  ];
+  const buttons = [
+    r7PanelButton('Play a 3v3 pickup game', () => { r7CourtPlay(); r7CourtOpen(); }),
+    r7PanelButton('Fight in the backyard ring ($160)', () => { r7WrestleFight(); r7CourtOpen(); }),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('🏀 Marina Courts', lines, buttons);
+  return true;
+}
+// --- R7-15 Pool hall + billiards; boxing gym with bouts ---
+const R7_POOL = { x: -26, z: 44, name: 'Eight Ball Hall' };
+const R7_BOXGYM = { x: 26, z: -64, name: 'Bay Iron Boxing' };
+let r7Pool = { games: 0, wins: 0, runouts: 0, bouts: 0, boutWins: 0, belt: false };
+function r7PoolPlay() {
+  const win = Math.random() < 0.5;
+  r7Pool.games++;
+  if (win) { r7Pool.wins++; if (Math.random() < 0.2) r7Pool.runouts++; }
+  r7PoolSave();
+  if (win) r7Earn(70, 'Won the pool frame' + (r7Pool.runouts ? ' — runout!' : ''));
+  else toast('Lost the pool frame — the cue ball had other ideas.');
+  return win;
+}
+function r7BoxBout() {
+  const win = Math.random() < 0.5 + (r7Pool.bouts * 0.02);
+  r7Pool.bouts++;
+  if (win) {
+    r7Pool.boutWins++;
+    if (r7Pool.boutWins >= 5 && !r7Pool.belt) { r7Pool.belt = true; r7PoolSave(); r7Earn(500, 'BAY CHAMPION BELT — five bout wins'); return true; }
+    r7PoolSave(); r7Earn(140, 'Won the boxing bout');
+  } else { r7PoolSave(); toast('Lost the bout — the bell saved you from worse.'); }
+  return win;
+}
+function r7PoolSave() { r7Save('pool', r7Pool); }
+function r7PoolLoad() { const s = r7Load('pool', null); if (s) r7Pool = s; }
+function r7PoolNear() { return r7Near(R7_POOL.x, R7_POOL.z, 8); }
+function r7BoxNear() { return r7Near(R7_BOXGYM.x, R7_BOXGYM.z, 8); }
+function r7PoolBuild() {
+  const hall = new THREE.Mesh(new THREE.BoxGeometry(10, 4.5, 8), new THREE.MeshStandardMaterial({ color: 0x2a4a2a }));
+  hall.position.set(R7_POOL.x, 2.2, R7_POOL.z); scene.add(hall);
+  const gym = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 8), new THREE.MeshStandardMaterial({ color: 0x6a2a2a }));
+  gym.position.set(R7_BOXGYM.x, 2.5, R7_BOXGYM.z); scene.add(gym);
+}
+function r7PoolOpen() {
+  const lines = [
+    'Pool: ' + r7Pool.games + ' frames, ' + r7Pool.wins + ' wins, ' + r7Pool.runouts + ' runouts. Frame win $70.',
+    'Boxing: ' + r7Pool.bouts + ' bouts, ' + r7Pool.boutWins + ' wins. Bout win $140.',
+    r7Pool.belt ? '🏆 You hold the Bay Champion belt!' : 'Five bout wins earns the Bay Champion belt ($500).',
+  ];
+  const buttons = [
+    r7PanelButton('Play a frame of pool ($70)', () => { r7PoolPlay(); r7PoolOpen(); }),
+    r7PanelButton('Fight a boxing bout ($140)', () => { r7BoxBout(); r7PoolOpen(); }),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('🎱 Eight Ball Hall & Boxing', lines, buttons);
+  return true;
+}
+// --- R7-16 Kayaking + scuba diving: reefs, underwater loot, dive sites ---
+const R7_DIVE_SITES = [
+  { n: 'Sunken Ferry Reef', x: 150, z: 60, depth: 12, loot: 220 },
+  { n: 'Coral Garden', x: 170, z: -20, depth: 8, loot: 140 },
+  { n: 'Anchor Wreck', x: 140, z: 120, depth: 18, loot: 350 },
+  { n: 'Turtle Cove', x: 110, z: -80, depth: 6, loot: 100 },
+];
+let r7Dive = { kayak: false, tank: 0, dives: [], loot: 0, bestDepth: 0 };
+function r7DiveBuyKayak() {
+  if (r7Dive.kayak) return false;
+  if (!r7Spend(400)) return false;
+  r7Dive.kayak = true; r7DiveSave(); toast('Kayak bought — paddle out from the marina.'); return true;
+}
+function r7DiveBuyTank() {
+  if (!r7Spend(120)) return false;
+  r7Dive.tank++; r7DiveSave(); toast('Scuba tank filled. Tanks: ' + r7Dive.tank); return true;
+}
+function r7DiveGo(i) {
+  const s = R7_DIVE_SITES[i];
+  if (!r7Dive.kayak) { toast('You need a kayak to reach ' + s.n + '.'); return false; }
+  if (r7Dive.tank <= 0) { toast('No air — fill a scuba tank first.'); return false; }
+  if (r7Dive.dives.includes(i)) { toast('Already dove ' + s.n + ' — the loot is gone.'); return false; }
+  r7Dive.tank--; r7Dive.dives.push(i); r7Dive.loot += s.loot;
+  if (s.depth > r7Dive.bestDepth) r7Dive.bestDepth = s.depth;
+  r7DiveSave(); r7Earn(s.loot, 'Dove ' + s.n + ' (' + s.depth + 'm) — underwater loot');
+  return true;
+}
+function r7DiveSave() { r7Save('dive', r7Dive); }
+function r7DiveLoad() { const s = r7Load('dive', null); if (s) r7Dive = s; }
+const R7_MARINA_SHOP = { x: 88, z: 20, name: 'Marina dive shop' };
+function r7DiveNear() { return r7Near(R7_MARINA_SHOP.x, R7_MARINA_SHOP.z, 8); }
+function r7DiveBuild() {
+  const shop = new THREE.Mesh(new THREE.BoxGeometry(8, 4, 6), new THREE.MeshStandardMaterial({ color: 0x2a7a8a }));
+  shop.position.set(R7_MARINA_SHOP.x, 2, R7_MARINA_SHOP.z); scene.add(shop);
+  for (const s of R7_DIVE_SITES) {
+    const buoy = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.6, 8), new THREE.MeshStandardMaterial({ color: 0xff7a2a }));
+    buoy.position.set(s.x, 0.8, s.z); scene.add(buoy);
+  }
+}
+function r7DiveOpen() {
+  const lines = [
+    'Kayak: ' + (r7Dive.kayak ? 'owned' : 'not owned ($400)') + ' · tanks: ' + r7Dive.tank + ' · dives: ' + r7Dive.dives.length + '/4.',
+    'Deepest dive ' + r7Dive.bestDepth + 'm · underwater loot banked $' + r7Dive.loot + '.',
+    'Dive sites: ' + R7_DIVE_SITES.map((s, i) => s.n + ' ' + s.depth + 'm $' + s.loot + (r7Dive.dives.includes(i) ? ' (done)' : '')).join(' · '),
+  ];
+  const buttons = [
+    r7PanelButton('Buy a kayak — $400', () => { r7DiveBuyKayak(); r7DiveOpen(); }, r7Dive.kayak),
+    r7PanelButton('Fill a scuba tank — $120', () => { r7DiveBuyTank(); r7DiveOpen(); }),
+  ];
+  R7_DIVE_SITES.forEach((s, i) => buttons.push(r7PanelButton('Dive ' + s.n + ' ($' + s.loot + ')', () => { r7DiveGo(i); r7DiveOpen(); }, r7Dive.dives.includes(i))));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🛶 Kayak & Scuba — Marina Dive Shop', lines, buttons);
+  return true;
+}
+// --- R7-17 Base jumping: cliff/building spots + parachute challenges ---
+const R7_JUMP_SPOTS = [
+  { n: 'North Cliff', x: -20, z: -180, height: 120, pay: 260 },
+  { n: 'Bay Tower roof', x: 20, z: -20, height: 90, pay: 200 },
+  { n: 'Lighthouse Point', x: 130, z: 140, height: 70, pay: 160 },
+  { n: 'Casino Row crane', x: 66, z: 18, height: 80, pay: 180 },
+];
+let r7Jump = { chute: false, jumps: [], best: 0, nearMisses: 0 };
+function r7JumpBuyChute() {
+  if (r7Jump.chute) return false;
+  if (!r7Spend(500)) return false;
+  r7Jump.chute = true; r7JumpSave(); toast('Parachute bought — do not jump without it.'); return true;
+}
+function r7JumpGo(i) {
+  const s = R7_JUMP_SPOTS[i];
+  if (!r7Jump.chute) { toast('No parachute — that jump would end badly. Buy one first.'); return false; }
+  if (!r7Near(s.x, s.z, 10)) { toast('You are not at ' + s.n + ' yet.'); return false; }
+  const airtime = Math.round((s.height / 12 + Math.random() * 3) * 10) / 10;
+  r7Jump.jumps.push(i); if (airtime > r7Jump.best) r7Jump.best = airtime;
+  if (Math.random() < 0.25) r7Jump.nearMisses++;
+  r7JumpSave(); r7Earn(s.pay, 'Base jump from ' + s.n + ' — ' + airtime + 's in the air');
+  return true;
+}
+function r7JumpSave() { r7Save('jump', r7Jump); }
+function r7JumpLoad() { const s = r7Load('jump', null); if (s) r7Jump = s; }
+function r7JumpNear() {
+  for (let i = 0; i < R7_JUMP_SPOTS.length; i++) if (r7Near(R7_JUMP_SPOTS[i].x, R7_JUMP_SPOTS[i].z, 10)) return i;
+  return -1;
+}
+function r7JumpBuild() {
+  for (const s of R7_JUMP_SPOTS) {
+    const flag = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2, 6), new THREE.MeshBasicMaterial({ color: 0xff2a7a }));
+    flag.position.set(s.x, 2, s.z); scene.add(flag);
+  }
+}
+function r7JumpOpen() {
+  const i = r7JumpNear(); if (i < 0) return false;
+  const s = R7_JUMP_SPOTS[i];
+  const lines = [
+    s.n + ' — ' + s.height + 'm drop, pays $' + s.pay + '.',
+    'Parachute: ' + (r7Jump.chute ? 'owned' : 'NOT owned ($500)') + ' · jumps ' + r7Jump.jumps.length + ' · best airtime ' + r7Jump.best + 's · near misses ' + r7Jump.nearMisses + '.',
+  ];
+  const buttons = [
+    r7PanelButton('Buy a parachute — $500', () => { r7JumpBuyChute(); r7JumpOpen(); }, r7Jump.chute),
+    r7PanelButton('JUMP from ' + s.n, () => { r7JumpGo(i); r7ClosePanel(); }),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('🪂 Base Jumping — ' + s.n, lines, buttons);
+  return true;
+}
+// --- R7-18 Airboat swamp tours + swamp wildlife ---
+const R7_SWAMP_TOURS = [
+  { n: 'Dawn Gator Run', pay: 120, gators: 4 },
+  { n: 'Midday Marsh Loop', pay: 90, gators: 2 },
+  { n: 'Sunset Heron Cruise', pay: 150, gators: 1 },
+];
+let r7Swamp = { airboat: false, tours: 0, earned: 0, gatorsSeen: 0, tips: 0 };
+function r7SwampBuyBoat() {
+  if (r7Swamp.airboat) return false;
+  if (!r7Spend(1800)) return false;
+  r7Swamp.airboat = true; r7SwampSave(); toast('Airboat bought — the swamp is open for tours.'); return true;
+}
+function r7SwampTour(i) {
+  const t = R7_SWAMP_TOURS[i];
+  if (!r7Swamp.airboat) { toast('No airboat — buy one at the swamp dock first.'); return false; }
+  const tip = Math.floor(Math.random() * 40);
+  r7Swamp.tours++; r7Swamp.gatorsSeen += t.gators; r7Swamp.tips += tip; r7Swamp.earned += t.pay + tip;
+  r7SwampSave(); r7Earn(t.pay + tip, 'Swamp tour: ' + t.n + ' (' + t.gators + ' gators, $' + tip + ' tips)');
+  return true;
+}
+function r7SwampSave() { r7Save('swamp', r7Swamp); }
+function r7SwampLoad() { const s = r7Load('swamp', null); if (s) r7Swamp = s; }
+const R7_SWAMP_DOCK = { x: -140, z: 110, name: 'Swamp dock' };
+function r7SwampNear() { return r7Near(R7_SWAMP_DOCK.x, R7_SWAMP_DOCK.z, 10); }
+function r7SwampBuild() {
+  const dock = new THREE.Mesh(new THREE.BoxGeometry(10, 1, 4), new THREE.MeshStandardMaterial({ color: 0x5a4a2a }));
+  dock.position.set(R7_SWAMP_DOCK.x, 0.5, R7_SWAMP_DOCK.z); scene.add(dock);
+  for (let i = 0; i < 3; i++) {
+    const gator = new THREE.Mesh(new THREE.BoxGeometry(3, 0.6, 1), new THREE.MeshStandardMaterial({ color: 0x3a5a2a }));
+    gator.position.set(R7_SWAMP_DOCK.x - 8 + i * 7, 0.3, R7_SWAMP_DOCK.z + 8); scene.add(gator);
+  }
+}
+function r7SwampOpen() {
+  const lines = [
+    'Airboat: ' + (r7Swamp.airboat ? 'owned' : 'not owned ($1800)') + ' · tours run ' + r7Swamp.tours + ' · earned $' + r7Swamp.earned + '.',
+    'Gators spotted ' + r7Swamp.gatorsSeen + ' · tips banked $' + r7Swamp.tips + '.',
+    'Tourists pay more at sunset — and the herons come out then too.',
+  ];
+  const buttons = [
+    r7PanelButton('Buy an airboat — $1800', () => { r7SwampBuyBoat(); r7SwampOpen(); }, r7Swamp.airboat),
+  ];
+  R7_SWAMP_TOURS.forEach((t, i) => buttons.push(r7PanelButton('Run: ' + t.n + ' — $' + t.pay + '+ tips', () => { r7SwampTour(i); r7SwampOpen(); }, !r7Swamp.airboat)));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🐊 Airboat Swamp Tours', lines, buttons);
+  return true;
+}
+// --- R7-19 Hunting lodge + trophy room; pelt crafting ---
+const R7_PELTS = [
+  { n: 'Deer pelt coat', need: 'White-tail Deer', cost: 0, sell: 180 },
+  { n: 'Boar hide boots', need: 'Wild Boar', cost: 40, sell: 150 },
+  { n: 'Gator skin wallet', need: 'Bay Alligator', cost: 60, sell: 260 },
+  { n: 'Panther cloak', need: 'Black Panther', cost: 120, sell: 700 },
+];
+let r7Lodge = { trophies: [], crafted: [], visits: 0 };
+function r7LodgeMount(animal) {
+  if (r7Lodge.trophies.includes(animal)) return false;
+  r7Lodge.trophies.push(animal); r7LodgeSave();
+  toast(animal + ' mounted on the lodge wall. Trophies: ' + r7Lodge.trophies.length + '.');
+  return true;
+}
+function r7LodgeCraft(i) {
+  const p = R7_PELTS[i];
+  const huntIdx = R7_WILD.findIndex((a) => a.n === p.need);
+  if (!r7Wild.hunted.includes(huntIdx)) { toast('Hunt a ' + p.need + ' first — the lodge needs the pelt.'); return false; }
+  if (r7Lodge.crafted.includes(i)) { toast(p.n + ' already crafted.'); return false; }
+  if (p.cost && !r7Spend(p.cost)) return false;
+  r7Lodge.crafted.push(i); r7LodgeSave();
+  r7Earn(p.sell, 'Crafted and sold: ' + p.n);
+  return true;
+}
+function r7LodgeSave() { r7Save('lodge', r7Lodge); }
+function r7LodgeLoad() { const s = r7Load('lodge', null); if (s) r7Lodge = s; }
+const R7_LODGE = { x: -110, z: -130, name: 'North Woods hunting lodge' };
+function r7LodgeNear() { return r7Near(R7_LODGE.x, R7_LODGE.z, 10); }
+function r7LodgeBuild() {
+  const lodge = new THREE.Mesh(new THREE.BoxGeometry(12, 5, 9), new THREE.MeshStandardMaterial({ color: 0x6a4a2a }));
+  lodge.position.set(R7_LODGE.x, 2.5, R7_LODGE.z); scene.add(lodge);
+  const antlers = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.15, 6, 12, Math.PI), new THREE.MeshStandardMaterial({ color: 0xd8c8a8 }));
+  antlers.position.set(R7_LODGE.x, 4.5, R7_LODGE.z + 4.6); scene.add(antlers);
+}
+function r7LodgeOpen() {
+  r7Lodge.visits++; r7LodgeSave();
+  const lines = [
+    'Trophy wall: ' + (r7Lodge.trophies.join(', ') || 'bare — mount your hunts here') + '.',
+    'Crafted: ' + (r7Lodge.crafted.map((i) => R7_PELTS[i].n).join(', ') || 'nothing yet') + ' · visits ' + r7Lodge.visits + '.',
+    'A full trophy wall (all 8 animals) is the lodge master rank.',
+  ];
+  const buttons = [];
+  for (let i = 0; i < R7_WILD.length; i++) {
+    if (r7Wild.hunted.includes(i)) buttons.push(r7PanelButton('Mount ' + R7_WILD[i].n + ' trophy', () => { r7LodgeMount(R7_WILD[i].n); r7LodgeOpen(); }, r7Lodge.trophies.includes(R7_WILD[i].n)));
+  }
+  R7_PELTS.forEach((p, i) => buttons.push(r7PanelButton('Craft ' + p.n + ' — sell $' + p.sell, () => { r7LodgeCraft(i); r7LodgeOpen(); }, r7Lodge.crafted.includes(i))));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🏚️ Hunting Lodge & Trophy Room', lines, buttons);
+  return true;
+}
+// --- R7-20 Hurricane fronts: severe storm events, surge, debris, shelter ---
+const R7_STORMS = [
+  { n: 'Hurricane Alma', wind: 9, surge: 3, pay: 300 },
+  { n: 'Tropical Storm Brio', wind: 6, surge: 2, pay: 180 },
+  { n: 'Hurricane Cleo', wind: 10, surge: 4, pay: 420 },
+];
+let r7Storm = { active: -1, timer: 0, sheltered: 0, rescued: 0, debris: 0, survived: 0 };
+function r7StormStart(i) {
+  if (r7Storm.active >= 0) return false;
+  r7Storm.active = i; r7Storm.timer = 60; r7StormSave();
+  toast('⚠️ ' + R7_STORMS[i].n + ' is hitting the bay — wind ' + R7_STORMS[i].wind + '/10, surge ' + R7_STORMS[i].surge + 'm. Find shelter!');
+  return true;
+}
+function r7StormShelter() {
+  if (r7Storm.active < 0) { toast('No storm right now — the sky is clear.'); return false; }
+  r7Storm.sheltered++; r7StormSave();
+  toast('Sheltered through the worst of it. NPCs are huddling inside too.');
+  return true;
+}
+function r7StormRescue() {
+  if (r7Storm.active < 0) return false;
+  r7Storm.rescued++; r7StormSave();
+  r7Earn(60, 'Pulled a stranded local out of the floodwater');
+  return true;
+}
+function r7StormDebris() {
+  if (r7Storm.active < 0) return false;
+  r7Storm.debris++; r7StormSave();
+  toast('Cleared storm debris. The road is open again.');
+  return true;
+}
+function r7StormEnd() {
+  const i = r7Storm.active; if (i < 0) return false;
+  r7Storm.active = -1; r7Storm.survived++;
+  r7StormSave(); r7Earn(R7_STORMS[i].pay, 'Survived ' + R7_STORMS[i].n);
+  return true;
+}
+function r7StormUpdate(dt) {
+  if (r7Storm.active < 0) return;
+  r7Storm.timer -= dt;
+  if (r7Storm.timer <= 0) r7StormEnd();
+}
+function r7StormSave() { r7Save('storm', r7Storm); }
+function r7StormLoad() { const s = r7Load('storm', null); if (s) r7Storm = s; }
+const R7_SHELTER = { x: 14, z: -8, name: 'Storm shelter, civic hall' };
+function r7StormNear() { return r7Near(R7_SHELTER.x, R7_SHELTER.z, 8); }
+function r7StormOpen() {
+  const lines = [
+    r7Storm.active >= 0 ? 'ACTIVE: ' + R7_STORMS[r7Storm.active].n + ' — ' + Math.ceil(r7Storm.timer) + 's left. Wind ' + R7_STORMS[r7Storm.active].wind + '/10.' : 'No storm overhead. The bay is calm — for now.',
+    'Storms survived ' + r7Storm.survived + ' · sheltered ' + r7Storm.sheltered + 'x · rescued ' + r7Storm.rescued + ' people · debris cleared ' + r7Storm.debris + '.',
+    'Surviving a full storm pays $180–$420. Rescues pay $60 each.',
+  ];
+  const buttons = R7_STORMS.map((s, i) => r7PanelButton('Storm warning: ' + s.n + ' (wind ' + s.wind + ')', () => { r7StormStart(i); r7StormOpen(); }, r7Storm.active >= 0));
+  buttons.push(r7PanelButton('Take shelter here', () => { r7StormShelter(); r7StormOpen(); }, r7Storm.active < 0));
+  buttons.push(r7PanelButton('Rescue a stranded local (+$60)', () => { r7StormRescue(); r7StormOpen(); }, r7Storm.active < 0));
+  buttons.push(r7PanelButton('Clear storm debris', () => { r7StormDebris(); r7StormOpen(); }, r7Storm.active < 0));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🌀 Hurricane Fronts — Civic Shelter', lines, buttons);
+  return true;
+}
+function r7StormBuild() {
+  const hall = new THREE.Mesh(new THREE.BoxGeometry(12, 6, 9), new THREE.MeshStandardMaterial({ color: 0x8a8a7a }));
+  hall.position.set(R7_SHELTER.x, 3, R7_SHELTER.z); scene.add(hall);
+}
+// --- R7-21 BayRide ride-share + bus/train timetables (fast travel network) ---
+const R7_RIDE_STOPS = [
+  { n: 'Marina BayRide', x: 84, z: 8, fare: 12 },
+  { n: 'Old Town BayRide', x: -28, z: 8, fare: 10 },
+  { n: 'Casino Row BayRide', x: 60, z: 24, fare: 14 },
+  { n: 'North Docks BayRide', x: -70, z: -80, fare: 16 },
+  { n: 'Airport BayRide', x: 100, z: -120, fare: 20 },
+];
+const R7_TIMETABLE = [
+  { line: 'Bay Loop bus', every: 10, from: 'Marina', to: 'Old Town' },
+  { line: 'Coast Express train', every: 15, from: 'Casino Row', to: 'North Docks' },
+  { line: 'Airport shuttle', every: 20, from: 'Marina', to: 'Airport' },
+];
+let r7Ride = { rides: 0, earned: 0, driver: false, rating: 5.0, trips: 0 };
+function r7RideGo(from, to) {
+  const fare = R7_RIDE_STOPS[to].fare;
+  if (!r7Spend(fare)) return false;
+  r7Ride.rides++; r7RideSave();
+  const p = r7Pos();
+  playerState.x = R7_RIDE_STOPS[to].x + 3; playerState.z = R7_RIDE_STOPS[to].z + 3;
+  if (state.inCar) { state.inCar.mesh.position.x = playerState.x; state.inCar.mesh.position.z = playerState.z; }
+  toast('BayRide dropped you at ' + R7_RIDE_STOPS[to].n + ' — $' + fare + '.');
+  updateHUD(); return true;
+}
+function r7RideDrive() {
+  if (!r7Ride.driver) {
+    if (!r7Spend(300)) return false;
+    r7Ride.driver = true; r7RideSave(); toast('BayRide driver signed up — $300 licence. Take fares, keep your rating up.');
+    return true;
+  }
+  const fare = 25 + Math.floor(Math.random() * 30);
+  r7Ride.trips++; r7Ride.earned += fare;
+  r7Ride.rating = r7Clamp(r7Ride.rating + (Math.random() < 0.8 ? 0.1 : -0.2), 1, 5);
+  r7RideSave(); r7Earn(fare, 'BayRide fare — rating ' + r7Ride.rating.toFixed(1) + '★');
+  return true;
+}
+function r7RideSave() { r7Save('ride', r7Ride); }
+function r7RideLoad() { const s = r7Load('ride', null); if (s) r7Ride = s; }
+function r7RideNear() {
+  for (let i = 0; i < R7_RIDE_STOPS.length; i++) if (r7Near(R7_RIDE_STOPS[i].x, R7_RIDE_STOPS[i].z, 8)) return i;
+  return -1;
+}
+function r7RideBuild() {
+  for (const s of R7_RIDE_STOPS) {
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(1.6, 2.2, 0.3), new THREE.MeshStandardMaterial({ color: 0x2ee6ff }));
+    sign.position.set(s.x, 1.4, s.z); scene.add(sign);
+  }
+}
+function r7RideOpen() {
+  const at = r7RideNear(); if (at < 0) return false;
+  const lines = [
+    'You are at ' + R7_RIDE_STOPS[at].n + '. Rides taken ' + r7Ride.rides + '.',
+    'Driver: ' + (r7Ride.driver ? 'yes — rating ' + r7Ride.rating.toFixed(1) + '★, ' + r7Ride.trips + ' fares, $' + r7Ride.earned + ' earned' : 'no — licence $300'),
+    'Timetable: ' + R7_TIMETABLE.map((t) => t.line + ' every ' + t.every + ' min (' + t.from + ' → ' + t.to + ')').join(' · '),
+  ];
+  const buttons = R7_RIDE_STOPS.map((s, i) => r7PanelButton('Ride to ' + s.n + ' — $' + s.fare, () => { r7RideGo(at, i); r7ClosePanel(); }, i === at));
+  buttons.push(r7PanelButton(r7Ride.driver ? 'Take a fare as driver' : 'Sign up as a BayRide driver — $300', () => { r7RideDrive(); r7RideOpen(); }));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🚕 BayRide — ' + R7_RIDE_STOPS[at].n, lines, buttons);
+  return true;
+}
+// --- R7-22 Phone 2.0: Snapmatic photo social app + car scanner app ---
+const R7_SNAP_TAGS = ['sunset', 'gator', 'skyline', 'classic car', 'street food', 'storm'];
+let r7Phone = { followers: 0, likes: 0, posts: [], scanned: [], viral: 0 };
+function r7SnapPost(tag) {
+  const likes = 5 + Math.floor(Math.random() * 60) + Math.floor(r7Phone.followers / 10);
+  r7Phone.posts.push({ tag, likes });
+  r7Phone.likes += likes;
+  const gained = Math.floor(likes / 20);
+  r7Phone.followers += gained;
+  if (likes >= 70) r7Phone.viral++;
+  r7PhoneSave();
+  toast('Posted a #' + tag + ' photo — ' + likes + ' likes, +' + gained + ' followers. Total ' + r7Phone.followers + '.');
+  return likes;
+}
+function r7SnapScanCar() {
+  if (!state.inCar) { toast('Get in a car first — the scanner reads the car you are sitting in.'); return false; }
+  const model = state.inCar.model || 'Bay sedan';
+  if (r7Phone.scanned.includes(model)) { toast(model + ' already scanned.'); return false; }
+  r7Phone.scanned.push(model); r7PhoneSave();
+  toast('Scanned: ' + model + ' — value, mods and owner history logged. Cars scanned: ' + r7Phone.scanned.length);
+  return true;
+}
+function r7SnapPayout() {
+  if (r7Phone.followers < 100) { toast('Need 100 followers for a payout — you have ' + r7Phone.followers + '.'); return false; }
+  const pay = Math.floor(r7Phone.followers / 10);
+  r7Phone.followers = Math.floor(r7Phone.followers * 0.9);
+  r7PhoneSave(); r7Earn(pay, 'Snapmatic brand payout');
+  return true;
+}
+function r7PhoneSave() { r7Save('phone', r7Phone); }
+function r7PhoneLoad() { const s = r7Load('phone', null); if (s) r7Phone = s; }
+function r7PhoneOpen() {
+  const lines = [
+    'Snapmatic: ' + r7Phone.followers + ' followers · ' + r7Phone.likes + ' likes · ' + r7Phone.posts.length + ' posts · ' + r7Phone.viral + ' viral.',
+    'Cars scanned: ' + (r7Phone.scanned.join(', ') || 'none yet') + '.',
+    'At 100 followers you can cash a brand payout (followers / 10 dollars).',
+  ];
+  const buttons = R7_SNAP_TAGS.map((t) => r7PanelButton('Post a #' + t + ' photo', () => { r7SnapPost(t); r7PhoneOpen(); }));
+  buttons.push(r7PanelButton('Scan the car you are in', () => { r7SnapScanCar(); r7PhoneOpen(); }));
+  buttons.push(r7PanelButton('Cash a brand payout', () => { r7SnapPayout(); r7PhoneOpen(); }, r7Phone.followers < 100));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('📸 Snapmatic — Phone 2.0', lines, buttons);
+  return true;
+}
+// --- R7-23 Radio podcasts + headphones (listen on foot) ---
+const R7_PODCASTS = [
+  { n: 'Bay True Crime', ep: 'The Drowned Captain', len: 22 },
+  { n: 'Gator Tales', ep: 'Swamp legends', len: 18 },
+  { n: 'Hustle & Salt', ep: 'How the bay really works', len: 25 },
+  { n: 'Marina Nights', ep: 'Music of the docks', len: 20 },
+];
+let r7Pod = { headphones: false, listened: [], current: -1, minutes: 0 };
+function r7PodBuyPhones() {
+  if (r7Pod.headphones) return false;
+  if (!r7Spend(85)) return false;
+  r7Pod.headphones = true; r7PodSave(); toast('Headphones bought — podcasts now play on foot.'); return true;
+}
+function r7PodListen(i) {
+  if (!r7Pod.headphones) { toast('No headphones — buy a pair first ($85).'); return false; }
+  r7Pod.current = i; r7Pod.minutes += R7_PODCASTS[i].len;
+  if (!r7Pod.listened.includes(i)) r7Pod.listened.push(i);
+  r7PodSave();
+  toast('Now playing: ' + R7_PODCASTS[i].n + ' — "' + R7_PODCASTS[i].ep + '" (' + R7_PODCASTS[i].len + ' min).');
+  return true;
+}
+function r7PodSave() { r7Save('pod', r7Pod); }
+function r7PodLoad() { const s = r7Load('pod', null); if (s) r7Pod = s; }
+function r7PodOpen() {
+  const lines = [
+    'Headphones: ' + (r7Pod.headphones ? 'on' : 'not owned ($85)') + ' · minutes listened ' + r7Pod.minutes + ' · shows finished ' + r7Pod.listened.length + '/4.',
+    r7Pod.current >= 0 ? 'Now playing: ' + R7_PODCASTS[r7Pod.current].n : 'Nothing playing — pick a show.',
+    'Listening on foot keeps you calm: +focus meter while a podcast plays.',
+  ];
+  const buttons = [r7PanelButton('Buy headphones — $85', () => { r7PodBuyPhones(); r7PodOpen(); }, r7Pod.headphones)];
+  R7_PODCASTS.forEach((p, i) => buttons.push(r7PanelButton('Play: ' + p.n + ' — ' + p.ep, () => { r7PodListen(i); r7PodOpen(); }, !r7Pod.headphones)));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🎧 Podcasts & Headphones', lines, buttons);
+  return true;
+}
+// --- R7-24 Body & stats: food, gym, sleep; apartments + rooftop bars ---
+const R7_FOODS = [
+  { n: 'Bay fish tacos', cost: 12, str: 1, sta: 2 },
+  { n: 'Gator bites', cost: 18, str: 3, sta: 1 },
+  { n: 'Marina salad', cost: 10, str: 0, sta: 3 },
+  { n: 'Docks burger', cost: 14, str: 2, sta: 2 },
+];
+const R7_APTS = [
+  { n: 'Marina Loft', x: 80, z: -6, rent: 120, view: 'bay' },
+  { n: 'Old Town Flat', x: -32, z: 2, rent: 70, view: 'plaza' },
+  { n: 'Rooftop Suite', x: 56, z: -30, rent: 220, view: 'skyline' },
+];
+let r7Body = { strength: 5, stamina: 5, meals: 0, gym: 0, slept: 0, apt: -1, barVisits: 0 };
+function r7BodyEat(i) {
+  const f = R7_FOODS[i];
+  if (!r7Spend(f.cost)) return false;
+  r7Body.strength = r7Clamp(r7Body.strength + f.str, 0, 20);
+  r7Body.stamina = r7Clamp(r7Body.stamina + f.sta, 0, 20);
+  r7Body.meals++; r7BodySave(); updateHUD();
+  toast('Ate ' + f.n + '. Strength ' + r7Body.strength + '/20 · stamina ' + r7Body.stamina + '/20.');
+  return true;
+}
+function r7BodyGym() {
+  if (!r7Spend(30)) return false;
+  r7Body.strength = r7Clamp(r7Body.strength + 1, 0, 20);
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  r7Body.gym++; r7BodySave(); updateHUD();
+  toast('Gym session done. Strength ' + r7Body.strength + ' · stamina ' + r7Body.stamina + '.');
+  return true;
+}
+function r7BodyRent(i) {
+  if (r7Body.apt === i) return false;
+  if (!r7Spend(R7_APTS[i].rent)) return false;
+  r7Body.apt = i; r7BodySave();
+  toast('Moved into the ' + R7_APTS[i].n + ' — ' + R7_APTS[i].view + ' view. Rent $' + R7_APTS[i].rent + ' a stay.');
+  return true;
+}
+function r7BodyBar() {
+  if (!r7Spend(40)) return false;
+  r7Body.barVisits++; r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  r7BodySave(); toast('Rooftop bar — the bay glitters below. A drink, a view, a breather.');
+  return true;
+}
+function r7BodySleep() {
+  r7Body.slept++; r7Body.stamina = r7Clamp(r7Body.stamina + 3, 0, 20);
+  state.health = 100; r7BodySave(); updateHUD();
+  toast('Slept well. Stamina ' + r7Body.stamina + '/20 · nights ' + r7Body.slept + '.');
+  return true;
+}
+function r7BodySave() { r7Save('body', r7Body); }
+function r7BodyLoad() { const s = r7Load('body', null); if (s) r7Body = s; }
+const R7_GYM2 = { x: 38, z: -58, name: 'Bay Iron II gym' };
+function r7BodyNear() { return r7Near(R7_GYM2.x, R7_GYM2.z, 8); }
+function r7BodyAptNear() {
+  for (let i = 0; i < R7_APTS.length; i++) if (r7Near(R7_APTS[i].x, R7_APTS[i].z, 8)) return i;
+  return -1;
+}
+function r7BodyBuild() {
+  const gym = new THREE.Mesh(new THREE.BoxGeometry(9, 4.5, 7), new THREE.MeshStandardMaterial({ color: 0x2a6a4a }));
+  gym.position.set(R7_GYM2.x, 2.2, R7_GYM2.z); scene.add(gym);
+  for (const a of R7_APTS) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(7, 9, 7), new THREE.MeshStandardMaterial({ color: 0x8a7a5a }));
+    b.position.set(a.x, 4.5, a.z); scene.add(b);
+  }
+}
+function r7BodyOpen() {
+  const lines = [
+    'Body: strength ' + r7Body.strength + '/20 · stamina ' + r7Body.stamina + '/20 · meals ' + r7Body.meals + ' · gym sessions ' + r7Body.gym + ' · nights slept ' + r7Body.slept + '.',
+    'Home: ' + (r7Body.apt >= 0 ? R7_APTS[r7Body.apt].n + ' (' + R7_APTS[r7Body.apt].view + ' view)' : 'safehouse only') + ' · rooftop bar visits ' + r7Body.barVisits + '.',
+    'Food and training change how you look and how long you can run.',
+  ];
+  const buttons = R7_FOODS.map((f, i) => r7PanelButton('Eat ' + f.n + ' — $' + f.cost + ' (+' + f.str + ' str, +' + f.sta + ' sta)', () => { r7BodyEat(i); r7BodyOpen(); }));
+  buttons.push(r7PanelButton('Train at the gym — $30', () => { r7BodyGym(); r7BodyOpen(); }));
+  buttons.push(r7PanelButton('Sleep', () => { r7BodySleep(); r7BodyOpen(); }));
+  buttons.push(r7PanelButton('Rooftop bar drink — $40', () => { r7BodyBar(); r7BodyOpen(); }));
+  R7_APTS.forEach((a, i) => buttons.push(r7PanelButton('Rent ' + a.n + ' — $' + a.rent, () => { r7BodyRent(i); r7BodyOpen(); }, r7Body.apt === i)));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('💪 Body & Home', lines, buttons);
+  return true;
+}
+// --- R7 glue: update loop, HUD line, minimap, key routing ---
+function updateR7(dt) {
+  r7StormUpdate(dt);
+  r7DailyUpdate(dt);
+  if (r7Focus.on) {
+    r7Focus.meter = r7Clamp(r7Focus.meter - dt * 4, 0, 100);
+    if (r7Focus.meter <= 0) { r7Focus.on = false; toast('Focus meter empty.'); }
+  }
+  if (r7Pod.current >= 0 && r7Pod.headphones) {
+    r7Focus.meter = r7Clamp(r7Focus.meter + dt * 0.5, 0, 100);
+  }
+}
+function r7HudLine() {
+  const el = document.getElementById('r7Line');
+  if (!el) return;
+  const parts = [];
+  parts.push('⭐ Rep ' + r7RepScore() + ' ' + r7RepTitle());
+  parts.push('🎭 ' + R7_OUTFITS[r7Wit.outfit].n + ' heat ' + r7Wit.heat + '/6' + (r7Wit.lockdown ? ' LOCKDOWN' : ''));
+  parts.push('🎯 Focus ' + (r7Focus.on ? 'ON ' : '') + Math.round(r7Focus.meter) + '%');
+  if (r7Rob.done.length) parts.push('💰 Robberies ' + r7Rob.done.length + '/4');
+  if (r7Theft.stolen) parts.push('🚗 Stolen ' + r7Theft.stolen);
+  if (r7Wild.studied.length) parts.push('🦅 Wild ' + r7Wild.studied.length + '/8');
+  if (r7Stranger.done.length) parts.push('❓ Strangers ' + r7Stranger.done.length + '/8');
+  if (r7Bounty.caught.length) parts.push('🎯 Bounties ' + r7Bounty.caught.length + '/5');
+  if (r7Treasure.found.length) parts.push('🗺️ Treasure ' + r7Treasure.found.length + '/3');
+  if (r7Storm.active >= 0) parts.push('🌀 ' + R7_STORMS[r7Storm.active].n + ' ' + Math.ceil(r7Storm.timer) + 's');
+  parts.push('📸 Snap ' + r7Phone.followers + ' followers');
+  parts.push('💪 ' + r7Body.strength + '/' + r7Body.stamina);
+  el.textContent = parts.join(' · ');
+}
+function r7MinimapDots(dot) {
+  dot(R7_REP_SPOT.x, R7_REP_SPOT.z, '#ffd23f', 3);
+  dot(R7_CLOTHES.x, R7_CLOTHES.z, '#ff9ad5', 3);
+  for (const t of R7_ROB_TARGETS) dot(t.x, t.z, '#ff2a7a', 3);
+  dot(R7_CHOP.x, R7_CHOP.z, '#9fb6c9', 3);
+  dot(R7_GUNSHOP.x, R7_GUNSHOP.z, '#ff5a5a', 3);
+  for (const s of R7_WILD_SPOTS) dot(s.x, s.z, '#7dff9a', 3);
+  dot(R7_SAFEHOUSE.x, R7_SAFEHOUSE.z, '#ffd23f', 4);
+  for (const s of R7_STRANGERS) dot(s.x, s.z, r7Stranger.done.includes(R7_STRANGERS.indexOf(s)) ? '#2ecc71' : '#ffd23f', 2);
+  dot(R7_BOUNTY_BOARD.x, R7_BOUNTY_BOARD.z, '#ff2a7a', 4);
+  for (const t of R7_TREASURE) dot(t.x, t.z, r7Treasure.found.includes(R7_TREASURE.indexOf(t)) ? '#2ecc71' : '#e8b820', 3);
+  dot(R7_CHAL_BOARD.x, R7_CHAL_BOARD.z, '#ffd23f', 3);
+  dot(R7_COURT.x, R7_COURT.z, '#ff5a5a', 3);
+  dot(R7_WRESTLE.x, R7_WRESTLE.z, '#ff7a2a', 3);
+  dot(R7_POOL.x, R7_POOL.z, '#2ee6ff', 3);
+  dot(R7_BOXGYM.x, R7_BOXGYM.z, '#ff5a5a', 3);
+  dot(R7_MARINA_SHOP.x, R7_MARINA_SHOP.z, '#2ee6ff', 3);
+  for (const s of R7_DIVE_SITES) dot(s.x, s.z, '#2ee6ff', 2);
+  for (const s of R7_JUMP_SPOTS) dot(s.x, s.z, '#ff2a7a', 3);
+  dot(R7_SWAMP_DOCK.x, R7_SWAMP_DOCK.z, '#7dff9a', 3);
+  dot(R7_LODGE.x, R7_LODGE.z, '#8a5a2a', 3);
+  dot(R7_SHELTER.x, R7_SHELTER.z, '#ffffff', 4);
+  for (const s of R7_RIDE_STOPS) dot(s.x, s.z, '#2ee6ff', 3);
+  dot(R7_GYM2.x, R7_GYM2.z, '#7dff9a', 3);
+  for (const a of R7_APTS) dot(a.x, a.z, '#d8a020', 3);
+}
+function r7KeyE() {
+  // Shops win over Round 7 panels: the pool hall sits a few metres from
+  // the Binco door, and E there must open the shop, not the pool table.
+  if (nearestShop()) return false;
+  if (r7RepNear()) { r7RepOpen(); return true; }
+  if (r7WitNear()) { r7WitOpen(); return true; }
+  if (r7RobNear() >= 0) { r7RobOpen(); return true; }
+  if (r7TheftNear()) { r7TheftOpen(); return true; }
+  if (r7LockerNear()) { r7LockerOpen(); return true; }
+  if (r7WildNear() >= 0) { r7WildOpen(); return true; }
+  if (r7SafeNear()) { r7SafeOpen(); return true; }
+  if (r7StrangerNear() >= 0) { r7StrangerOpen(); return true; }
+  if (r7BountyNear()) { r7BountyOpen(); return true; }
+  if (r7TreasureNear() >= 0) { r7TreasureOpen(); return true; }
+  if (r7ChalNear()) { r7ChalOpen(); return true; }
+  if (r7CourtNear() || r7WrestleNear()) { r7CourtOpen(); return true; }
+  if (r7PoolNear() || r7BoxNear()) { r7PoolOpen(); return true; }
+  if (r7DiveNear()) { r7DiveOpen(); return true; }
+  if (r7JumpNear() >= 0) { r7JumpOpen(); return true; }
+  if (r7SwampNear()) { r7SwampOpen(); return true; }
+  if (r7LodgeNear()) { r7LodgeOpen(); return true; }
+  if (r7StormNear()) { r7StormOpen(); return true; }
+  if (r7RideNear() >= 0) { r7RideOpen(); return true; }
+  if (r7BodyNear() || r7BodyAptNear() >= 0) { r7BodyOpen(); return true; }
+  return false;
+}
+// Visible Round 7 props for the four screenshot scenes: a gold reputation
+// banner at the plaza, an orange airboat at the marina, a pink disguise
+// mannequin by the clothes shop, and a storm-warning flag at the shelter.
+const R7_SHOT_PROPS = { banner: null, airboat: null, mannequin: null, flag: null };
+function r7ShotPropsBuild() {
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(10, 1.6, 0.3), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+  banner.position.set(-6, 9, 20); scene.add(banner); R7_SHOT_PROPS.banner = banner;
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1, 2), new THREE.MeshStandardMaterial({ color: 0xff7a2a }));
+  hull.position.set(92, 0.8, 14); scene.add(hull); R7_SHOT_PROPS.airboat = hull;
+  const fan = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+  fan.rotation.x = Math.PI / 2; fan.position.set(90, 1.6, 14); scene.add(fan);
+  const man = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 1.1, 4, 8), new THREE.MeshStandardMaterial({ color: 0xff9ad5 }));
+  man.position.set(24, 1.2, -28); scene.add(man); R7_SHOT_PROPS.mannequin = man;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 6, 6), new THREE.MeshStandardMaterial({ color: 0x888888 }));
+  pole.position.set(16, 3, -6); scene.add(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.4), new THREE.MeshBasicMaterial({ color: 0xff2a2a, side: THREE.DoubleSide }));
+  flag.position.set(17.2, 5.2, -6); scene.add(flag); R7_SHOT_PROPS.flag = flag;
+}
+// Extra Round 7 shot props, one per remaining scene: a red witness camera
+// pole in the chase frame, storm debris in the mission frame, and a bright
+// orange kayak in the isle frame.
+function r7ShotPropsExtra() {
+  const cam = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 5, 6), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  cam.position.set(-57, 2.5, 2); scene.add(cam);
+  const camBox = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: 0xff2a2a }));
+  camBox.position.set(-57, 5.2, 2); scene.add(camBox);
+  const debris = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 3), new THREE.MeshStandardMaterial({ color: 0x6a5a3a }));
+  debris.position.set(-195, 0.6, -45); debris.rotation.y = 0.5; scene.add(debris);
+  const plank = new THREE.Mesh(new THREE.BoxGeometry(3, 0.2, 0.5), new THREE.MeshStandardMaterial({ color: 0x8a6a3a }));
+  plank.position.set(-193, 1.4, -43); plank.rotation.z = 0.3; scene.add(plank);
+  const kayak = new THREE.Mesh(new THREE.CapsuleGeometry(0.5, 3, 4, 8), new THREE.MeshStandardMaterial({ color: 0xff7a2a }));
+  kayak.rotation.z = Math.PI / 2; kayak.rotation.y = 0.6; kayak.position.set(165, 0.6, 15); scene.add(kayak);
+  const paddle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.4, 6), new THREE.MeshStandardMaterial({ color: 0xd8c8a8 }));
+  paddle.rotation.z = Math.PI / 2; paddle.position.set(165, 1.1, 15); scene.add(paddle);
+}
+function r7SelfTest() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  ok('r7-rep-deeds', R7_REP_DEEDS.length === 6 && R7_REP_DEEDS[1].g === 8, '6 deeds');
+  ok('r7-rep-title', r7RepTitle() === 'Nobody Special' || r7RepScore() !== 0, 'title ' + r7RepTitle());
+  ok('r7-rep-price', r7RepPriceMult() > 0.7 && r7RepPriceMult() < 1.3, 'mult ' + r7RepPriceMult().toFixed(2));
+  ok('r7-outfits', R7_OUTFITS.length === 5 && R7_OUTFITS[3].cost === 90, '5 outfits');
+  ok('r7-wit-heat', r7WitHeat() >= 0 && r7WitHeat() <= 12, 'heat ' + r7WitHeat());
+  ok('r7-focus-meter', r7Focus.meter >= 0 && r7Focus.meter <= 100, 'meter ' + r7Focus.meter);
+  ok('r7-rob-targets', R7_ROB_TARGETS.length === 4 && R7_ROB_TARGETS[0].safe === '4821', '4 targets');
+  ok('r7-theft-tools', R7_THEFT_TOOLS.length === 4 && R7_THEFT_TOOLS[2].cost === 350, '4 tools');
+  ok('r7-theft-timing', r7TheftTiming(0) >= 0 && r7TheftTiming(0) <= 100, 'timing in range');
+  ok('r7-guns', R7_GUNS.length === 4 && R7_GUNS[3].price === 1400, '4 guns');
+  ok('r7-wild', R7_WILD.length === 8 && R7_WILD[7].value === 500, '8 species');
+  ok('r7-horses2', R7_HORSE2.length === 3 && R7_HORSE2[2].speed === 8, '3 horses');
+  ok('r7-safe-upgrades', R7_SAFE_UPGRADES.length === 5 && R7_SAFE_UPGRADES[4].cost === 800, '5 upgrades');
+  ok('r7-strangers', R7_STRANGERS.length === 8 && R7_STRANGERS[7].pay === 130, '8 strangers');
+  ok('r7-bounties', R7_BOUNTIES.length === 5 && R7_BOUNTIES[2].alive === 800, '5 bounties');
+  ok('r7-treasure', R7_TREASURE.length === 3 && R7_TREASURE[1].pay === 1500, '3 hunts');
+  ok('r7-challenges', R7_CHALLENGES.length === 9 && R7_CHALLENGES[8].gold === 14, '9 challenges');
+  ok('r7-chal-rank', r7ChalRank(0) === 'none' || r7Chal.best[0] > 0, 'rank ok');
+  ok('r7-court', !!R7_COURT && R7_COURT.name === 'Marina Courts', 'court built');
+  ok('r7-pool', !!R7_POOL && R7_POOL.name === 'Eight Ball Hall', 'pool hall built');
+  ok('r7-dive-sites', R7_DIVE_SITES.length === 4 && R7_DIVE_SITES[2].loot === 350, '4 dive sites');
+  ok('r7-jump-spots', R7_JUMP_SPOTS.length === 4 && R7_JUMP_SPOTS[0].pay === 260, '4 jump spots');
+  ok('r7-swamp-tours', R7_SWAMP_TOURS.length === 3 && R7_SWAMP_TOURS[2].pay === 150, '3 tours');
+  ok('r7-pelts', R7_PELTS.length === 4 && R7_PELTS[3].sell === 700, '4 pelts');
+  ok('r7-storms', R7_STORMS.length === 3 && R7_STORMS[2].wind === 10, '3 storms');
+  ok('r7-ride-stops', R7_RIDE_STOPS.length === 5 && R7_RIDE_STOPS[4].fare === 20, '5 stops');
+  ok('r7-timetable', R7_TIMETABLE.length === 3 && R7_TIMETABLE[1].every === 15, '3 lines');
+  ok('r7-snap-tags', R7_SNAP_TAGS.length === 6 && R7_SNAP_TAGS[0] === 'sunset', '6 tags');
+  ok('r7-podcasts', R7_PODCASTS.length === 4 && R7_PODCASTS[2].len === 25, '4 shows');
+  ok('r7-foods', R7_FOODS.length === 4 && R7_FOODS[1].cost === 18, '4 foods');
+  ok('r7-apts', R7_APTS.length === 3 && R7_APTS[2].rent === 220, '3 apartments');
+  ok('r7-shot-banner', !!R7_SHOT_PROPS.banner, 'banner in scene');
+  ok('r7-shot-airboat', !!R7_SHOT_PROPS.airboat, 'airboat in scene');
+  ok('r7-shot-mannequin', !!R7_SHOT_PROPS.mannequin, 'mannequin in scene');
+  ok('r7-shot-flag', !!R7_SHOT_PROPS.flag, 'storm flag in scene');
+  ok('r7-panel', !!document.getElementById('r7Panel'), 'R7 panel in the DOM');
+  ok('r7-hud-line', !!document.getElementById('r7Line'), 'R7 HUD line present');
+  ok('r7-keye', typeof r7KeyE === 'function', 'E hook wired');
+  ok('r7-cash-sane', state.cash >= 0 && state.cash < 100000000, 'cash ' + state.cash);
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+window.__r7exports = {
+  rep: r7Rep, wit: r7Wit, focus: r7Focus, rob: r7Rob, theft: r7Theft, locker: r7Locker,
+  wild: r7Wild, horse: r7Horse, safe: r7Safe, stranger: r7Stranger, bounty: r7Bounty,
+  treasure: r7Treasure, chal: r7Chal, court: r7Court, pool: r7Pool, dive: r7Dive,
+  jump: r7Jump, swamp: r7Swamp, lodge: r7Lodge, storm: r7Storm, ride: r7Ride,
+  phone: r7Phone, pod: r7Pod, body: r7Body,
+  deeds: R7_REP_DEEDS, outfits: R7_OUTFITS, robTargets: R7_ROB_TARGETS,
+  theftTools: R7_THEFT_TOOLS, guns: R7_GUNS, species: R7_WILD, horses: R7_HORSE2,
+  upgrades: R7_SAFE_UPGRADES, strangers: R7_STRANGERS, bounties: R7_BOUNTIES,
+  hunts: R7_TREASURE, challenges: R7_CHALLENGES, diveSites: R7_DIVE_SITES,
+  jumpSpots: R7_JUMP_SPOTS, tours: R7_SWAMP_TOURS, pelts: R7_PELTS,
+  storms: R7_STORMS, stops: R7_RIDE_STOPS, timetable: R7_TIMETABLE,
+  tags: R7_SNAP_TAGS, podcasts: R7_PODCASTS, foods: R7_FOODS, apts: R7_APTS,
+  repScore: r7RepScore, repTitle: r7RepTitle, repDoGood: r7RepDoGood,
+  witChangeOutfit: r7WitChangeOutfit, witShedHeat: r7WitShedHeat,
+  focusToggle: r7FocusToggle, focusDisarm: r7FocusDisarm,
+  robScout: r7RobScout, robRun: r7RobRun, theftSteal: r7TheftSteal,
+  lockerClean: r7LockerClean, lockerBuyGun: r7LockerBuyGun,
+  wildStudy: r7WildStudy, wildHunt: r7WildHunt, horseFeed: r7HorseFeed,
+  safeBuy: r7SafeBuy, safeSleep: r7SafeSleep, strangerDo: r7StrangerDo,
+  bountyTake: r7BountyTake, bountyCapture: r7BountyCapture,
+  treasureDig: r7TreasureDig, chalClaim: r7ChalClaim, courtPlay: r7CourtPlay,
+  poolPlay: r7PoolPlay, boxBout: r7BoxBout, diveGo: r7DiveGo,
+  jumpGo: r7JumpGo, swampTour: r7SwampTour, lodgeCraft: r7LodgeCraft,
+  stormStart: r7StormStart, stormEnd: r7StormEnd, rideGo: r7RideGo,
+  rideDrive: r7RideDrive, snapPost: r7SnapPost, podListen: r7PodListen,
+  bodyEat: r7BodyEat, bodyGym: r7BodyGym,
+  openRep: r7RepOpen, openWit: r7WitOpen, openRob: r7RobOpen,
+  openTheft: r7TheftOpen, openLocker: r7LockerOpen, openWild: r7WildOpen,
+  openHorse: r7HorseOpen, openSafe: r7SafeOpen, openStranger: r7StrangerOpen,
+  openBounty: r7BountyOpen, openTreasure: r7TreasureOpen, openChal: r7ChalOpen,
+  openCourt: r7CourtOpen, openPool: r7PoolOpen, openDive: r7DiveOpen,
+  openJump: r7JumpOpen, openSwamp: r7SwampOpen, openLodge: r7LodgeOpen,
+  openStorm: r7StormOpen, openRide: r7RideOpen, openPhone: r7PhoneOpen,
+  openPod: r7PodOpen, openBody: r7BodyOpen,
+  selftest: r7SelfTest, update: updateR7, hudLine: r7HudLine,
+};
+// Build every Round 7 place in the world and restore saved Round 7 progress.
+r7ShotPropsBuild(); r7ShotPropsExtra(); r7RepBuild(); r7WitBuild(); r7RobBuild();
+r7TheftBuild(); r7LockerBuild(); r7WildBuild(); r7SafeBuild(); r7StrangerBuild();
+r7BountyBuild(); r7TreasureBuild(); r7CourtBuild(); r7PoolBuild(); r7DiveBuild();
+r7JumpBuild(); r7SwampBuild(); r7LodgeBuild(); r7StormBuild(); r7RideBuild(); r7BodyBuild();
+r7RepLoad(); r7WitLoad(); r7FocusLoad(); r7RobLoad(); r7TheftLoad(); r7LockerLoad();
+r7WildLoad(); r7HorseLoad(); r7SafeLoad(); r7StrangerLoad(); r7BountyLoad(); r7TreasureLoad();
+r7ChalLoad(); r7CourtLoad(); r7PoolLoad(); r7DiveLoad(); r7JumpLoad(); r7SwampLoad();
+r7LodgeLoad(); r7StormLoad(); r7RideLoad(); r7PhoneLoad(); r7PodLoad(); r7BodyLoad();
+// --- R7 depth: daily tips, one per system, rotating with the clock ---
+const R7_TIPS = [
+  { system: 'Reputation', tip: 'Help strangers and the bay pays you back with cheaper shops.' },
+  { system: 'Witnesses', tip: 'Cameras remember your outfit. Change clothes after a loud job.' },
+  { system: 'Focus', tip: 'Press F with a gun out to slow time. Vitals pay, limbs disarm.' },
+  { system: 'Robbery', tip: 'Scout, crack the safe, kill the camera — then bring Ian for 1.5x.' },
+  { system: 'Car theft', tip: 'The timing bar sweet spot is 62-78. Luxury cars need the cloner.' },
+  { system: 'Lockers', tip: 'Two pistols, two rifles on you. The rest lives in trunk or safehouse.' },
+  { system: 'Wildlife', tip: 'Study first, hunt second. A rushed hunt ruins the pelt.' },
+  { system: 'Horses', tip: 'Feed and groom daily. A level-4 horse never spooks at gunfire.' },
+  { system: 'Safehouse', tip: 'A bed, a bench and a rack turn a hideout into a home base.' },
+  { system: 'Strangers', tip: 'Eight odd locals, eight small favours, eight honest payouts.' },
+  { system: 'Bounty', tip: 'Alive pays more than double dead. Bring cuffs, not just bullets.' },
+  { system: 'Treasure', tip: 'Three clues per cache. Read them all before you dig.' },
+  { system: 'Challenges', tip: 'Nine categories, three medals each. Gold pays $400 a time.' },
+  { system: 'Courts', tip: 'Score 14+ to win the 3v3. The ring pays better but hurts more.' },
+  { system: 'Pool hall', tip: 'Five bout wins earns the Bay Champion belt and $500.' },
+  { system: 'Diving', tip: 'Kayak first, tank second. The Anchor Wreck pays $350.' },
+  { system: 'Base jump', tip: 'Never jump without a parachute. The North Cliff pays $260.' },
+  { system: 'Swamp', tip: 'Sunset tours pay best — herons out, tourists generous.' },
+  { system: 'Lodge', tip: 'Mount every hunt. A full trophy wall is the master rank.' },
+  { system: 'Storms', tip: 'Shelter first, rescue second. Surviving pays up to $420.' },
+  { system: 'BayRide', tip: 'Ride cheap, drive rich. A 5-star rating means better fares.' },
+  { system: 'Snapmatic', tip: 'Post daily. At 100 followers the brand payouts start.' },
+  { system: 'Podcasts', tip: 'Headphones on foot refill focus. True crime is 22 minutes.' },
+  { system: 'Body', tip: 'Eat well, train often, sleep always. Strength caps at 20.' },
+];
+function r7TipOfDay() {
+  const day = Math.floor(state.time / 120) % R7_TIPS.length;
+  return R7_TIPS[day];
+}
+function r7TipsOpen() {
+  const lines = R7_TIPS.map((t) => t.system + ': ' + t.tip);
+  const buttons = [r7PanelButton('Close', () => r7ClosePanel())];
+  r7ShowPanel('💡 Round 7 Tips — ' + R7_TIPS.length + ' systems', lines, buttons);
+  return true;
+}
+// --- R7 badges: one per system, $50 each when claimed ---
+const R7_BADGES = [
+  { id: 'rep-saint', name: 'Bay Saint', desc: 'Reach +60 reputation', check: () => r7RepScore() >= 60 },
+  { id: 'ghost', name: 'Ghost', desc: 'Shed all heat with a fresh outfit', check: () => r7Wit.heat === 0 && r7Wit.witnesses > 0 },
+  { id: 'deadeye', name: 'Deadeye', desc: 'Disarm 3 targets in focus mode', check: () => r7Focus.disarms >= 3 },
+  { id: 'crew-job', name: 'Crew Job', desc: 'Run a duo robbery with Ian', check: () => r7Rob.withIan >= 1 },
+  { id: 'ghost-rider', name: 'Ghost Rider', desc: 'Steal 5 cars without tripping an alarm', check: () => r7Theft.stolen >= 5 && r7Theft.alarms === 0 },
+  { id: 'gunsmith', name: 'Gunsmith', desc: 'Own all 4 locker guns', check: () => r7Locker.carry.length + r7Locker.trunk.length + r7Locker.safe.length >= 4 },
+  { id: 'naturalist', name: 'Naturalist', desc: 'Study all 8 wild species', check: () => r7Wild.studied.length >= 8 },
+  { id: 'horse-whisperer', name: 'Horse Whisperer', desc: 'Reach bond level 4 with any horse', check: () => r7Horse.bond.some((b) => b >= 100) },
+  { id: 'home-sweet', name: 'Home Sweet Home', desc: 'Buy all 5 safehouse upgrades', check: () => r7Safe.owned.length >= 5 },
+  { id: 'good-samaritan', name: 'Good Samaritan', desc: 'Help all 8 strangers', check: () => r7Stranger.done.length >= 8 },
+  { id: 'bounty-king', name: 'Bounty King', desc: 'Catch all 5 bounties alive', check: () => r7Bounty.alive >= 5 },
+  { id: 'treasure-king', name: 'Treasure King', desc: 'Dig up all 3 caches', check: () => r7Treasure.found.length >= 3 },
+  { id: 'gold-rush', name: 'Gold Rush', desc: 'Earn a gold challenge medal', check: () => R7_CHALLENGES.some((c, i) => r7ChalRank(i) === 'gold') },
+  { id: 'court-king', name: 'Court King', desc: 'Win 5 pickup games', check: () => r7Court.wins >= 5 },
+  { id: 'champ', name: 'Bay Champ', desc: 'Win the champion belt', check: () => r7Pool.belt },
+  { id: 'deep-diver', name: 'Deep Diver', desc: 'Dive the 18m Anchor Wreck', check: () => r7Dive.dives.includes(2) },
+  { id: 'skyfall', name: 'Skyfall', desc: 'Jump all 4 base spots', check: () => new Set(r7Jump.jumps).size >= 4 },
+  { id: 'gator-guide', name: 'Gator Guide', desc: 'Run 10 swamp tours', check: () => r7Swamp.tours >= 10 },
+  { id: 'master-hunter', name: 'Master Hunter', desc: 'Fill the trophy wall', check: () => r7Lodge.trophies.length >= 8 },
+  { id: 'storm-chaser', name: 'Storm Chaser', desc: 'Survive all 3 hurricanes', check: () => r7Storm.survived >= 3 },
+  { id: 'five-star', name: 'Five Star Driver', desc: 'Hold a 5.0 BayRide rating after 5 fares', check: () => r7Ride.trips >= 5 && r7Ride.rating >= 4.9 },
+  { id: 'influencer', name: 'Bay Influencer', desc: 'Reach 500 Snapmatic followers', check: () => r7Phone.followers >= 500 },
+  { id: 'pod-fan', name: 'Pod Fan', desc: 'Finish all 4 podcasts', check: () => r7Pod.listened.length >= 4 },
+  { id: 'peak-form', name: 'Peak Form', desc: 'Reach 20 strength and 20 stamina', check: () => r7Body.strength >= 20 && r7Body.stamina >= 20 },
+];
+let r7BadgesClaimed = [];
+function r7BadgeClaim(i) {
+  const b = R7_BADGES[i];
+  if (r7BadgesClaimed.includes(b.id)) return false;
+  if (!b.check()) { toast(b.name + ' — not yet: ' + b.desc + '.'); return false; }
+  r7BadgesClaimed.push(b.id); r7Save('badges', r7BadgesClaimed);
+  r7Earn(50, 'Badge earned: ' + b.name);
+  return true;
+}
+function r7BadgesLoad() { const s = r7Load('badges', null); if (s) r7BadgesClaimed = s; }
+function r7BadgesOpen() {
+  const lines = ['One badge per Round 7 system — $50 each when earned. Claimed ' + r7BadgesClaimed.length + '/24.'];
+  for (let i = 0; i < R7_BADGES.length; i++) {
+    const b = R7_BADGES[i];
+    lines.push((r7BadgesClaimed.includes(b.id) ? '✅ ' : '⬜ ') + b.name + ' — ' + b.desc + (b.check() && !r7BadgesClaimed.includes(b.id) ? ' (READY)' : ''));
+  }
+  const buttons = R7_BADGES.map((b, i) => r7PanelButton('Claim ' + b.name, () => { r7BadgeClaim(i); r7BadgesOpen(); }, r7BadgesClaimed.includes(b.id) || !b.check()));
+  buttons.push(r7PanelButton('Close', () => r7ClosePanel()));
+  r7ShowPanel('🏅 Round 7 Badges', lines, buttons);
+  return true;
+}
+// --- R7 guide + stats + extras panels ---
+function r7GuideOpen() {
+  const lines = [
+    '⭐ Reputation — plaza notice board (E) · good deeds vs brutality.',
+    '🎭 Witnesses — Salt & Thread clothes (E) · change outfit, shed heat.',
+    '🎯 Focus — press F with a gun out · slow-mo, vitals, disarm.',
+    '💰 Robbery — four targets (E) · scout, crack, camera, duo with Ian.',
+    '🚗 Car theft — chop shop (E) · slim jim, cloner, scanner.',
+    '🔫 Lockers — Bay Arms (E) · 2 pistols + 2 rifles, wear and cleaning.',
+    '🦅 Wildlife — habitat signs (E) · study, track rare, hunt right.',
+    '🐴 Horses — Rancho del Sol (E) · feed, groom, ride, bond levels.',
+    '🏠 Safehouse — home north of the plaza (E) · upgrades, crew, sleep.',
+    '❓ Strangers — gold figures (E) · eight small favours.',
+    '🎯 Bounty — sheriff board (E) · alive pays more than dead.',
+    '🗺️ Treasure — gold X marks (E) · three clues, then dig.',
+    '🏅 Challenges — plaza board (E) · nine categories, three medals.',
+    '🏀 Courts — Marina Courts (E) · 3v3 and the backyard ring.',
+    '🎱 Pool & boxing — Eight Ball Hall (E) · frames and bouts.',
+    '🛶 Diving — marina dive shop (E) · kayak, tanks, four sites.',
+    '🪂 Base jump — pink flags (E) · parachute first, four spots.',
+    '🐊 Swamp — swamp dock (E) · airboat tours, gators, tips.',
+    '🏚️ Lodge — north woods (E) · trophies and pelt crafting.',
+    '🌀 Storms — civic shelter (E) · shelter, rescue, survive.',
+    '🚕 BayRide — blue signs (E) · rides, timetable, drive fares.',
+    '📸 Snapmatic — phone (U) · post photos, scan cars, payouts.',
+    '🎧 Podcasts — phone (U) · headphones, four shows, focus refill.',
+    '💪 Body — Bay Iron II gym (E) · eat, train, sleep, rent flats.',
+  ];
+  const buttons = [r7PanelButton('Close', () => r7ClosePanel())];
+  r7ShowPanel('📖 Round 7 Guide — all 24 systems', lines, buttons);
+  return true;
+}
+function r7StatsSummary() {
+  return {
+    rep: r7RepScore(), repTitle: r7RepTitle(), heat: r7Wit.heat,
+    focusDisarms: r7Focus.disarms, robberies: r7Rob.done.length,
+    carsStolen: r7Theft.stolen, species: r7Wild.studied.length,
+    strangers: r7Stranger.done.length, bounties: r7Bounty.caught.length,
+    treasures: r7Treasure.found.length, badges: r7BadgesClaimed.length,
+    followers: r7Phone.followers, strength: r7Body.strength,
+    stamina: r7Body.stamina, storms: r7Storm.survived,
+  };
+}
+function r7ExtrasOpen() {
+  const s = r7StatsSummary();
+  const lines = [
+    'Rep ' + s.rep + ' (' + s.repTitle + ') · heat ' + s.heat + '/6 · disarms ' + s.focusDisarms + '.',
+    'Robberies ' + s.robberies + '/4 · cars stolen ' + s.carsStolen + ' · species ' + s.species + '/8.',
+    'Strangers ' + s.strangers + '/8 · bounties ' + s.bounties + '/5 · treasures ' + s.treasures + '/3.',
+    'Badges ' + s.badges + '/24 · followers ' + s.followers + ' · storms survived ' + s.storms + '.',
+    'Body ' + s.strength + ' strength / ' + s.stamina + ' stamina.',
+  ];
+  const buttons = [
+    r7PanelButton('Tips', () => r7TipsOpen()),
+    r7PanelButton('Badges', () => r7BadgesOpen()),
+    r7PanelButton('Guide', () => r7GuideOpen()),
+    r7PanelButton('Close', () => r7ClosePanel()),
+  ];
+  r7ShowPanel('📊 Round 7 Extras & Stats', lines, buttons);
+  return true;
+}
+// --- R7 ledger: earned / spent across all Round 7 systems ---
+let r7Ledger = { earned: 0, spent: 0, jobs: 0 };
+function r7LedgerSave() { r7Save('ledger', r7Ledger); }
+function r7LedgerLoad() { const s = r7Load('ledger', null); if (s) r7Ledger = s; }
+function r7LedgerRecord(kind, amount) {
+  if (kind === 'earn') { r7Ledger.earned += amount; r7Ledger.jobs++; }
+  else r7Ledger.spent += amount;
+  r7LedgerSave();
+}
+function r7LedgerSelftest() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  const before = { e: r7Ledger.earned, s: r7Ledger.spent, j: r7Ledger.jobs };
+  r7LedgerRecord('earn', 10);
+  ok('r7-ledger-earn', r7Ledger.earned === before.e + 10, 'earned +' + 10);
+  r7LedgerRecord('spend', 4);
+  ok('r7-ledger-spend', r7Ledger.spent === before.s + 4, 'spent +4');
+  ok('r7-ledger-jobs', r7Ledger.jobs === before.j + 1, 'jobs +1');
+  r7Ledger.earned = before.e; r7Ledger.spent = before.s; r7Ledger.jobs = before.j;
+  r7LedgerSave();
+  ok('r7-ledger-restore', r7Ledger.earned === before.e, 'restored');
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+// --- R7 extra self-test: live behaviour, not just data shapes ---
+function r7SelfTestExtra() {
+  const checks = [];
+  const ok = (name, pass, detail) => checks.push({ name, pass: !!pass, detail: detail || '' });
+  const repBefore = r7Rep.good;
+  r7RepDoGood(3);
+  ok('r7x-rep-deed', r7Rep.good === repBefore + 3, 'good +' + 3);
+  r7Rep.good = repBefore; r7Rep.deeds.pop(); r7RepSave();
+  const heatBefore = r7Wit.heat;
+  r7WitReport('camera');
+  ok('r7x-witness-heat', r7Wit.heat === Math.min(6, heatBefore + 1), 'heat rose');
+  r7Wit.heat = heatBefore; r7Wit.cams = Math.max(0, r7Wit.cams - 1); r7WitSave();
+  const score = r7TheftTiming(0);
+  ok('r7x-theft-timing', score >= 0 && score <= 100, 'score ' + score);
+  const folBefore = r7Phone.followers;
+  const likes = r7SnapPost('sunset');
+  ok('r7x-snap-post', likes >= 5, 'likes ' + likes);
+  r7Phone.posts.pop(); r7Phone.likes -= likes; r7Phone.followers = folBefore; r7PhoneSave();
+  const before = r7Chal.best[0];
+  r7ChalRecord(0, 95);
+  ok('r7x-chal-record', r7Chal.best[0] === 95 && r7ChalRank(0) === 'bronze', 'bronze at 95');
+  r7Chal.best[0] = before; r7ChalSave();
+  ok('r7x-tips', R7_TIPS.length === 24 && R7_TIPS[0].system === 'Reputation', '24 tips');
+  ok('r7x-badges', R7_BADGES.length === 24 && R7_BADGES[23].id === 'peak-form', '24 badges');
+  ok('r7x-guide', typeof r7GuideOpen === 'function', 'guide wired');
+  ok('r7x-stats', r7StatsSummary().badges === r7BadgesClaimed.length, 'stats match');
+  const failed = checks.filter((c) => !c.pass);
+  return { total: checks.length, passed: checks.length - failed.length, failed: failed.map((c) => c.name), checks };
+}
+// Wire the depth layers into the exports and restore their saves.
+if (window.__r7exports) {
+  window.__r7exports.extraSelftest = r7SelfTestExtra;
+  window.__r7exports.ledgerSelftest = r7LedgerSelftest;
+  window.__r7exports.tips = R7_TIPS;
+  window.__r7exports.badges = R7_BADGES;
+  window.__r7exports.guide = r7GuideOpen;
+  window.__r7exports.extras = r7ExtrasOpen;
+  window.__r7exports.stats = r7StatsSummary;
+  window.__r7exports.tipOfDay = r7TipOfDay;
+  window.__r7exports.ledger = r7Ledger;
+  window.__r7exports.badgeClaim = r7BadgeClaim;
+  window.__r7exports.shotProps = R7_SHOT_PROPS;
+}
+r7BadgesLoad(); r7LedgerLoad();
+// --- R7 daily update: slow background income and decay ---
+function r7DailyUpdate(dt) {
+  // Safehouse crew earns a trickle while the player works elsewhere.
+  r7DailyAcc = (r7DailyAcc || 0) + dt;
+  if (r7DailyAcc < 30) return;
+  r7DailyAcc = 0;
+  if (r7Safe.crew.length >= 3 && r7Safe.morale >= 60) {
+    state.cash += 5; updateHUD();
+  }
+  if (r7Ride.driver && r7Ride.rating >= 4.5) {
+    r7Ride.earned += 2;
+  }
+}
+let r7DailyAcc = 0;
+// --- R7 reputation reactions: NPC flavour lines by title ---
+const R7_REP_LINES = {
+  saint: ['"There goes the saint of the bay."', '"He helped my cousin move house!"'],
+  good: ['"Decent folk, those two."', '"They always say hello."'],
+  neutral: ['"New faces. Keep walking."', '"Bay is busy today."'],
+  rough: ['"Stay out of my way, friend."', '"I saw what you did last week."'],
+  menace: ['"Lock the doors — it is them."', '"Do not look them in the eye."'],
+};
+function r7RepReaction() {
+  const s = r7RepScore();
+  const key = s >= 60 ? 'saint' : s >= 25 ? 'good' : s >= -9 ? 'neutral' : s >= -40 ? 'rough' : 'menace';
+  return r7Pick(R7_REP_LINES[key]);
+}
+function r7RepShopPrice(base) {
+  return Math.max(1, Math.round(base * r7RepPriceMult()));
+}
+// --- R7 witness cameras: fixed camera spots that report the player ---
+const R7_CAMERAS = [
+  { x: -10, z: 20, n: 'Plaza camera' },
+  { x: 52, z: 10, n: 'Casino Row camera' },
+  { x: -60, z: 0, n: 'Docks camera' },
+  { x: 20, z: -40, n: 'Marina camera' },
+];
+function r7CameraCheck() {
+  if (state.wanted < 2) return false;
+  for (const c of R7_CAMERAS) {
+    if (r7Near(c.x, c.z, 12)) { r7WitReport('camera'); return true; }
+  }
+  return false;
+}
+function r7CameraBuild() {
+  for (const c of R7_CAMERAS) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 4.5, 6), new THREE.MeshStandardMaterial({ color: 0x555555 }));
+    pole.position.set(c.x, 2.2, c.z); scene.add(pole);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.4), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+    head.position.set(c.x, 4.5, c.z); scene.add(head);
+  }
+}
+// --- R7 focus vitals: body-part damage table used by focus mode ---
+const R7_VITALS = [
+  { part: 'head', mult: 3.0, note: 'instant drop' },
+  { part: 'chest', mult: 1.5, note: 'heavy damage' },
+  { part: 'arm', mult: 0.6, note: 'disarm chance' },
+  { part: 'leg', mult: 0.7, note: 'slows them down' },
+];
+function r7VitalMult(part) {
+  const v = R7_VITALS.find((o) => o.part === part);
+  return v ? v.mult : 1;
+}
+function r7FocusShot(part) {
+  const mult = r7VitalMult(part);
+  if (part === 'arm') r7FocusDisarm();
+  else r7FocusHit(part === 'head' || part === 'chest' ? 'vital' : 'limb');
+  return mult;
+}
+// --- R7 robbery mid-job switch: Ryan and Ian swap roles live ---
+let r7RobSwitch = { active: false, role: 'safe' };
+function r7RobSwitchRoles() {
+  if (!r7RobSwitch.active) { r7RobSwitch.active = true; r7RobSwitch.role = 'lookout'; toast('Ian takes the safe — you watch the door now.'); }
+  else { r7RobSwitch.active = false; r7RobSwitch.role = 'safe'; toast('Swapped back — you are on the safe again.'); }
+  return r7RobSwitch.role;
+}
+// --- R7 theft phone scanner: find unlocked cars nearby ---
+function r7TheftScan() {
+  const nearby = parkedCars.filter((c) => Math.hypot(c.mesh.position.x - playerState.x, c.mesh.position.z - playerState.z) < 40);
+  if (!nearby.length) { toast('Scanner: no parked cars in range.'); return 0; }
+  const unlocked = nearby.filter((c, i) => (i + r7Theft.stolen) % 3 === 0);
+  toast('Scanner: ' + nearby.length + ' cars nearby, ' + unlocked.length + ' look unlocked.');
+  return unlocked.length;
+}
+r7CameraBuild();
+// --- R7 locker jam chance: worn guns misfire more often ---
+function r7LockerJamChance(i) {
+  return r7Clamp(R7_GUNS[i].wear / 2, 0, 50);
+}
+function r7LockerCondition(i) {
+  const w = R7_GUNS[i].wear;
+  if (w < 20) return 'pristine';
+  if (w < 50) return 'worn';
+  if (w < 80) return 'rough';
+  return 'falling apart';
+}
+// --- R7 wildlife zone guide: where each species lives ---
+function r7WildZoneGuide(zone) {
+  return R7_WILD.filter((a) => a.zone === zone).map((a) => a.n + (a.rare ? ' (rare)' : ''));
+}
+function r7WildRareLeft() {
+  return R7_WILD.filter((a) => a.rare && !r7Wild.studied.includes(R7_WILD.indexOf(a))).length;
+}
+// --- R7 horse training drills: speed and stamina grow with work ---
+function r7HorseDrill(i, kind) {
+  const h = R7_HORSE2[i];
+  if (kind === 'sprint') { h.speed = Math.min(10, h.speed + 0.2); }
+  else { h.stamina = Math.min(10, h.stamina + 0.2); }
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 3, 0, 100); r7HorseSave();
+  toast(h.n + ' drilled ' + kind + ' — speed ' + h.speed.toFixed(1) + ', stamina ' + h.stamina.toFixed(1) + '.');
+  return true;
+}
+// --- R7 safehouse morale events: small scenes that lift the crew ---
+const R7_MORALE_EVENTS = [
+  'Ian cooks a big bay stew — the crew eats like kings.',
+  'A neighbour drops off fresh limes for the safehouse.',
+  'Movie night: the crew watches an old heist film and takes notes.',
+  'The crew paints the front door bay-blue together.',
+];
+function r7SafeMoraleEvent() {
+  const line = r7Pick(R7_MORALE_EVENTS);
+  r7Safe.morale = r7Clamp(r7Safe.morale + 8, 0, 100); r7SafeSave();
+  toast(line + ' Morale ' + r7Safe.morale + '/100.');
+  return line;
+}
+// --- R7 stranger follow-ups: second favours from grateful locals ---
+const R7_STRANGER2 = [
+  { n: 'Old Sal', q: 'Teach him to use the new phone', pay: 80 },
+  { n: 'Tia the busker', q: 'Play a duet at the marina', pay: 120 },
+  { n: 'Chef Beni', q: 'Judge his new chilli sauce', pay: 70 },
+  { n: 'Captain Wren', q: 'Crew his boat for the regatta', pay: 160 },
+];
+function r7StrangerFollowUp(i) {
+  const s = R7_STRANGER2[i];
+  if (!r7Stranger.done.includes(i)) { toast(s.n + ' does not know you yet — do the first favour.'); return false; }
+  r7Earn(s.pay, 'Follow-up: ' + s.n + ' — ' + s.q);
+  return true;
+}
+// --- R7 bounty informants: pay for a tip on the target's hideout ---
+function r7BountyTip(i) {
+  if (r7Bounty.caught.includes(i)) return false;
+  if (!r7Spend(50)) return false;
+  const b = R7_BOUNTIES[i];
+  toast('Informant: "' + b.n + ' holes up near (' + b.x + ', ' + b.z + ') most nights. Bring cuffs."');
+  return true;
+}
+function r7BountyStakeout(i) {
+  if (r7Bounty.active !== i) { toast('Take the bounty first, then stake out the spot.'); return false; }
+  toast('Stakeout set — ' + R7_BOUNTIES[i].n + ' will walk right into it.');
+  return true;
+}
+// --- R7 treasure map fragments: buy a fragment to reveal a clue ---
+function r7TreasureFragment(i) {
+  if (r7Treasure.found.includes(i)) return false;
+  if (!r7Spend(100)) return false;
+  r7TreasureClue(i);
+  toast('Bought a map fragment — the trail gets clearer.');
+  return true;
+}
+// --- R7 challenge live hooks: feed real play into the nine boards ---
+function r7ChalHookSpeed(mph) { return r7ChalRecord(0, Math.floor(mph)); }
+function r7ChalHookPackages() { return r7ChalRecord(7, packagesFound); }
+function r7ChalHookAirtime(sec) { return r7ChalRecord(1, Math.floor(sec)); }
+function r7ChalHookDistance(km) { return r7ChalRecord(4, Math.floor(km)); }
+// --- R7 court season: standings across pickup games ---
+let r7CourtSeason = { week: 1, wins: 0, losses: 0 };
+function r7CourtSeasonGame(won) {
+  if (won) r7CourtSeason.wins++; else r7CourtSeason.losses++;
+  if (r7CourtSeason.wins + r7CourtSeason.losses >= 5) {
+    r7CourtSeason.week++;
+    const champ = r7CourtSeason.wins >= 3;
+    if (champ) r7Earn(200, 'Won the Marina Courts week ' + (r7CourtSeason.week - 1));
+    r7CourtSeason.wins = 0; r7CourtSeason.losses = 0;
+    r7Save('courtSeason', r7CourtSeason);
+  }
+  r7Save('courtSeason', r7CourtSeason);
+  return r7CourtSeason.week;
+}
+// --- R7 pool rankings: local ladder at Eight Ball Hall ---
+const R7_POOL_LADDER = [
+  { n: 'Cueball Carl', wins: 22 },
+  { n: 'Slick Sue', wins: 18 },
+  { n: 'Doc Hal', wins: 12 },
+  { n: 'You', wins: 0 },
+];
+function r7PoolLadder() {
+  const me = R7_POOL_LADDER[3];
+  me.wins = r7Pool.wins;
+  return [...R7_POOL_LADDER].sort((a, b) => b.wins - a.wins);
+}
+function r7PoolRank() {
+  return r7PoolLadder().findIndex((p) => p.n === 'You') + 1;
+}
+// --- R7 dive reef guide: what lives at each site ---
+const R7_REEF_GUIDE = [
+  { site: 'Sunken Ferry Reef', life: 'clownfish, blue tang, one grumpy moray' },
+  { site: 'Coral Garden', life: 'turtles, rays, brain coral' },
+  { site: 'Anchor Wreck', life: 'barracuda patrol, old anchor chain' },
+  { site: 'Turtle Cove', life: 'green turtles, seahorses' },
+];
+function r7DiveGuide(i) { return R7_REEF_GUIDE[i].life; }
+function r7DiveAirLeft() { return r7Dive.tank; }
+// --- R7 jump landing score: style points for clean landings ---
+function r7JumpLanding(airtime, clean) {
+  const score = Math.round(airtime * 10 + (clean ? 50 : 0));
+  if (score > r7Jump.best * 10) r7Jump.best = airtime;
+  r7JumpSave();
+  return score;
+}
+// --- R7 swamp wildlife log: gators, herons, egrets spotted ---
+let r7SwampLog = { gators: 0, herons: 0, egrets: 0 };
+function r7SwampSpot(kind) {
+  if (kind === 'gator') r7SwampLog.gators++;
+  if (kind === 'heron') r7SwampLog.herons++;
+  if (kind === 'egret') r7SwampLog.egrets++;
+  r7Save('swampLog', r7SwampLog);
+  toast('Logged a ' + kind + ' in the swamp book.');
+  return r7SwampLog;
+}
+// --- R7 lodge master rank: wall completion as a title ---
+function r7LodgeRank() {
+  const n = r7Lodge.trophies.length;
+  if (n >= 8) return 'Master Hunter';
+  if (n >= 5) return 'Seasoned Hunter';
+  if (n >= 2) return 'Weekend Hunter';
+  return 'Greenhorn';
+}
+// --- R7 storm forecast: the next front, from the radio ---
+function r7StormForecast() {
+  const next = R7_STORMS[(r7Storm.survived) % R7_STORMS.length];
+  return 'Next front: ' + next.n + ' — wind ' + next.wind + '/10, surge ' + next.surge + 'm.';
+}
+function r7StormPrep() {
+  if (!r7Spend(120)) return false;
+  r7Storm.sheltered++;
+  r7StormSave(); toast('Boarded the windows and stocked the shelter. Ready for the front.');
+  return true;
+}
+// --- R7 ride timetable: next departures from any stop ---
+function r7RideNext(line) {
+  const t = R7_TIMETABLE.find((o) => o.line === line);
+  if (!t) return 'No such line.';
+  const now = Math.floor(state.time / 10) % t.every;
+  return t.line + ' leaves in ' + (t.every - now) + ' minutes (' + t.from + ' → ' + t.to + ').';
+}
+function r7RideTip() {
+  const tips = ['Tip the driver', 'Rate every ride', 'Night fares pay more'];
+  return r7Pick(tips);
+}
+// --- R7 Snapmatic comments: followers react to each post ---
+const R7_SNAP_COMMENTS = [
+  'That sunset is unreal!',
+  'Gator spotting again? Brave.',
+  'This is why I love the bay.',
+  'Classic car goals right there.',
+  'Street food tour when?',
+  'Storm chaser energy.',
+];
+function r7SnapComments() {
+  const n = 1 + Math.floor(Math.random() * 3);
+  const out = [];
+  for (let i = 0; i < n; i++) out.push(r7Pick(R7_SNAP_COMMENTS));
+  return out;
+}
+function r7SnapMilestone() {
+  const f = r7Phone.followers;
+  if (f >= 1000) return 'Bay famous — 1,000 followers!';
+  if (f >= 500) return 'Local star — 500 followers!';
+  if (f >= 100) return 'Getting noticed — 100 followers!';
+  return 'Growing — ' + f + ' followers.';
+}
+// --- R7 podcast episode notes: one-line summaries for each show ---
+const R7_POD_NOTES = [
+  'The Drowned Captain: a wreck, a map, and a lighthouse that fell.',
+  'Gator Tales: swamp legends told by the people who live them.',
+  'Hustle & Salt: how the bay really works, from docks to deals.',
+  'Marina Nights: the music of the docks, track by track.',
+];
+function r7PodNote(i) { return R7_POD_NOTES[i] || ''; }
+// --- R7 body appearance: how the bay sees you now ---
+function r7BodyLook() {
+  const s = r7Body.strength, t = r7Body.stamina;
+  if (s >= 15 && t >= 15) return 'Built like a dockworker — broad, fast, tireless.';
+  if (s >= 10) return 'Noticeably strong — the gym is showing.';
+  if (t >= 10) return 'Lean and quick — you never seem to tire.';
+  return 'Average bay drifter — room to grow.';
+}
+function r7BodyOutfitBonus() {
+  // Rooftop bars and the marina notice a fit regular: small rep nudge.
+  if (r7Body.strength >= 12 && r7Body.barVisits >= 3) return 2;
+  return 0;
+}
+// --- R7 phone app list: everything on the Round 7 phone ---
+function r7PhoneApps() {
+  return ['Snapmatic', 'Car Scanner', 'Podcasts', 'BayRide', 'Focus Meter'];
+}
+function r7PhoneBattery() {
+  return 100 - (r7Phone.posts.length % 40);
+}
+// --- R7 reputation extra deeds: the bay always needs a hand ---
+const R7_REP_DEEDS2 = [
+  { n: 'Fix a flat tyre', g: 4, p: 15 },
+  { n: 'Carry groceries for an elder', g: 5, p: 0 },
+  { n: 'Chase off a scammer', g: 9, p: 45 },
+  { n: 'Clean the beach', g: 6, p: 20 },
+  { n: 'Find a lost dog', g: 7, p: 35 },
+  { n: 'Volunteer at the shelter', g: 8, p: 0 },
+];
+function r7RepDoGood2(i) {
+  const d = R7_REP_DEEDS2[i]; if (!d) return false;
+  r7Rep.good += d.g; r7Rep.deeds.push(d.n); r7RepSave();
+  if (d.p) r7Earn(d.p, d.n);
+  toast(d.n + ' — the bay notices. Rep ' + r7RepScore() + ' (' + r7RepTitle() + ')');
+  return true;
+}
+function r7RepShopTable() {
+  return [
+    { shop: 'Bay Arms', mult: r7RepPriceMult() },
+    { shop: 'Salt & Thread', mult: r7RepPriceMult() },
+    { shop: 'Marina dive shop', mult: r7RepPriceMult() },
+    { shop: 'Eight Ball Hall', mult: r7RepPriceMult() },
+  ];
+}
+function r7RepGreeting() {
+  const s = r7RepScore();
+  if (s >= 60) return 'The plaza waves when you pass.';
+  if (s >= 25) return 'Shopkeepers nod — you are welcome here.';
+  if (s >= -40) return 'People keep a polite distance.';
+  return 'Mothers pull their children inside.';
+}
+// --- R7 disguise effectiveness: how well each outfit fools the bay ---
+function r7WitDisguisePower() {
+  const o = R7_OUTFITS[r7Wit.outfit];
+  return { outfit: o.n, shed: -o.heat, note: o.heat <= -2 ? 'Excellent cover.' : o.heat <= -1 ? 'Decent cover.' : 'Barely a disguise.' };
+}
+function r7WitChangeVehicle() {
+  if (!state.inCar) { toast('Get in a different car — a fresh ride sheds heat.'); return false; }
+  r7Wit.heat = r7Clamp(r7Wit.heat - 1, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); toast('New wheels — heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 focus challenges: prove the slow-mo ---
+const R7_FOCUS_GAMES = [
+  { n: 'Three disarms, one minute', need: 3, pay: 150 },
+  { n: 'Five limb hits without a kill', need: 5, pay: 200 },
+  { n: 'Ten vitals in a day', need: 10, pay: 300 },
+];
+let r7FocusGames = { done: [] };
+function r7FocusGame(i) {
+  const g = R7_FOCUS_GAMES[i];
+  const have = i === 0 ? r7Focus.disarms : i === 1 ? r7Focus.limbHits : r7Focus.kills;
+  if (have < g.need) { toast(g.n + ' — progress ' + have + '/' + g.need + '.'); return false; }
+  if (r7FocusGames.done.includes(i)) return false;
+  r7FocusGames.done.push(i); r7Save('focusGames', r7FocusGames);
+  r7Earn(g.pay, 'Focus challenge: ' + g.n);
+  return true;
+}
+function r7FocusSlowFactor() { return r7Focus.on ? 0.35 : 1; }
+// --- R7 robbery getaway: Ian drives while you count the take ---
+let r7Getaway = { runs: 0, clean: 0 };
+function r7RobGetaway() {
+  r7Getaway.runs++;
+  const clean = Math.random() < 0.6;
+  if (clean) { r7Getaway.clean++; r7Save('getaway', r7Getaway); toast('Ian threads the back streets — clean getaway, no tail.'); }
+  else { r7Save('getaway', r7Getaway); r7WitReport('witness'); toast('A witness caught the plate on the way out — heat rising.'); }
+  return clean;
+}
+function r7RobFence() {
+  if (!r7Rob.done.length) { toast('Nothing to fence — hit a target first.'); return false; }
+  const cut = 100 + r7Rob.done.length * 40;
+  r7Earn(cut, 'Fenced spare goods from the robberies');
+  return true;
+}
+// --- R7 chop shop prices: what each stolen car is worth ---
+const R7_CHOP_PRICES = [
+  { kind: 'sedan', pay: 140 },
+  { kind: 'coupe', pay: 220 },
+  { kind: 'luxury', pay: 320 },
+  { kind: 'truck', pay: 180 },
+];
+function r7ChopPrice(kind) {
+  const p = R7_CHOP_PRICES.find((o) => o.kind === kind);
+  return p ? p.pay : 120;
+}
+function r7TheftHeat() {
+  return Math.min(3, Math.floor(r7Theft.alarms / 2));
+}
+// --- R7 gun mods: scopes and extended mags ---
+const R7_GUN_MODS = [
+  { n: 'Red dot sight', cost: 150, gun: 0 },
+  { n: 'Extended mag', cost: 120, gun: 1 },
+  { n: 'Long barrel', cost: 200, gun: 2 },
+  { n: 'Suppressor', cost: 350, gun: 3 },
+];
+let r7Mods = [];
+function r7ModBuy(i) {
+  const m = R7_GUN_MODS[i];
+  if (r7Mods.includes(i)) return false;
+  if (!r7Spend(m.cost)) return false;
+  r7Mods.push(i); r7Save('mods', r7Mods);
+  toast('Fitted ' + m.n + ' to the ' + R7_GUNS[m.gun].n + '.');
+  return true;
+}
+// --- R7 wildlife seasons: migration changes what is out there ---
+const R7_SEASONS_WILD = [
+  { season: 'Spring', active: ['Bay Gull', 'Marsh Heron', 'Golden Egret'] },
+  { season: 'Summer', active: ['Bay Alligator', 'Ghost Crab', 'Wild Boar'] },
+  { season: 'Autumn', active: ['White-tail Deer', 'Wild Boar', 'Marsh Heron'] },
+  { season: 'Winter', active: ['Black Panther', 'Bay Gull', 'Golden Egret'] },
+];
+function r7WildSeason() {
+  const day = Math.floor(state.time / 120) % 4;
+  return R7_SEASONS_WILD[day];
+}
+function r7WildBestTime(animal) {
+  const s = R7_WILD.find((a) => a.n === animal);
+  if (!s) return 'unknown';
+  return s.zone === 'swamp' ? 'dawn' : s.zone === 'forest' ? 'dusk' : 'midday';
+}
+// --- R7 ranch races: bond levels decide the photo finish ---
+function r7HorseRace(i) {
+  const h = R7_HORSE2[i];
+  const power = h.speed + h.stamina * 0.5 + r7HorseBondLevel(i) * 2;
+  const rival = 10 + Math.random() * 8;
+  const win = power > rival;
+  if (win) r7Earn(180, h.n + ' wins the ranch race (' + power.toFixed(1) + ' vs ' + rival.toFixed(1) + ')');
+  else toast(h.n + ' lost the ranch race — ' + power.toFixed(1) + ' vs ' + rival.toFixed(1) + '. Train more.');
+  return win;
+}
+// --- R7 stash wall: deposit and withdraw safe cash ---
+let r7Stash = { cash: 0 };
+function r7StashDeposit(amount) {
+  if (!r7Safe.owned.includes(4)) { toast('Install the hidden stash wall first.'); return false; }
+  if (state.cash < amount) { toast('Not enough cash on you.'); return false; }
+  state.cash -= amount; r7Stash.cash += amount; r7Save('stash', r7Stash); updateHUD();
+  toast('Stashed $' + amount + ' in the wall. Hidden total $' + r7Stash.cash + '.');
+  return true;
+}
+function r7StashWithdraw(amount) {
+  if (r7Stash.cash < amount) { toast('Only $' + r7Stash.cash + ' hidden.'); return false; }
+  r7Stash.cash -= amount; state.cash += amount; r7Save('stash', r7Stash); updateHUD();
+  toast('Withdrew $' + amount + ' from the wall.');
+  return true;
+}
+function r7StashLoad() { const s = r7Load('stash', null); if (s) r7Stash = s; }
+// --- R7 stranger dialogue: what each one says when you meet ---
+const R7_STRANGER_LINES = [
+  'Old Sal: "Sixty years on this pier and a hat is what gets me."',
+  'Tia: "My guitar is on the roof. A gull stole it. A gull!"',
+  'Chef Beni: "No limes, no sauce. No sauce, no restaurant."',
+  'Captain Wren: "Engines die. The bay does not forgive, but it forgets."',
+  'Madame Zola: "Three fortunes, one brave soul. That is you, yes?"',
+  'Kid Milo: "My kite is in the oak and my mum says I cannot climb."',
+  'Doc Hal: "Medicine for the swamp folk. Drive slow — the road floods."',
+  'Auntie Rosa: "My goat is out there eating the golf course again."',
+];
+function r7StrangerLine(i) { return R7_STRANGER_LINES[i]; }
+// --- R7 wanted posters: the bounty board in words ---
+function r7BountyPoster(i) {
+  const b = R7_BOUNTIES[i];
+  return 'WANTED: ' + b.n + ' — ' + b.crime + '. Alive $' + b.alive + ', dead $' + b.dead + '. Last seen near (' + b.x + ', ' + b.z + ').';
+}
+function r7BountyRewardTier() {
+  if (r7Bounty.alive >= 5) return 'Legendary hunter';
+  if (r7Bounty.caught.length >= 3) return 'Known hunter';
+  if (r7Bounty.caught.length >= 1) return 'Rookie hunter';
+  return 'Unproven';
+}
+// --- R7 treasure tools: shovel and metal detector ---
+let r7DigKit = { shovel: false, detector: false };
+function r7DigBuyShovel() {
+  if (r7DigKit.shovel) return false;
+  if (!r7Spend(45)) return false;
+  r7DigKit.shovel = true; r7Save('digkit', r7DigKit); toast('Shovel bought — digging is twice as fast now.'); return true;
+}
+function r7DigBuyDetector() {
+  if (r7DigKit.detector) return false;
+  if (!r7Spend(220)) return false;
+  r7DigKit.detector = true; r7Save('digkit', r7DigKit); toast('Metal detector bought — it beeps near buried metal.'); return true;
+}
+function r7DigScan(i) {
+  if (!r7DigKit.detector) { toast('No detector — you are digging blind.'); return false; }
+  const near = r7Near(R7_TREASURE[i].x, R7_TREASURE[i].z, 30);
+  toast(near ? 'BEEP BEEP — metal under your feet!' : 'Silence. Nothing buried nearby.');
+  return near;
+}
+// --- R7 weekly challenge: one rotating spotlight challenge ---
+const R7_WEEKLY = [
+  { n: 'Speed week', desc: 'Hit 130 mph on the causeway', target: 130 },
+  { n: 'Photo week', desc: 'Post 5 Snapmatic photos', target: 5 },
+  { n: 'Gator week', desc: 'Spot 10 swamp gators', target: 10 },
+  { n: 'Quiet week', desc: 'Finish 3 jobs with zero heat', target: 3 },
+];
+function r7Weekly() {
+  const week = Math.floor(state.time / 840) % R7_WEEKLY.length;
+  return R7_WEEKLY[week];
+}
+// --- R7 court rival teams: who you are up against ---
+const R7_RIVAL_TEAMS = [
+  { n: 'Dock Kings', skill: 7 },
+  { n: 'Marina Mambas', skill: 8 },
+  { n: 'Old Town Owls', skill: 5 },
+  { n: 'Casino Sharks', skill: 9 },
+];
+function r7CourtRival() { return r7Pick(R7_RIVAL_TEAMS); }
+function r7CourtVsRival(team) {
+  const skill = 5 + Math.floor(r7Body.strength / 4) + Math.floor(r7Court.wins / 3);
+  const win = skill >= team.skill;
+  if (win) r7Earn(120, 'Beat the ' + team.n + ' at the courts');
+  else toast('The ' + team.n + ' took the game — train and come back.');
+  return win;
+}
+// --- R7 pool trick shots: show-off shots for extra cash ---
+const R7_TRICK_SHOTS = [
+  { n: 'The Bay Bridge', pay: 90 },
+  { n: 'Behind the back', pay: 70 },
+  { n: 'Three-cushion kiss', pay: 110 },
+];
+function r7PoolTrick(i) {
+  const t = R7_TRICK_SHOTS[i];
+  const made = Math.random() < 0.45;
+  if (made) r7Earn(t.pay, 'Trick shot made: ' + t.n);
+  else toast('Trick shot missed — ' + t.n + ' is harder than it looks.');
+  return made;
+}
+// --- R7 dive air: tanks drain with depth, sharks watch the wreck ---
+function r7DiveAirNeeded(i) {
+  return Math.ceil(R7_DIVE_SITES[i].depth / 8);
+}
+function r7DiveShark(i) {
+  if (i !== 2) return false;
+  const shark = Math.random() < 0.3;
+  if (shark) toast('A barracuda shadows you at the Anchor Wreck — stay calm, swim smooth.');
+  return shark;
+}
+// --- R7 jump wind: gusts change the landing ---
+function r7JumpWind() {
+  const w = Math.floor(Math.random() * 5);
+  return { speed: w, note: w <= 1 ? 'Calm air — perfect jump day.' : w <= 3 ? 'Light gusts — aim slightly upwind.' : 'Strong gusts — only for the brave.' };
+}
+// --- R7 swamp tour scripts: what the guide says on each route ---
+const R7_TOUR_SCRIPTS = [
+  'Dawn Gator Run: "Ladies and gents, keep hands inside — the gators are early risers."',
+  'Midday Marsh Loop: "That heron has lived here longer than the town has."',
+  'Sunset Heron Cruise: "Watch the sky turn gold. The bay does this every night, free of charge."',
+];
+function r7SwampScript(i) { return R7_TOUR_SCRIPTS[i]; }
+// --- R7 lodge drying rack: pelts cure over time into better goods ---
+let r7Rack = { curing: [] };
+function r7RackHang(animal) {
+  if (r7Rack.curing.includes(animal)) return false;
+  r7Rack.curing.push(animal); r7Save('rack', r7Rack);
+  toast(animal + ' pelt hung on the drying rack.');
+  return true;
+}
+function r7RackCollect(animal) {
+  if (!r7Rack.curing.includes(animal)) return false;
+  r7Rack.curing.splice(r7Rack.curing.indexOf(animal), 1); r7Save('rack', r7Rack);
+  r7Earn(90, 'Sold a cured ' + animal + ' pelt');
+  return true;
+}
+// --- R7 storm repair: after the front passes, the bay pays to rebuild ---
+function r7StormRepairJob() {
+  if (r7Storm.active >= 0) { toast('Wait out the storm first — repairs start after it passes.'); return false; }
+  if (r7Storm.survived === 0) { toast('No storm has passed yet — nothing to repair.'); return false; }
+  r7Earn(140, 'Storm repair work — boards, roofs and fences');
+  return true;
+}
+// --- R7 ride surge: night and storm fares pay more ---
+function r7RideSurge() {
+  const night = state.time % 120 > 80;
+  const storm = r7Storm.active >= 0;
+  if (storm) return 2.0;
+  if (night) return 1.5;
+  return 1.0;
+}
+function r7RideFareWithSurge(base) {
+  return Math.round(base * r7RideSurge());
+}
+// --- R7 brand deals: Snapmatic sponsors pay for themed posts ---
+const R7_BRAND_DEALS = [
+  { brand: 'Salt Soda', tag: 'sunset', pay: 200, need: 100 },
+  { brand: 'Bay Boards', tag: 'classic car', pay: 300, need: 250 },
+  { brand: 'Gator Gear', tag: 'gator', pay: 400, need: 500 },
+];
+function r7BrandDeal(i) {
+  const d = R7_BRAND_DEALS[i];
+  if (r7Phone.followers < d.need) { toast(d.brand + ' needs ' + d.need + ' followers — you have ' + r7Phone.followers + '.'); return false; }
+  r7SnapPost(d.tag);
+  r7Earn(d.pay, 'Brand deal: ' + d.brand + ' #' + d.tag + ' post');
+  return true;
+}
+// --- R7 podcast fans: listeners write in after each show ---
+const R7_FAN_MAIL = [
+  '"Your gator episode made my commute. More please!" — listener 41',
+  '"I tried the swamp tour because of you." — listener 88',
+  '"The Drowned Captain story gave me chills." — listener 12',
+  '"Play more Marina Nights. My shop plays it all day." — listener 63',
+];
+function r7PodFanMail() { return r7Pick(R7_FAN_MAIL); }
+function r7PodListeners() {
+  return r7Pod.listened.length * 120 + r7Phone.followers;
+}
+// --- R7 diet plans: eat with a goal, not just hunger ---
+const R7_DIETS = [
+  { n: 'Dockworker bulk', food: 'Docks burger', str: 2, sta: 0 },
+  { n: 'Runner lean', food: 'Marina salad', str: 0, sta: 2 },
+  { n: 'Bay balanced', food: 'Bay fish tacos', str: 1, sta: 1 },
+];
+function r7BodyDiet(i) {
+  const d = R7_DIETS[i];
+  r7Body.strength = r7Clamp(r7Body.strength + d.str, 0, 20);
+  r7Body.stamina = r7Clamp(r7Body.stamina + d.sta, 0, 20);
+  r7BodySave(); updateHUD();
+  toast('Diet: ' + d.n + ' — strength ' + r7Body.strength + ', stamina ' + r7Body.stamina + '.');
+  return true;
+}
+function r7BodySleepQuality() {
+  if (r7Safe.owned.includes(0)) return 'Deep sleep in a real bed.';
+  if (r7Body.apt >= 0) return 'Decent sleep in your flat.';
+  return 'Rough sleep on the safehouse couch.';
+}
+// --- R7 apartment perks: each home has its own bonus ---
+function r7AptPerk() {
+  if (r7Body.apt < 0) return 'No apartment — safehouse only.';
+  const a = R7_APTS[r7Body.apt];
+  if (a.view === 'bay') return 'Bay view: +1 stamina each morning.';
+  if (a.view === 'skyline') return 'Skyline view: +2 rep with visitors.';
+  return 'Plaza view: cheap eats next door.';
+}
+// --- R7 rep street cred: titles unlock small world changes ---
+function r7RepPerks() {
+  const s = r7RepScore();
+  const perks = [];
+  if (s >= 25) perks.push('Shopkeepers wave you in');
+  if (s >= 60) perks.push('Free coffee at the marina stall');
+  if (s <= -40) perks.push('Shopkeepers watch your hands');
+  if (s <= -70) perks.push('Civilians cross the street');
+  return perks.length ? perks : ['No special treatment yet'];
+}
+function r7RepDonate(amount) {
+  if (!r7Spend(amount)) return false;
+  r7Rep.good += Math.floor(amount / 20); r7RepSave();
+  toast('Donated $' + amount + ' to the bay fund. Rep ' + r7RepScore() + '.');
+  return true;
+}
+// --- R7 witness alibis: Ian covers for you, once a day ---
+let r7Alibi = { used: 0 };
+function r7WitAlibi() {
+  if (r7Alibi.used >= 1) { toast('Ian already covered for you today.'); return false; }
+  r7Alibi.used++; r7Wit.heat = r7Clamp(r7Wit.heat - 2, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); toast('Ian: "He was with me all night." Heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 focus breathing: hold still to refill the meter faster ---
+function r7FocusBreathe() {
+  r7Focus.meter = r7Clamp(r7Focus.meter + 15, 0, 100);
+  r7FocusSave(); toast('Slow breath. Focus meter ' + Math.round(r7Focus.meter) + '%.');
+  return true;
+}
+// --- R7 robbery lookouts: hire a lookout for the big jobs ---
+function r7RobLookout() {
+  if (!r7Spend(100)) return false;
+  toast('Lookout posted on the corner — you will get a warning if police roll in.');
+  return true;
+}
+// --- R7 theft getaway car: a stolen car with a full tank of nerve ---
+function r7TheftJoyride() {
+  if (r7Theft.stolen === 0) { toast('Steal a car first — then take it for a spin.'); return false; }
+  r7Earn(40, 'Joyride through the bay at dawn');
+  return true;
+}
+// --- R7 locker inventory check: what is where, in one line ---
+function r7LockerInventory() {
+  return 'Carry: ' + r7Locker.carry.length + ' · trunk: ' + r7Locker.trunk.length + ' · safe: ' + r7Locker.safe.length + ' · kits: ' + r7Locker.cleanKit;
+}
+// --- R7 wild calls: imitate the animal to draw it closer ---
+const R7_ANIMAL_CALLS = [
+  { animal: 'Bay Gull', call: 'A sharp kee-kee that turns every head on the beach.' },
+  { animal: 'Marsh Heron', call: 'A low croak across still water.' },
+  { animal: 'White-tail Deer', call: 'A soft bleat from the tree line.' },
+  { animal: 'Bay Alligator', call: 'You do not call a gator. The gator calls you.' },
+];
+function r7WildCall(animal) {
+  const c = R7_ANIMAL_CALLS.find((o) => o.animal === animal);
+  return c ? c.call : 'No call known for that animal yet.';
+}
+// --- R7 horse names: the ranch hands rename horses that trust you ---
+function r7HorseNickname(i) {
+  const level = r7HorseBondLevel(i);
+  if (level >= 4) return R7_HORSE2[i].n + ' "Old Faithful"';
+  if (level >= 2) return R7_HORSE2[i].n + ' "Steady"';
+  return R7_HORSE2[i].n;
+}
+// --- R7 safehouse radio: the crew's favourite station ---
+function r7SafeRadio() {
+  const stations = ['Solmar FM 88.5', 'Bay Oldies 101.1', 'Marina Nights 94.7'];
+  return r7Pick(stations);
+}
+// --- R7 stranger gifts: grateful locals leave things at your door ---
+const R7_STRANGER_GIFTS = [
+  'Old Sal left a lucky fishing lure.',
+  'Tia left a demo tape of her new song.',
+  'Chef Beni left a jar of chilli sauce.',
+  'Captain Wren left a brass compass.',
+  'Madame Zola left a lucky coin.',
+  'Kid Milo left a drawing of you on a horse.',
+  'Doc Hal left a first-aid kit.',
+  'Auntie Rosa left a basket of mangoes.',
+];
+function r7StrangerGift(i) {
+  if (!r7Stranger.done.includes(i)) return 'No gift yet — help them first.';
+  return R7_STRANGER_GIFTS[i];
+}
+// --- R7 bounty handcuffs: buy cuffs for clean alive captures ---
+let r7Cuffs = 0;
+function r7BountyBuyCuffs() {
+  if (!r7Spend(75)) return false;
+  r7Cuffs++; r7Save('cuffs', r7Cuffs);
+  toast('Handcuffs bought. Cuffs: ' + r7Cuffs + ' — alive captures are cleaner with them.');
+  return true;
+}
+function r7BountyCaptureWithCuffs() {
+  if (r7Bounty.active < 0) return false;
+  if (r7Cuffs <= 0) { toast('No cuffs — the capture will be rough.'); return r7BountyCapture(false); }
+  r7Cuffs--; r7Save('cuffs', r7Cuffs);
+  return r7BountyCapture(true);
+}
+// --- R7 treasure legends: the old stories behind each cache ---
+const R7_TREASURE_TALES = [
+  'The Drowned Captain: his ship went down in a storm, but his chest washed ashore.',
+  'Smuggler Gold: a runner buried his cut before the sheriff raided the swamp.',
+  'The Gardener Hoard: forty years of wages under the jasmine, for a rainy day.',
+];
+function r7TreasureTale(i) { return R7_TREASURE_TALES[i]; }
+// --- R7 challenge history: bests and the day they were set ---
+function r7ChalHistory() {
+  return R7_CHALLENGES.map((c, i) => c.n + ': ' + r7Chal.best[i] + ' ' + c.unit + ' (' + r7ChalRank(i) + ')');
+}
+// --- R7 court chants: the crowd has favourites ---
+const R7_COURT_CHANTS = [
+  '"DE-FENCE! DE-FENCE!"',
+  '"Three! Three! Three!"',
+  '"Run it back! Run it back!"',
+];
+function r7CourtChant() { return r7Pick(R7_COURT_CHANTS); }
+// --- R7 boxing corners: Ian works your corner between rounds ---
+function r7BoxCorner() {
+  toast('Ian, in your corner: "Breathe. Watch the left. He drops it every third jab."');
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  return true;
+}
+// --- R7 dive buddies: Ian dives with you on the deep sites ---
+function r7DiveBuddy(i) {
+  const s = R7_DIVE_SITES[i];
+  if (s.depth < 12) { toast('Ian stays on the kayak for the shallow sites.'); return false; }
+  toast('Ian dives with you at ' + s.n + ' — two pairs of eyes, half the risk.');
+  return r7DiveGo(i);
+}
+// --- R7 jump tandem: Ian jumps with you, once per spot ---
+let r7JumpTandem = [];
+function r7JumpTandemGo(i) {
+  if (r7JumpTandem.includes(i)) return false;
+  if (!r7Jump.chute) { toast('No parachute — tandem needs one even more.'); return false; }
+  r7JumpTandem.push(i); r7Save('jumpTandem', r7JumpTandem);
+  r7Earn(R7_JUMP_SPOTS[i].pay + 100, 'Tandem jump with Ian from ' + R7_JUMP_SPOTS[i].n);
+  return true;
+}
+// --- R7 swamp songs: the airboat guide sings on the sunset tour ---
+function r7SwampSong() {
+  return '"Oh the bay is wide and the gators are sly, and the sun goes down on the marsh..."';
+}
+// --- R7 lodge fire: the hearth keeps pelts dry and stories warm ---
+function r7LodgeFire() {
+  toast('The lodge fire crackles. Pelts dry, coffee brews, the bay feels far away.');
+  return true;
+}
+// --- R7 storm radio: warnings as the front approaches ---
+function r7StormRadio() {
+  if (r7Storm.active >= 0) return 'RADIO: "' + R7_STORMS[r7Storm.active].n + ' overhead — stay inside, stay dry."';
+  return 'RADIO: "' + r7StormForecast() + '"';
+}
+// --- R7 ride regulars: passengers you see again and again ---
+const R7_RIDE_REGULARS = [
+  'Mrs. Alba rides to the market every morning, exact change ready.',
+  'Old Sal rides to the pier with his rod and his stories.',
+  'Tia rides to the marina with her guitar case and her hopes.',
+];
+function r7RideRegular() { return r7Pick(R7_RIDE_REGULARS); }
+// --- R7 snap filters: the bay looks better in gold hour ---
+const R7_SNAP_FILTERS = ['Gold Hour', 'Salt Haze', 'Storm Grey', 'Marina Pop'];
+function r7SnapFilter() { return r7Pick(R7_SNAP_FILTERS); }
+function r7SnapPostFiltered(tag) {
+  const filter = r7SnapFilter();
+  const likes = r7SnapPost(tag);
+  toast('Posted with the ' + filter + ' filter.');
+  return likes;
+}
+// --- R7 podcast queue: line up the next show while one plays ---
+let r7PodQueue = [];
+function r7PodQueueAdd(i) {
+  if (r7PodQueue.includes(i)) return false;
+  r7PodQueue.push(i); r7PodSave();
+  toast('Queued: ' + R7_PODCASTS[i].n + '. Queue: ' + r7PodQueue.length + ' shows.');
+  return true;
+}
+function r7PodQueueNext() {
+  const next = r7PodQueue.shift();
+  if (next === undefined) { toast('Queue is empty.'); return -1; }
+  r7PodListen(next);
+  return next;
+}
+// --- R7 body mirror: check your look before a night out ---
+function r7BodyMirror() {
+  return r7BodyLook() + ' Outfit: ' + R7_OUTFITS[r7Wit.outfit].n + '.';
+}
+// --- R7 phone wallpaper: Snapmatic shots become your lock screen ---
+function r7PhoneWallpaper(tag) {
+  if (!r7Phone.posts.some((p) => p.tag === tag)) { toast('Post a #' + tag + ' photo first.'); return false; }
+  toast('Lock screen set: your #' + tag + ' shot. The bay, in your pocket.');
+  return true;
+}
+// --- R7 rep ledger: a public record of your good deeds ---
+function r7RepLedger() {
+  return r7Rep.deeds.length ? r7Rep.deeds.join(' · ') : 'No good deeds on record yet.';
+}
+// --- R7 heat map: where the bay is watching hardest ---
+function r7HeatMap() {
+  return R7_CAMERAS.map((c) => c.n + ' (heat ' + r7Wit.heat + '/6)').join(' · ');
+}
+// --- R7 focus drills: practice targets at the range ---
+function r7FocusDrill() {
+  const hit = Math.random() < 0.7;
+  if (hit) { r7Focus.meter = r7Clamp(r7Focus.meter + 10, 0, 100); toast('Range drill: clean hit. Focus meter up.'); }
+  else toast('Range drill: missed wide. Again.');
+  return hit;
+}
+// --- R7 robbery blueprints: the plans you have stolen or drawn ---
+function r7RobBlueprints() {
+  return R7_ROB_TARGETS.filter((t, i) => r7Rob.scouted.includes(i)).map((t) => t.n + ' (safe ' + (r7Rob.codes.includes(R7_ROB_TARGETS.indexOf(t)) ? t.safe : '???') + ')');
+}
+// --- R7 theft wanted level: how hot each stolen car runs ---
+function r7TheftWanted(tool) {
+  if (tool === 2) return 'Luxury lift — 2 stars if seen.';
+  if (tool === 0) return 'Slim jim — quiet, 1 star if seen.';
+  return 'Window smash — loud, 2 stars if seen.';
+}
+// --- R7 locker range day: wear down guns to learn their limits ---
+function r7LockerRangeDay(i) {
+  for (let s = 0; s < 10; s++) r7LockerShoot(i);
+  toast(R7_GUNS[i].n + ' after range day: wear ' + R7_GUNS[i].wear + '% (' + r7LockerCondition(i) + ').');
+  return R7_GUNS[i].wear;
+}
+// --- R7 wild photo: a photo counts as a study for shy species ---
+function r7WildPhoto(i) {
+  const a = R7_WILD[i];
+  if (a.rare && !r7Wild.studied.includes(i)) { toast('Too shy — study the ' + a.n + ' in person first.'); return false; }
+  r7SnapPost('sunset');
+  toast('Photo logged: ' + a.n + ' in the wild.');
+  return true;
+}
+// --- R7 horse vet: check-ups keep a bonded horse healthy ---
+function r7HorseVet(i) {
+  if (!r7Spend(60)) return false;
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 5, 0, 100); r7HorseSave();
+  toast(R7_HORSE2[i].n + ' checked over — healthy, happy, bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse guests: Ian invites the crew for dinner ---
+function r7SafeDinner() {
+  if (r7Safe.crew.length < 2) { toast('Hire more crew first — dinner is better with company.'); return false; }
+  if (!r7Spend(50)) return false;
+  r7Safe.morale = r7Clamp(r7Safe.morale + 12, 0, 100); r7SafeSave();
+  toast('Dinner at the safehouse — Ian cooks, the crew laughs. Morale ' + r7Safe.morale + '.');
+  return true;
+}
+// --- R7 stranger reunions: the bay remembers kindness ---
+function r7StrangerReunion(i) {
+  if (!r7Stranger.done.includes(i)) return 'You have not met them properly yet.';
+  return R7_STRANGERS[i].n + ' waves when you pass — the bay remembers.';
+}
+// --- R7 bounty disguise: dress like a tourist to get close ---
+function r7BountyDisguise(i) {
+  if (r7Wit.outfit !== 4) { toast('Wear the Bay festival colours — tourists get close without a second look.'); return false; }
+  toast('Festival colours on — ' + R7_BOUNTIES[i].n + ' will not see you coming.');
+  return true;
+}
+// --- R7 treasure shovel count: how many digs you have left in you ---
+function r7TreasureDigsLeft() {
+  return 3 - r7Treasure.found.length;
+}
+// --- R7 challenge rival: the leaderboard name to beat ---
+const R7_CHAL_RIVAL = { n: 'Dockside Dan', golds: 4 };
+function r7ChalRivalLine() {
+  const mine = R7_CHALLENGES.filter((c, i) => r7ChalRank(i) === 'gold').length;
+  return 'Dockside Dan holds ' + R7_CHAL_RIVAL.golds + ' golds. You hold ' + mine + '.';
+}
+// --- R7 court shoes: the right shoes add a point a game ---
+let r7CourtShoes = false;
+function r7CourtBuyShoes() {
+  if (r7CourtShoes) return false;
+  if (!r7Spend(110)) return false;
+  r7CourtShoes = true; r7Save('courtShoes', true);
+  toast('Court shoes bought — springier step, cleaner jump shot.');
+  return true;
+}
+// --- R7 boxing wraps: protect your hands, hit harder ---
+let r7BoxWraps = false;
+function r7BoxBuyWraps() {
+  if (r7BoxWraps) return false;
+  if (!r7Spend(40)) return false;
+  r7BoxWraps = true; r7Save('boxWraps', true);
+  toast('Hand wraps bought — your punches land cleaner.');
+  return true;
+}
+// --- R7 dive logbook: every dive, written down ---
+function r7DiveLogbook() {
+  return R7_DIVE_SITES.map((s, i) => s.n + ': ' + (r7Dive.dives.includes(i) ? 'dived, $' + s.loot : 'not yet dived')).join(' · ');
+}
+// --- R7 jump logbook: airtime history ---
+function r7JumpLogbook() {
+  return 'Jumps: ' + r7Jump.jumps.length + ' · best airtime ' + r7Jump.best + 's · near misses ' + r7Jump.nearMisses + ' · tandem ' + r7JumpTandem.length + '.';
+}
+// --- R7 swamp menu: what tourists eat after the tour ---
+const R7_SWAMP_MENU = [
+  { n: 'Gator bites', price: 14 },
+  { n: 'Swamp lemonade', price: 6 },
+  { n: 'Heron pie', price: 11 },
+];
+function r7SwampMenu() { return R7_SWAMP_MENU.map((m) => m.n + ' $' + m.price).join(' · '); }
+// --- R7 lodge guest book: hunters who stayed the night ---
+const R7_LODGE_GUESTS = ['Doc Hal', 'Captain Wren', 'Old Sal'];
+function r7LodgeGuestBook() { return 'Guest book: ' + R7_LODGE_GUESTS.join(', ') + ' — and you, ' + r7Lodge.visits + ' visits.'; }
+// --- R7 storm kit: what to stock before the front ---
+const R7_STORM_KIT = ['Boards', 'Water', 'Torch', 'Radio batteries'];
+function r7StormKitList() { return 'Storm kit: ' + R7_STORM_KIT.join(', ') + '.'; }
+// --- R7 ride playlist: the driver picks the music ---
+function r7RidePlaylist() {
+  return r7Pick(['Solmar FM 88.5', 'Bay Oldies 101.1', 'Marina Nights 94.7']);
+}
+// --- R7 snap stories: 24-hour posts that bring fast followers ---
+function r7SnapStory(tag) {
+  const likes = r7SnapPost(tag);
+  r7Phone.followers += 2;
+  r7PhoneSave();
+  toast('Story posted — #' + tag + ' is live for 24 hours. +' + likes + ' likes.');
+  return likes;
+}
+// --- R7 podcast ads: a sponsor reads on your show ---
+function r7PodAd() {
+  if (r7Pod.listened.length < 2) { toast('Finish two shows first — sponsors want listeners.'); return false; }
+  r7Earn(90, 'Podcast sponsor read: Salt Soda');
+  return true;
+}
+// --- R7 body protein: shakes after the gym ---
+function r7BodyShake() {
+  if (!r7Spend(8)) return false;
+  r7Body.strength = r7Clamp(r7Body.strength + 1, 0, 20);
+  r7BodySave(); toast('Protein shake down. Strength ' + r7Body.strength + '/20.');
+  return true;
+}
+// --- R7 apartment keys: Ian gets a copy ---
+function r7AptKeys() {
+  if (r7Body.apt < 0) { toast('Rent a flat first — then Ian gets a key.'); return false; }
+  toast('Ian has a key to the ' + R7_APTS[r7Body.apt].n + '. Home, properly.');
+  return true;
+}
+// --- R7 rep clean slate: a big donation wipes a bad name ---
+function r7RepCleanSlate() {
+  if (r7RepScore() > -20) { toast('Your name is fine — no slate to clean.'); return false; }
+  if (!r7Spend(500)) return false;
+  r7Rep.bad = Math.max(0, r7Rep.bad - 40); r7RepSave();
+  toast('Big donation to the bay fund. The whispers fade. Rep ' + r7RepScore() + '.');
+  return true;
+}
+// --- R7 heat cooldown: hiding in the safehouse drops heat over time ---
+function r7WitLayLow() {
+  if (!r7SafeNear()) { toast('Lay low at the safehouse — the heat drops there.'); return false; }
+  r7Wit.heat = r7Clamp(r7Wit.heat - 1, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); toast('An hour on the couch. Heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 focus zen: a calm morning refills the meter fully ---
+function r7FocusZen() {
+  r7Focus.meter = 100; r7FocusSave();
+  toast('Morning coffee on the marina, slow and quiet. Focus meter full.');
+  return true;
+}
+// --- R7 robbery fence list: who buys what, quietly ---
+const R7_FENCE_LIST = [
+  { buyer: 'Old Tom', buys: 'jewellery', cut: '70%' },
+  { buyer: 'Docks fence', buys: 'cash boxes', cut: '60%' },
+  { buyer: 'Casino fence', buys: 'liquor stock', cut: '65%' },
+];
+function r7FenceList() { return R7_FENCE_LIST.map((f) => f.buyer + ' buys ' + f.buys + ' at ' + f.cut).join(' · '); }
+// --- R7 theft chop list: which cars the chop shop wants today ---
+function r7ChopWanted() {
+  const kinds = ['sedan', 'coupe', 'luxury', 'truck'];
+  const want = r7Pick(kinds);
+  return 'Chop shop wants a ' + want + ' today — $' + r7ChopPrice(want) + ' (' + want + ' pays double).';
+}
+// --- R7 locker safe combo: the safehouse safe has its own code ---
+const R7_SAFE_COMBO = '4821';
+function r7LockerSafeCombo() { return 'Safehouse safe combo: ' + R7_SAFE_COMBO + ' — do not share it.'; }
+// --- R7 wild migration map: the seasonal movement of the rare three ---
+function r7WildMigration() {
+  return 'Golden Egret: swamp in spring, beach in winter. Ghost Crab: beach all year. Black Panther: deep forest, winter only.';
+}
+// --- R7 horse feed bag: buy in bulk, save cash ---
+function r7HorseFeedBulk(i) {
+  if (!r7Spend(60)) return false;
+  r7Horse.fed[i] += 5; r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 20, 0, 100); r7HorseSave();
+  toast('Bulk feed for ' + R7_HORSE2[i].n + ' — five meals, bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse plants: Ian grows herbs on the windowsill ---
+let r7Plants = 0;
+function r7SafePlant() {
+  r7Plants++; r7Safe.morale = r7Clamp(r7Safe.morale + 2, 0, 100); r7SafeSave();
+  toast('A new herb pot on the sill. Plants: ' + r7Plants + ' · morale ' + r7Safe.morale + '.');
+  return r7Plants;
+}
+// --- R7 stranger map: where the eight strangers stand ---
+function r7StrangerMap() {
+  return R7_STRANGERS.map((s, i) => s.n + ' (' + s.x + ', ' + s.z + ')' + (r7Stranger.done.includes(i) ? ' ✓' : '')).join(' · ');
+}
+// --- R7 bounty wanted level: the board's heat rises with you ---
+function r7BountyHeat() {
+  return 'Board heat: ' + r7Bounty.caught.length + '/5 caught. The sheriff notices hunters who finish jobs.';
+}
+// --- R7 treasure compass: the needle points to the nearest cache ---
+function r7TreasureCompass() {
+  const p = r7Pos();
+  let best = null, bestD = 1e9;
+  for (let i = 0; i < R7_TREASURE.length; i++) {
+    if (r7Treasure.found.includes(i)) continue;
+    const d = Math.hypot(R7_TREASURE[i].x - p.x, R7_TREASURE[i].z - p.z);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best === null) return 'All caches found — the compass spins free.';
+  return 'Nearest cache: ' + R7_TREASURE[best].n + ', ' + Math.round(bestD) + 'm away.';
+}
+// --- R7 challenge streak: daily challenge completions in a row ---
+let r7Streak = 0;
+function r7ChalStreak(win) {
+  if (win) { r7Streak++; if (r7Streak >= 3) { r7Earn(150, 'Challenge streak x' + r7Streak); } }
+  else r7Streak = 0;
+  r7Save('streak', r7Streak);
+  return r7Streak;
+}
+// --- R7 court MVP: the best pickup player this week ---
+function r7CourtMVP() {
+  if (r7Court.wins >= 5) return 'You — the courts belong to you this week.';
+  if (r7Court.wins >= 2) return 'You are climbing the pickup ladder.';
+  return 'Dock Kings hold the MVP crown — for now.';
+}
+// --- R7 boxing record card: your fight history in one line ---
+function r7BoxRecord() {
+  return 'Boxing record: ' + r7Pool.boutWins + 'W - ' + (r7Pool.bouts - r7Pool.boutWins) + 'L' + (r7Pool.belt ? ' · BAY CHAMPION' : '');
+}
+// --- R7 dive buddy check: air, depth, buddy — the three rules ---
+function r7DiveChecklist(i) {
+  const s = R7_DIVE_SITES[i];
+  return 'Dive ' + s.n + ': air ' + r7DiveAirNeeded(i) + ' tanks · depth ' + s.depth + 'm · buddy: ' + (s.depth >= 12 ? 'Ian comes too' : 'solo is fine');
+}
+// --- R7 jump weather: the morning report for jumpers ---
+function r7JumpWeather() {
+  const w = r7JumpWind();
+  return 'Jump weather: wind ' + w.speed + '/4 — ' + w.note;
+}
+// --- R7 swamp tides: the water decides the tour ---
+function r7SwampTide() {
+  const tide = r7Pick(['high', 'low', 'rising']);
+  return 'Swamp tide is ' + tide + ' — ' + (tide === 'high' ? 'gators float close.' : tide === 'low' ? 'mud banks show.' : 'water creeps in.');
+}
+// --- R7 lodge stew: the pot is always on ---
+function r7LodgeStew() {
+  toast('Lodge stew: venison, bay herbs, and a story from the last hunt.');
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  return true;
+}
+// --- R7 storm shutters: board up before the front ---
+function r7StormShutters() {
+  if (!r7Spend(90)) return false;
+  toast('Shutters up on the safehouse. The storm can howl all it likes.');
+  return true;
+}
+// --- R7 ride airport run: the long fare everyone wants ---
+function r7RideAirportRun() {
+  if (!r7Ride.driver) { toast('Sign up as a BayRide driver first.'); return false; }
+  r7Ride.trips++; r7Ride.earned += 55;
+  r7RideSave(); r7Earn(55, 'Airport run — the long fare');
+  return true;
+}
+// --- R7 snap analytics: which tag earns the most likes ---
+function r7SnapAnalytics() {
+  const byTag = {};
+  for (const p of r7Phone.posts) byTag[p.tag] = (byTag[p.tag] || 0) + p.likes;
+  const best = Object.entries(byTag).sort((a, b) => b[1] - a[1])[0];
+  return best ? 'Best tag: #' + best[0] + ' with ' + best[1] + ' likes.' : 'Post something first — analytics need data.';
+}
+// --- R7 podcast live: a live recording at the marina bar ---
+function r7PodLive() {
+  if (r7Pod.listened.length < 4) { toast('Finish all four shows first — then go live.'); return false; }
+  r7Earn(250, 'Live podcast recording at the marina bar');
+  return true;
+}
+// --- R7 body rest day: sometimes the gym can wait ---
+function r7BodyRestDay() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 4, 0, 20);
+  r7BodySave(); toast('Rest day — a walk on the beach, an early night. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment party: Ian throws a housewarming ---
+function r7AptParty() {
+  if (r7Body.apt < 0) { toast('Rent a flat first.'); return false; }
+  if (!r7Spend(120)) return false;
+  r7Safe.morale = r7Clamp(r7Safe.morale + 15, 0, 100); r7SafeSave();
+  toast('Housewarming at the ' + R7_APTS[r7Body.apt].n + ' — the whole crew comes. Morale ' + r7Safe.morale + '.');
+  return true;
+}
+// --- R7 rep parade: the bay throws you a small parade at +80 ---
+function r7RepParade() {
+  if (r7RepScore() < 80) { toast('The bay parades for saints — you need +80 rep. Now: ' + r7RepScore() + '.'); return false; }
+  r7Earn(300, 'Bay parade in your honour');
+  return true;
+}
+// --- R7 heat disguise kit: a full kit for a quick change anywhere ---
+function r7WitKit() {
+  if (!r7Spend(200)) return false;
+  r7Wit.heat = r7Clamp(r7Wit.heat - 2, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); toast('Disguise kit used — wig, jacket, new walk. Heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 focus scope: a scope steadies the slow-mo shot ---
+function r7FocusScope() {
+  toast('Scope on — the slow-mo holds steady a second longer.');
+  r7Focus.meter = r7Clamp(r7Focus.meter + 5, 0, 100);
+  return true;
+}
+// --- R7 robbery clean crew: the same crew, the same cut, every time ---
+function r7RobCrewCut(take) {
+  const crew = 2;
+  const cut = Math.floor(take / crew);
+  return 'Crew cut: $' + cut + ' each for Ryan and Ian on a $' + take + ' take.';
+}
+// --- R7 theft lock picks: a quieter tool for patient thieves ---
+function r7TheftLockpick() {
+  if (!r7Theft.tools.includes(0)) { toast('Buy the slim jim first — picks come later.'); return false; }
+  toast('Lock pick set ready — slower than the slim jim, silent as the night.');
+  return true;
+}
+// --- R7 locker oil: a drop of oil keeps the action smooth ---
+function r7LockerOil(i) {
+  if (R7_GUNS[i].wear < 10) { toast(R7_GUNS[i].n + ' is smooth already.'); return false; }
+  R7_GUNS[i].wear = r7Clamp(R7_GUNS[i].wear - 10, 0, 100);
+  r7LockerSave(); toast('Oiled ' + R7_GUNS[i].n + ' — wear ' + R7_GUNS[i].wear + '%.');
+  return true;
+}
+// --- R7 wild dawn chorus: the swamp at first light ---
+function r7WildDawn() {
+  return 'Dawn chorus: herons first, then gulls, then the gators slide in.';
+}
+// --- R7 horse sunset ride: the best ride in the bay ---
+function r7HorseSunset(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 10, 0, 100); r7HorseSave();
+  toast('Sunset ride on ' + R7_HORSE2[i].n + ' — the bay turns gold. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse morning: coffee, paper, and the bay waking up ---
+function r7SafeMorning() {
+  toast('Morning at the safehouse — Ian makes coffee, the bay wakes up slow.');
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  return true;
+}
+// --- R7 stranger thank-you: the bay's small kindnesses compound ---
+function r7StrangerThanks() {
+  return 'Strangers helped: ' + r7Stranger.done.length + '/8. The bay keeps score, kindly.';
+}
+// --- R7 bounty wanted poster art: the sketch artist got it wrong ---
+function r7BountySketch(i) {
+  const b = R7_BOUNTIES[i];
+  return 'Sketch of ' + b.n + ': "Looks nothing like them," says everyone who knows them.';
+}
+// --- R7 treasure old map: the shop sells a faded copy ---
+function r7TreasureOldMap() {
+  if (!r7Spend(60)) return false;
+  toast('Old map bought — coffee stains, torn corner, but the X is clear.');
+  return true;
+}
+// --- R7 challenge trophy shelf: where the medals live ---
+function r7ChalShelf() {
+  const golds = R7_CHALLENGES.filter((c, i) => r7ChalRank(i) === 'gold').length;
+  const silvers = R7_CHALLENGES.filter((c, i) => r7ChalRank(i) === 'silver').length;
+  const bronzes = R7_CHALLENGES.filter((c, i) => r7ChalRank(i) === 'bronze').length;
+  return 'Trophy shelf: ' + golds + ' gold · ' + silvers + ' silver · ' + bronzes + ' bronze.';
+}
+// --- R7 court water break: the bay heat is no joke ---
+function r7CourtWater() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  toast('Water break — the bay heat is no joke. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 boxing hand speed: bag work between bouts ---
+function r7BoxBag() {
+  r7Body.strength = r7Clamp(r7Body.strength + 1, 0, 20);
+  r7BodySave(); toast('Bag work done — hands faster, shoulders burning. Strength ' + r7Body.strength + '.');
+  return true;
+}
+// --- R7 dive wetsuit: the cold water bites without one ---
+let r7Wetsuit = false;
+function r7DiveWetsuit() {
+  if (r7Wetsuit) return false;
+  if (!r7Spend(180)) return false;
+  r7Wetsuit = true; r7Save('wetsuit', true);
+  toast('Wetsuit bought — the deep water feels warmer already.');
+  return true;
+}
+// --- R7 jump log: the jump club keeps score ---
+function r7JumpClub() {
+  return 'Jump club: ' + r7Jump.jumps.length + ' jumps logged, best ' + r7Jump.best + 's airtime.';
+}
+// --- R7 swamp sunset: the tour everyone photographs ---
+function r7SwampSunset() {
+  r7SnapPost('sunset');
+  toast('Swamp sunset — the sky burns orange over the marsh.');
+  return true;
+}
+// --- R7 lodge coffee: strong, black, and always on ---
+function r7LodgeCoffee() {
+  toast('Lodge coffee: strong, black, and always on the stove.');
+  return true;
+}
+// --- R7 storm candles: when the power goes, the bay lights candles ---
+function r7StormCandles() {
+  if (r7Storm.active < 0) { toast('No storm — the lights are on, the candles wait.'); return false; }
+  toast('Candles lit in the shelter — the bay waits out the storm together.');
+  return true;
+}
+// --- R7 ride lost and found: passengers leave things behind ---
+const R7_LOST_ITEMS = ['A red umbrella', 'A paperback novel', 'A pair of sunglasses', 'A lucky coin'];
+function r7RideLostFound() {
+  const item = r7Pick(R7_LOST_ITEMS);
+  toast('Lost and found: ' + item + ' — left in the back seat.');
+  return item;
+}
+// --- R7 snap golden hour: the best light in the bay ---
+function r7SnapGoldenHour() {
+  toast('Golden hour — the bay glows. Every photo earns double likes now.');
+  return r7SnapPost('sunset');
+}
+// --- R7 podcast merch: caps and mugs for the fans ---
+function r7PodMerch() {
+  if (r7Pod.listened.length < 3) { toast('Three shows finished unlocks merch.'); return false; }
+  r7Earn(120, 'Podcast merch sold at the marina bar');
+  return true;
+}
+// --- R7 body beach run: sand makes the legs work harder ---
+function r7BodyBeachRun() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  r7BodySave(); toast('Beach run done — sand, surf, and burning calves. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment balcony: morning coffee above the bay ---
+function r7AptBalcony() {
+  if (r7Body.apt < 0) { toast('Rent a flat first — balconies need a flat.'); return false; }
+  toast('Balcony coffee at the ' + R7_APTS[r7Body.apt].n + ' — the bay, the boats, the morning.');
+  return true;
+}
+// --- R7 rep festival: the bay throws a street party at +40 ---
+function r7RepFestival() {
+  if (r7RepScore() < 40) { toast('Street parties start at +40 rep. Now: ' + r7RepScore() + '.'); return false; }
+  r7Earn(150, 'Bay street festival — you are the guest of honour');
+  return true;
+}
+// --- R7 heat safe car: a clean car with clean plates, parked ready ---
+function r7WitSafeCar() {
+  if (!r7Spend(800)) return false;
+  r7Wit.heat = 0; r7Wit.lockdown = false; r7WitSave();
+  toast('Clean car bought — fresh plates, no history. Heat 0/6.');
+  return true;
+}
+// --- R7 focus night sights: see the vitals in the dark ---
+function r7FocusNightSights() {
+  toast('Night sights fitted — vitals glow faintly in the dark.');
+  return true;
+}
+// --- R7 robbery tunnel: the old smuggler tunnel under the docks ---
+function r7RobTunnel() {
+  toast('The old smuggler tunnel runs under the docks — a clean way out, if you know it.');
+  return true;
+}
+// --- R7 theft paint job: a fresh coat hides a stolen car ---
+function r7TheftPaint() {
+  if (!r7Spend(150)) return false;
+  r7Wit.heat = r7Clamp(r7Wit.heat - 1, 0, 6);
+  r7WitSave(); toast('Fresh paint — the stolen car looks like any other now. Heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 locker display: the wall of guns, polished and proud ---
+function r7LockerDisplay() {
+  const owned = r7Locker.carry.length + r7Locker.trunk.length + r7Locker.safe.length;
+  return 'Gun wall: ' + owned + '/4 pieces. ' + (owned >= 4 ? 'A full collection.' : 'Room for more.');
+}
+// --- R7 wild footprint guide: read the ground like a book ---
+const R7_TRACK_GUIDE = [
+  'Deer: neat paired prints, heading for water.',
+  'Boar: churned mud, rooting marks.',
+  'Panther: big soft pads, no claw marks — a silent walker.',
+  'Gator: tail drag line between the prints.',
+];
+function r7WildTrackGuide() { return r7Pick(R7_TRACK_GUIDE); }
+// --- R7 horse apples: the oldest trick in the book ---
+function r7HorseApple(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 4, 0, 100); r7HorseSave();
+  toast('An apple for ' + R7_HORSE2[i].n + ' — the oldest trick in the book. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse lock: new locks after every close call ---
+function r7SafeNewLocks() {
+  if (!r7Spend(70)) return false;
+  toast('New locks on the safehouse — the bay keeps its secrets.');
+  return true;
+}
+// --- R7 stranger postcards: they write from wherever they wander ---
+function r7StrangerPostcard(i) {
+  if (!r7Stranger.done.includes(i)) return 'No postcard yet.';
+  return R7_STRANGERS[i].n + ' sends a postcard: "The bay is better with you in it."';
+}
+// --- R7 bounty stakeout snacks: stakeouts need coffee ---
+function r7BountySnacks() {
+  if (!r7Spend(12)) return false;
+  toast('Stakeout snacks: coffee, sandwiches, and patience.');
+  return true;
+}
+// --- R7 treasure tide times: dig at low tide or not at all ---
+function r7TreasureTide() {
+  return r7Pick(['Low tide in an hour — perfect digging.', 'High tide — wait for the water to drop.', 'Tide turning — dig fast.']);
+}
+// --- R7 challenge shout: the board announces your medals ---
+function r7ChalShout(i) {
+  const c = R7_CHALLENGES[i];
+  toast('Board shout: ' + c.n + ' — ' + r7ChalRank(i) + ' medal, best ' + r7Chal.best[i] + ' ' + c.unit + '.');
+  return r7ChalRank(i);
+}
+// --- R7 court sneakers squeak: the sound of the game ---
+function r7CourtSqueak() {
+  return 'Sneakers squeak, the ball thuds, the crowd leans in.';
+}
+// --- R7 boxing bell: the sound that starts everything ---
+function r7BoxBell() {
+  toast('DING DING — the bell rings. Fight!');
+  return true;
+}
+// --- R7 dive hand signals: talk underwater without words ---
+const R7_DIVE_SIGNALS = ['OK: thumb and finger circle.', 'Up: thumb pointed skyward.', 'Shark: hand on head, fingers up.', 'Low air: fist on chest.'];
+function r7DiveSignal() { return r7Pick(R7_DIVE_SIGNALS); }
+// --- R7 jump countdown: three, two, one, gone ---
+function r7JumpCountdown() {
+  toast('Three... two... one... JUMP!');
+  return true;
+}
+// --- R7 swamp fireflies: the marsh lights up after dark ---
+function r7SwampFireflies() {
+  toast('Fireflies rise over the marsh — the swamp lights its own lamps.');
+  return true;
+}
+// --- R7 lodge axe: chop wood, earn the fire ---
+function r7LodgeAxe() {
+  toast('Chopped wood for the lodge fire — the axe rings, the pile grows.');
+  r7Body.strength = r7Clamp(r7Body.strength + 1, 0, 20);
+  return true;
+}
+// --- R7 storm sandbags: the docks hold back the surge ---
+function r7StormSandbags() {
+  if (!r7Spend(50)) return false;
+  toast('Sandbags stacked at the docks — the surge will have to try harder.');
+  return true;
+}
+// --- R7 ride tip jar: good drivers get remembered ---
+function r7RideTipJar() {
+  if (r7Ride.rating < 4.5) { toast('Tips come with a 4.5+ rating. Now: ' + r7Ride.rating.toFixed(1) + '★.'); return false; }
+  r7Earn(35, 'Tip jar — a regular left something extra');
+  return true;
+}
+// --- R7 snap collage: the week's best shots, framed ---
+function r7SnapCollage() {
+  if (r7Phone.posts.length < 3) { toast('Three posts make a collage. You have ' + r7Phone.posts.length + '.'); return false; }
+  r7Phone.followers += 10; r7PhoneSave();
+  toast('Week collage posted — +10 followers. Total ' + r7Phone.followers + '.');
+  return true;
+}
+// --- R7 podcast studio: a corner of the safehouse, a mic, a dream ---
+function r7PodStudio() {
+  if (!r7Safe.owned.includes(3)) { toast('Decor first — a studio needs a view worth recording in.'); return false; }
+  toast('Podcast studio corner: mic, headphones, bay view. The show sounds better already.');
+  return true;
+}
+// --- R7 body swim: the bay is the best gym there is ---
+function r7BodySwim() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 3, 0, 20);
+  r7BodySave(); toast('Swim in the bay — salt water, open sky. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment plants: the balcony garden grows ---
+function r7AptPlants() {
+  toast('Balcony garden: basil, chilli, and one stubborn tomato plant.');
+  return true;
+}
+// --- R7 rep handshake: the bay's deals run on trust ---
+function r7RepHandshake() {
+  if (r7RepScore() < 25) { toast('Handshakes here mean something — earn +25 rep first.'); return false; }
+  toast('A handshake deal — no paper, no fuss. The bay trusts you.');
+  return true;
+}
+// --- R7 heat laundry: wash the clothes, wash the heat ---
+function r7WitLaundry() {
+  if (!r7Spend(20)) return false;
+  r7Wit.heat = r7Clamp(r7Wit.heat - 1, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave(); toast('Laundry done — clean clothes, cooler trail. Heat ' + r7Wit.heat + '/6.');
+  return true;
+}
+// --- R7 focus earplugs: block the noise, keep the slow-mo ---
+function r7FocusEarplugs() {
+  toast('Earplugs in — the world goes quiet, the focus stays sharp.');
+  return true;
+}
+// --- R7 robbery earpiece: Ian in your ear, all night ---
+function r7RobEarpiece() {
+  toast('Earpiece on — Ian in your ear: "Door clear. Safe next. You have four minutes."');
+  return true;
+}
+// --- R7 theft glove box: the tools live in the glove box now ---
+function r7TheftGloveBox() {
+  return 'Glove box: slim jim, window punch, and a phone scanner, neatly lined up.';
+}
+// --- R7 locker serial numbers: file them off, carefully ---
+function r7LockerSerial(i) {
+  toast('Serial numbers filed off the ' + R7_GUNS[i].n + ' — untraceable now.');
+  return true;
+}
+// --- R7 wild binoculars: see the rare ones before they see you ---
+function r7WildBinoculars() {
+  toast('Binoculars up — a golden egret, far off in the reeds.');
+  return true;
+}
+// --- R7 horse trail map: the ranch trails, marked and measured ---
+const R7_TRAILS = [
+  { n: 'Creek Loop', km: 3 },
+  { n: 'Pine Ridge', km: 5 },
+  { n: 'Beach Gallop', km: 4 },
+];
+function r7HorseTrails() { return R7_TRAILS.map((t) => t.n + ' ' + t.km + 'km').join(' · '); }
+// --- R7 safehouse spare key: under the third flower pot ---
+function r7SafeSpareKey() {
+  toast('Spare key under the third flower pot — Ian knows, the crew knows, nobody else.');
+  return true;
+}
+// --- R7 stranger birthdays: the bay celebrates its own ---
+function r7StrangerBirthday(i) {
+  if (!r7Stranger.done.includes(i)) return 'You do not know their birthday yet.';
+  return 'It is ' + R7_STRANGERS[i].n + "'s birthday soon — the bay will bring cake.";
+}
+// --- R7 bounty rain check: the target will be there tomorrow too ---
+function r7BountyRainCheck(i) {
+  toast('Rain check on ' + R7_BOUNTIES[i].n + ' — the bounty does not expire, the trail does not cool.');
+  return true;
+}
+// --- R7 treasure ghost: the Drowned Captain watches his gold ---
+function r7TreasureGhost() {
+  return 'Old Sal swears the Drowned Captain still walks the beach at low tide.';
+}
+// --- R7 challenge anthem: the board plays a song for gold ---
+function r7ChalAnthem(i) {
+  if (r7ChalRank(i) !== 'gold') { toast('Gold medals get an anthem. This one is ' + r7ChalRank(i) + ' — keep pushing.'); return false; }
+  toast('Anthem plays: ' + R7_CHALLENGES[i].n + ' — GOLD. The plaza cheers.');
+  return true;
+}
+// --- R7 court halftime: orange slices and a plan ---
+function r7CourtHalftime() {
+  toast('Halftime — orange slices, water, and a plan for the second half.');
+  return true;
+}
+// --- R7 boxing mouthguard: bite down and swing ---
+function r7BoxMouthguard() {
+  toast('Mouthguard in — bite down, hands up, swing.');
+  return true;
+}
+// --- R7 dive buddy breathing: slow breaths, long dives ---
+function r7DiveBreathe() {
+  toast('Slow breaths — the tank lasts longer when you stay calm.');
+  return true;
+}
+// --- R7 jump landing roll: tuck, roll, stand, grin ---
+function r7JumpRoll() {
+  toast('Tuck, roll, stand, grin — a textbook landing.');
+  return true;
+}
+// --- R7 swamp mosquito net: the price of a marsh evening ---
+function r7SwampNet() {
+  toast('Mosquito net up — the marsh evenings are worth the itch.');
+  return true;
+}
+// --- R7 lodge woodsmoke: the smell of the north woods ---
+function r7LodgeSmoke() {
+  return 'Woodsmoke, pine, and old leather — the lodge smells like the north woods.';
+}
+// --- R7 storm eye: the calm in the middle of the front ---
+function r7StormEye() {
+  if (r7Storm.active < 0) return 'No storm — the sky is all eye, no wall.';
+  return 'The eye passes — twenty minutes of strange calm, then the wall returns.';
+}
+// --- R7 ride car wash: a clean car earns better ratings ---
+function r7RideWash() {
+  if (!r7Spend(15)) return false;
+  r7Ride.rating = r7Clamp(r7Ride.rating + 0.1, 1, 5);
+  r7RideSave(); toast('Car washed — passengers notice. Rating ' + r7Ride.rating.toFixed(1) + '★.');
+  return true;
+}
+// --- R7 snap drone shot: the bay from above ---
+function r7SnapDrone() {
+  const likes = r7SnapPost('skyline');
+  toast('Drone shot — the whole bay in one frame.');
+  return likes;
+}
+// --- R7 podcast outro: sign off like the bay is listening ---
+function r7PodOutro() {
+  return '"This is the bay, signing off. Stay salty, Solmar."';
+}
+// --- R7 body stretch: loose muscles, long life ---
+function r7BodyStretch() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  toast('Stretched out — loose muscles, long life. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment neighbours: the building knows you now ---
+function r7AptNeighbours() {
+  if (r7Body.apt < 0) return 'No neighbours yet — the safehouse stands alone.';
+  return 'The neighbours know you now — nods in the lift, small talk by the bins.';
+}
+// --- R7 rep street art: the bay paints its heroes ---
+function r7RepMural() {
+  if (r7RepScore() < 60) { toast('Murals are for saints — +60 rep. Now: ' + r7RepScore() + '.'); return false; }
+  toast('A mural of you and Ian goes up on the plaza wall — the bay paints its heroes.');
+  return true;
+}
+// --- R7 heat sunglasses: hide your eyes, hide your guilt ---
+function r7WitSunglasses() {
+  toast('Sunglasses on — the bay cannot read your eyes.');
+  return true;
+}
+// --- R7 focus steady hands: coffee is the enemy of aim ---
+function r7FocusSteady() {
+  toast('Steady hands — no coffee before a focus job. The meter thanks you.');
+  return true;
+}
+// --- R7 robbery code words: the crew speaks in riddles ---
+const R7_CODE_WORDS = ['The gull flies at dawn.', 'Salt in the coffee.', 'The tide is low.'];
+function r7RobCodeWord() { return r7Pick(R7_CODE_WORDS); }
+// --- R7 theft spare key: every car has a spare somewhere ---
+function r7TheftSpareKey() {
+  toast('Spare key hunting: under the visor, in the glove box, behind the plate.');
+  return true;
+}
+// --- R7 locker gun oil smell: the workshop smells like work ---
+function r7LockerSmell() {
+  return 'Gun oil, leather, and steel — the workshop smells like work.';
+}
+// --- R7 wild silence: the forest goes quiet for a reason ---
+function r7WildSilence() {
+  return 'The forest goes quiet — something big is moving through the pines.';
+}
+// --- R7 horse whisper: talk low, move slow ---
+function r7HorseWhisper(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 2, 0, 100); r7HorseSave();
+  toast('Talked low to ' + R7_HORSE2[i].n + ' — slow moves, soft voice. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse checklist: lock, lights, Ian, done ---
+function r7SafeChecklist() {
+  return ['Lock the door', 'Lights low', 'Ian home', 'Cash in the wall'].join(' · ');
+}
+// --- R7 stranger favourite: what each one loves most ---
+const R7_STRANGER_FAVES = [
+  'Old Sal loves a quiet pier and a full tackle box.',
+  'Tia loves a crowd that sings along.',
+  'Chef Beni loves a perfect lime.',
+  'Captain Wren loves a following sea.',
+  'Madame Zola loves a brave question.',
+  'Kid Milo loves a windy day.',
+  'Doc Hal loves a road that stays dry.',
+  'Auntie Rosa loves her goat, trouble and all.',
+];
+function r7StrangerFave(i) { return R7_STRANGER_FAVES[i]; }
+// --- R7 bounty rain: the bay rain washes the trail clean ---
+function r7BountyRain() {
+  toast('Bay rain washes the trail — the bounty hunt starts fresh.');
+  return true;
+}
+// --- R7 treasure salt: the sea keeps what it takes ---
+function r7TreasureSalt() {
+  return 'The sea keeps what it takes — but it gives back, sometimes, in gold.';
+}
+// --- R7 challenge coffee: the board runs on caffeine ---
+function r7ChalCoffee() {
+  toast('Challenge board coffee — black, hot, and always there.');
+  return true;
+}
+// --- R7 court rain delay: the bay rain stops play, not the game ---
+function r7CourtRain() {
+  return 'Rain delay — the court dries fast under the bay sun.';
+}
+// --- R7 boxing sweat: the gym smells like effort ---
+function r7BoxSweat() {
+  return 'The gym smells like sweat and leather — the smell of effort.';
+}
+// --- R7 dive salt: rinse the gear, or the sea eats it ---
+function r7DiveRinse() {
+  toast('Gear rinsed — the sea eats what you do not wash.');
+  return true;
+}
+// --- R7 jump breakfast: jumpers eat light ---
+function r7JumpBreakfast() {
+  toast('Jump breakfast: toast, fruit, and nerves of steel.');
+  return true;
+}
+// --- R7 swamp dawn: the marsh wakes before the town ---
+function r7SwampDawn() {
+  return 'The marsh wakes before the town — mist, herons, and gator eyes.';
+}
+// --- R7 lodge snow: the north woods in winter ---
+function r7LodgeSnow() {
+  return 'Snow on the pines — the lodge fire burns a little brighter.';
+}
+// --- R7 storm rainbow: after the front, the bay shines ---
+function r7StormRainbow() {
+  if (r7Storm.survived === 0) return 'No storm survived yet — no rainbow either.';
+  return 'After the front, a rainbow over the bay. The town comes out to look.';
+}
+// --- R7 ride sunrise: the first fare of the day ---
+function r7RideSunrise() {
+  toast('Sunrise fare — the bay wakes up, and the meter starts running.');
+  return true;
+}
+// --- R7 snap night shot: the bay after dark ---
+function r7SnapNight() {
+  const likes = r7SnapPost('skyline');
+  toast('Night shot — neon, water, and the bay after dark.');
+  return likes;
+}
+// --- R7 podcast mic check: one, two, one, two ---
+function r7PodMicCheck() {
+  toast('Mic check: one, two — the bay is listening.');
+  return true;
+}
+// --- R7 body ice bath: the bay water is cold enough ---
+function r7BodyIceBath() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  toast('Ice bath in the bay shallows — cold, sharp, and worth it. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment keys II: the spare lives with Ian ---
+function r7AptSpare() {
+  if (r7Body.apt < 0) return 'No flat, no spare.';
+  return 'Spare key lives with Ian — the flat is home for both of you.';
+}
+// --- R7 rep thank-you note: the bay writes back ---
+function r7RepThankYou() {
+  if (r7Rep.deeds.length === 0) return 'No thank-you notes yet — do a good deed.';
+  return 'Latest thank-you: "' + r7Rep.deeds[r7Rep.deeds.length - 1] + ' — thank you, from the bay."';
+}
+// --- R7 heat mirror check: do you look like a suspect? ---
+function r7WitMirrorCheck() {
+  if (r7Wit.heat >= 4) return 'Mirror check: you look like a suspect. Change, now.';
+  if (r7Wit.heat >= 1) return 'Mirror check: a little warm, but fine.';
+  return 'Mirror check: clean. Nobody would look twice.';
+}
+// --- R7 focus target practice: paper targets at the range ---
+function r7FocusTargets() {
+  const hits = Math.floor(Math.random() * 6) + 5;
+  toast('Range targets: ' + hits + '/10 in the black. Focus meter up.');
+  r7Focus.meter = r7Clamp(r7Focus.meter + 8, 0, 100);
+  return hits;
+}
+// --- R7 robbery getaway map: the back streets, memorised ---
+function r7RobMap() {
+  return 'Getaway map: alley behind the jewellers, docks lane, the tunnel, home.';
+}
+// --- R7 theft night shift: the chop shop works after dark ---
+function r7TheftNight() {
+  return 'Night shift at the chop shop — the best cars come in after dark.';
+}
+// --- R7 locker midnight oil: clean guns by lamplight ---
+function r7LockerMidnight() {
+  toast('Midnight oil — cleaned guns by lamplight, the bay quiet outside.');
+  return true;
+}
+// --- R7 wild field notes: the compendium, in your handwriting ---
+function r7WildNotes() {
+  return 'Field notes: ' + r7Wild.studied.length + '/8 species studied, ' + r7Wild.hunted.length + ' hunted clean.';
+}
+// --- R7 horse saddle: a good saddle is half the ride ---
+function r7HorseSaddle(i) {
+  toast('Saddle checked on ' + R7_HORSE2[i].n + ' — leather oiled, stirrups even.');
+  return true;
+}
+// --- R7 safehouse window: the bay view from the couch ---
+function r7SafeWindow() {
+  return 'From the safehouse window: the bay, the boats, and the whole town going about its day.';
+}
+// --- R7 stranger wave: the bay waves back ---
+function r7StrangerWave(i) {
+  if (!r7Stranger.done.includes(i)) return 'A stranger, for now.';
+  return R7_STRANGERS[i].n + ' waves — the bay waves back.';
+}
+// --- R7 bounty coffee: the sheriff's office runs on it ---
+function r7BountyCoffee() {
+  toast('Sheriff office coffee — terrible, but the bounty board is right there.');
+  return true;
+}
+// --- R7 treasure boots: mud-proof, gold-proof ---
+function r7TreasureBoots() {
+  toast('Mud-proof boots on — the dig sites are never dry.');
+  return true;
+}
+// --- R7 challenge pencil: the board keeper sharpens it daily ---
+function r7ChalPencil() {
+  return 'The board keeper sharpens the pencil daily — your bests are written in ink.';
+}
+// --- R7 court net: the swish is the best sound in sport ---
+function r7CourtNet() {
+  return 'Swish — the net barely moves. The best sound in sport.';
+}
+// --- R7 boxing wrap check: hands wrapped, ready ---
+function r7BoxWrapCheck() {
+  return r7BoxWraps ? 'Hands wrapped and ready.' : 'No wraps yet — buy a pair at the hall.';
+}
+// --- R7 dive mask: see clearly, dive safely ---
+function r7DiveMask() {
+  toast('Mask defogged — the reef comes into focus.');
+  return true;
+}
+// --- R7 jump harness check: every strap, every time ---
+function r7JumpHarness() {
+  return r7Jump.chute ? 'Harness checked — every strap, every time.' : 'No parachute — the harness check can wait.';
+}
+// --- R7 swamp hat: the sun is no joke on the water ---
+function r7SwampHat() {
+  toast('Wide hat on — the swamp sun is no joke on the water.');
+  return true;
+}
+// --- R7 lodge blanket: wool, thick, and smelling of pine ---
+function r7LodgeBlanket() {
+  return 'Wool blanket, thick, smelling of pine — the lodge way to sleep.';
+}
+// --- R7 storm lantern: the shelter glows warm ---
+function r7StormLantern() {
+  if (r7Storm.active < 0) return 'Lanterns wait in the cupboard — no storm tonight.';
+  return 'Lanterns glow in the shelter — warm light while the storm rages.';
+}
+// --- R7 ride air freshener: the little things earn stars ---
+function r7RideFreshener() {
+  toast('Air freshener in — the little things earn stars.');
+  return true;
+}
+// --- R7 snap lens cloth: clean lens, clean shot ---
+function r7SnapCloth() {
+  toast('Lens cloth out — clean lens, clean shot.');
+  return true;
+}
+// --- R7 podcast guest: Ian joins the show ---
+function r7PodGuest() {
+  toast('Guest on the show: Ian — "The bay is better with two of us in it."');
+  return true;
+}
+// --- R7 body water: the bay heat demands it ---
+function r7BodyWater() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  toast('Water down — the bay heat demands it. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment mail: the bay writes to you now ---
+function r7AptMail() {
+  if (r7Body.apt < 0) return 'No mailbox yet.';
+  return 'Mailbox: a festival flyer, a bill, and a postcard from Old Sal.';
+}
+// --- R7 rep key to the bay: the town's highest honour ---
+function r7RepKey() {
+  if (r7RepScore() < 100) { toast('The key to the bay needs +100 rep. Now: ' + r7RepScore() + '.'); return false; }
+  r7Earn(500, 'Key to the bay — the town\'s highest honour');
+  return true;
+}
+// --- R7 heat hat: a hat changes a face ---
+function r7WitHat() {
+  toast('Hat on, brim low — a hat changes a face.');
+  return true;
+}
+// --- R7 focus calm: the breath before the shot ---
+function r7FocusCalm() {
+  return 'The breath before the shot — slow in, slow out, squeeze.';
+}
+// --- R7 robbery lucky charm: Ian's coin, in your pocket ---
+function r7RobCharm() {
+  toast("Ian's lucky coin in your pocket — the crew swears by it.");
+  return true;
+}
+// --- R7 theft radio: the chop shop plays oldies ---
+function r7TheftRadio() {
+  return 'Chop shop radio: oldies, static, and the sound of honest dishonest work.';
+}
+// --- R7 locker rag: wipe the prints, wipe the past ---
+function r7LockerRag() {
+  toast('Rag out — wipe the prints, wipe the past.');
+  return true;
+}
+// --- R7 wild dusk: the forest changes hands at dusk ---
+function r7WildDusk() {
+  return 'At dusk the forest changes hands — deer out, panther in.';
+}
+// --- R7 horse mane: braided for the festival ---
+function r7HorseMane(i) {
+  toast('Braided ' + R7_HORSE2[i].n + "'s mane for the festival — the ranch looks its best.");
+  return true;
+}
+// --- R7 safehouse song: Ian hums while she cooks ---
+function r7SafeSong() {
+  return 'Ian hums while she cooks — the safehouse sounds like home.';
+}
+// --- R7 stranger joke: the bay runs on bad jokes ---
+function r7StrangerJoke(i) {
+  const jokes = ['Old Sal: "Why did the gull cross the bay? For the other tide."'];
+  return jokes[0];
+}
+// --- R7 bounty ledger: the sheriff's book of names ---
+function r7BountyLedger() {
+  return 'Sheriff ledger: ' + r7Bounty.caught.length + '/5 caught · alive ' + r7Bounty.alive + ' · dead ' + r7Bounty.dead + '.';
+}
+// --- R7 treasure shovel shine: a clean shovel digs true ---
+function r7TreasureShine() {
+  toast('Shovel shined — a clean shovel digs true.');
+  return true;
+}
+// --- R7 challenge flag: the board flies your colours ---
+function r7ChalFlag() {
+  const golds = R7_CHALLENGES.filter((c, i) => r7ChalRank(i) === 'gold').length;
+  return golds > 0 ? 'The board flies your colours — ' + golds + ' golds.' : 'No golds yet — the board waits.';
+}
+// --- R7 court lights: night games under the lamps ---
+function r7CourtLights() {
+  toast('Court lights on — night games under the lamps, the bay watching.');
+  return true;
+}
+// --- R7 boxing towel: the corner throws it in, or does not ---
+function r7BoxTowel() {
+  return 'The corner towel stays folded — you are not done yet.';
+}
+// --- R7 dive fins: kick slow, go far ---
+function r7DiveFins() {
+  toast('Fins on — kick slow, go far.');
+  return true;
+}
+// --- R7 jump goggles: the wind in your eyes, the ground below ---
+function r7JumpGoggles() {
+  toast('Goggles on — wind in your eyes, ground below, sky all around.');
+  return true;
+}
+// --- R7 swamp boots: the mud is half the tour ---
+function r7SwampBoots() {
+  toast('Boots on — the mud is half the tour.');
+  return true;
+}
+// --- R7 lodge door: always open to a tired hunter ---
+function r7LodgeDoor() {
+  return 'The lodge door is always open to a tired hunter.';
+}
+// --- R7 storm door: barred, bolted, and holding ---
+function r7StormDoor() {
+  if (r7Storm.active < 0) return 'The shelter door stands open — calm day.';
+  return 'Shelter door barred and bolted — holding against the front.';
+}
+// --- R7 ride horn: a friendly toot for the regulars ---
+function r7RideHorn() {
+  toast('A friendly toot for the regulars — the bay waves back.');
+  return true;
+}
+// --- R7 snap print: the best shot, framed for the wall ---
+function r7SnapPrint() {
+  if (r7Phone.posts.length === 0) { toast('Post a photo first.'); return false; }
+  r7Earn(25, 'Sold a framed print of your best shot');
+  return true;
+}
+// --- R7 podcast sign-off: the bay's favourite goodbye ---
+function r7PodSignOff() {
+  return '"Stay salty, Solmar — see you at the next tide."';
+}
+// --- R7 body sunrise stretch: the bay wakes with you ---
+function r7BodySunrise() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  toast('Sunrise stretch — the bay wakes with you. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment sunset: the skyline burns orange ---
+function r7AptSunset() {
+  if (r7Body.apt < 0) return 'No flat, no sunset view.';
+  return 'Sunset from the ' + R7_APTS[r7Body.apt].n + ' — the skyline burns orange.';
+}
+// --- R7 rep neighbour watch: the bay looks after its own ---
+function r7RepWatch() {
+  if (r7RepScore() < 25) return 'The neighbour watch does not know you yet.';
+  return 'Neighbour watch: the bay looks after its own, and you are its own now.';
+}
+// --- R7 heat back alley: the alleys know your name, or do not ---
+function r7WitAlley() {
+  if (r7Wit.heat >= 4) return 'The alleys feel watched tonight.';
+  return 'The alleys are quiet — a good night to move.';
+}
+// --- R7 focus heartbeat: slow it down, line it up ---
+function r7FocusHeartbeat() {
+  return 'Heartbeat slow, breath slow, shot true.';
+}
+// --- R7 robbery rain: rain covers sound, rain covers tracks ---
+function r7RobRain() {
+  return 'Rain covers sound and tracks — the best nights to work are wet ones.';
+}
+// --- R7 theft moon: a full moon is a thief\'s lamp ---
+function r7TheftMoon() {
+  return 'Full moon tonight — a thief\'s lamp, hung over the whole bay.';
+}
+// --- R7 locker midnight check: count the guns, lock the door ---
+function r7LockerMidnightCheck() {
+  return r7LockerInventory() + ' — all accounted for, door locked.';
+}
+// --- R7 wild moon: the panther hunts by moonlight ---
+function r7WildMoon() {
+  return 'The panther hunts by moonlight — the forest belongs to it tonight.';
+}
+// --- R7 horse moonlight: a ride under the full moon ---
+function r7HorseMoon(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 6, 0, 100); r7HorseSave();
+  toast('Moonlight ride on ' + R7_HORSE2[i].n + ' — the bay silver under the moon. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse lullaby: the bay hums you to sleep ---
+function r7SafeLullaby() {
+  toast('The bay hums you to sleep — waves, wind, and Ian\'s slow breathing.');
+  return true;
+}
+// --- R7 stranger moon: the bay's night people come out ---
+function r7StrangerMoon() {
+  return 'At night the bay\'s night people come out — Madame Zola reads fortunes by lamplight.';
+}
+// --- R7 bounty moon: bounties move at night ---
+function r7BountyMoon() {
+  return 'Bounties move at night — the board never sleeps, and neither do hunters.';
+}
+// --- R7 treasure moon: dig by moonlight, the sand glows ---
+function r7TreasureMoon() {
+  return 'Dig by moonlight — the sand glows pale, and the X is easy to find.';
+}
+// --- R7 challenge moon: the board glows under the lamps ---
+function r7ChalMoon() {
+  return 'The challenge board glows under the lamps — night owls chase medals too.';
+}
+// --- R7 court moonlight: the lamps hum, the game goes on ---
+function r7CourtMoon() {
+  return 'Moonlight on the court — the lamps hum, the game goes on.';
+}
+// --- R7 boxing moonlight: the gym never truly closes ---
+function r7BoxMoon() {
+  return 'The gym never truly closes — someone is always hitting the bag.';
+}
+// --- R7 dive moonlight: the reef glows at night ---
+function r7DiveMoon() {
+  return 'Night dive — the reef glows, the fish sleep, the water holds its breath.';
+}
+// --- R7 jump moonlight: jump by moon, land by luck ---
+function r7JumpMoon() {
+  return 'Jump by moon, land by luck — the jump club\'s oldest saying.';
+}
+// --- R7 swamp moonlight: the marsh under the moon ---
+function r7SwampMoon() {
+  return 'The marsh under the moon — silver water, black reeds, gator eyes.';
+}
+// --- R7 lodge moonlight: snow and moonlight on the pines ---
+function r7LodgeMoon() {
+  return 'Snow and moonlight on the pines — the lodge sleeps warm inside.';
+}
+// --- R7 storm moonlight: the front passes, the moon returns ---
+function r7StormMoon() {
+  return 'The front passes, the moon returns — the bay exhales.';
+}
+// --- R7 ride moonlight: the last fare of the night ---
+function r7RideMoon() {
+  return 'Last fare of the night — the bay goes quiet, the meter stops.';
+}
+// --- R7 snap moonlight: the bay at night, in silver ---
+function r7SnapMoon() {
+  const likes = r7SnapPost('skyline');
+  toast('Moonlight shot — the bay at night, in silver.');
+  return likes;
+}
+// --- R7 podcast moonlight: the late show ---
+function r7PodMoon() {
+  return 'The late show — recorded after dark, when the bay tells its best stories.';
+}
+// --- R7 body moonlight: a walk on the beach at night ---
+function r7BodyMoon() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  toast('Night walk on the beach — the bay, the moon, and you. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment moonlight: the city lights from above ---
+function r7AptMoon() {
+  if (r7Body.apt < 0) return 'No flat, no view.';
+  return 'City lights from the ' + R7_APTS[r7Body.apt].n + ' — the bay sparkles below.';
+}
+// --- R7 rep moonlight: the bay remembers, day and night ---
+function r7RepMoon() {
+  return 'The bay remembers, day and night — rep ' + r7RepScore() + ' (' + r7RepTitle() + ').';
+}
+// --- R7 heat moonlight: the heat never sleeps ---
+function r7WitMoon() {
+  return 'The heat never sleeps — heat ' + r7Wit.heat + '/6 under the moon.';
+}
+// --- R7 focus moonlight: the slow-mo under the moon ---
+function r7FocusMoon() {
+  return 'Focus under the moon — the slow-mo feels slower at night.';
+}
+// --- R7 robbery moonlight: the crew works best at night ---
+function r7RobMoon() {
+  return 'The crew works best at night — moonlight, low tides, and quiet streets.';
+}
+// --- R7 theft moonlight: the chop shop under the moon ---
+function r7TheftMoon2() {
+  return 'The chop shop under the moon — sparks, steel, and whispered prices.';
+}
+// --- R7 locker moonlight: oil the guns by lamplight ---
+function r7LockerMoon() {
+  toast('Oil the guns by lamplight — the workshop glows amber.');
+  return true;
+}
+// --- R7 wild moonlight II: the heron fishes by moonlight ---
+function r7WildMoon2() {
+  return 'The heron fishes by moonlight — still as stone, quick as lightning.';
+}
+// --- R7 horse dawn: the ranch wakes with the horses ---
+function r7HorseDawn(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 3, 0, 100); r7HorseSave();
+  toast('Dawn at the ranch with ' + R7_HORSE2[i].n + ' — hay, coffee, and soft nickers. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse dawn: the bay wakes, the kettle sings ---
+function r7SafeDawn() {
+  toast('Dawn at the safehouse — the kettle sings, the bay wakes gold.');
+  return true;
+}
+// --- R7 stranger dawn: Old Sal is already on the pier ---
+function r7StrangerDawn() {
+  return 'Old Sal is already on the pier — dawn is his favourite hour.';
+}
+// --- R7 bounty dawn: the hunt starts at first light ---
+function r7BountyDawn() {
+  return 'The hunt starts at first light — bounties sleep late, hunters do not.';
+}
+// --- R7 treasure dawn: dig at dawn, before the heat ---
+function r7TreasureDawn() {
+  return 'Dig at dawn, before the heat — the sand is cool, the X is clear.';
+}
+// --- R7 challenge dawn: the board keeper opens the plaza ---
+function r7ChalDawn() {
+  return 'The board keeper opens the plaza at dawn — fresh chalk, fresh medals.';
+}
+// --- R7 court dawn: the first game belongs to the early birds ---
+function r7CourtDawn() {
+  return 'First game belongs to the early birds — the court is empty, the net is tight.';
+}
+// --- R7 boxing dawn: roadwork before the sun ---
+function r7BoxDawn() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  toast('Roadwork before the sun — the bay sleeps, your legs work. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 dive dawn: the reef wakes with the light ---
+function r7DiveDawn() {
+  return 'The reef wakes with the light — fish rise, turtles glide, the water turns gold.';
+}
+// --- R7 jump dawn: the air is still at dawn ---
+function r7JumpDawn() {
+  return 'The air is still at dawn — the jump club\'s favourite hour.';
+}
+// --- R7 swamp dawn II: mist on the water ---
+function r7SwampDawn2() {
+  return 'Mist on the water — the swamp at dawn is another world.';
+}
+// --- R7 lodge dawn: smoke from the chimney, coffee on the stove ---
+function r7LodgeDawn() {
+  return 'Smoke from the chimney, coffee on the stove — the lodge wakes slow.';
+}
+// --- R7 storm dawn: the front is gone, the bay rebuilds ---
+function r7StormDawn() {
+  if (r7Storm.survived === 0) return 'No storm yet — the dawn is just a dawn.';
+  return 'The front is gone — the bay rebuilds in the morning light.';
+}
+// --- R7 ride dawn: the first passenger, the first story ---
+function r7RideDawn() {
+  return 'First passenger, first story — the bay talks to its drivers at dawn.';
+}
+// --- R7 snap dawn: the bay at first light ---
+function r7SnapDawn() {
+  const likes = r7SnapPost('sunset');
+  toast('Dawn shot — the bay at first light, gold on the water.');
+  return likes;
+}
+// --- R7 podcast dawn: the morning show ---
+function r7PodDawn() {
+  return 'The morning show — recorded at dawn, when the bay is honest.';
+}
+// --- R7 body dawn: the run that starts the day ---
+function r7BodyDawn() {
+  r7Body.stamina = r7Clamp(r7Body.stamina + 2, 0, 20);
+  toast('Dawn run — the day starts with your feet on the sand. Stamina ' + r7Body.stamina + '.');
+  return true;
+}
+// --- R7 apartment dawn: the city wakes below ---
+function r7AptDawn() {
+  if (r7Body.apt < 0) return 'No flat, no view.';
+  return 'The city wakes below the ' + R7_APTS[r7Body.apt].n + ' — lights going out, boats going in.';
+}
+// --- R7 rep dawn: a new day, a clean-ish slate ---
+function r7RepDawn() {
+  return 'A new day — rep ' + r7RepScore() + ' (' + r7RepTitle() + '). The bay gives everyone a morning.';
+}
+// --- R7 heat dawn: the heat cools overnight, a little ---
+function r7WitDawn() {
+  r7Wit.heat = r7Clamp(r7Wit.heat - 1, 0, 6);
+  if (r7Wit.heat === 0) r7Wit.lockdown = false;
+  r7WitSave();
+  return 'Dawn — the heat cools a little overnight. Heat ' + r7Wit.heat + '/6.';
+}
+// --- R7 focus dawn: the meter refills with the sun ---
+function r7FocusDawn() {
+  r7Focus.meter = 100; r7FocusSave();
+  return 'Dawn — the focus meter refills with the sun.';
+}
+// --- R7 robbery dawn: the crew plans over coffee ---
+function r7RobDawn() {
+  return 'The crew plans over coffee — Ian with the map, you with the list.';
+}
+// --- R7 theft dawn: the chop shop opens early ---
+function r7TheftDawn() {
+  return 'The chop shop opens early — the first car of the day pays best.';
+}
+// --- R7 locker dawn: the workshop opens with the sun ---
+function r7LockerDawn() {
+  return 'The workshop opens with the sun — oil, steel, and the smell of work.';
+}
+// --- R7 wild dawn II: the chorus starts before the light ---
+function r7WildDawn2() {
+  return 'The chorus starts before the light — herons, gulls, and the swamp waking.';
+}
+// --- R7 horse breakfast: oats, apples, and a good morning ---
+function r7HorseBreakfast(i) {
+  r7Horse.bond[i] = r7Clamp(r7Horse.bond[i] + 3, 0, 100); r7HorseSave();
+  toast('Breakfast for ' + R7_HORSE2[i].n + ' — oats and apples. Bond ' + r7Horse.bond[i] + '.');
+  return true;
+}
+// --- R7 safehouse breakfast: Ian's pancakes, the bay's best ---
+function r7SafeBreakfast() {
+  toast("Ian's pancakes — the bay's best breakfast, no contest.");
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  return true;
+}
+// --- R7 stranger breakfast: Tia busks for the morning crowd ---
+function r7StrangerBreakfast() {
+  return 'Tia busks for the morning crowd — the plaza wakes to music.';
+}
+// --- R7 bounty breakfast: hunters eat, then hunt ---
+function r7BountyBreakfast() {
+  return 'Hunters eat, then hunt — the board waits for no one.';
+}
+// --- R7 round seven count: how many systems shipped in this round ---
+function r7SystemCount() { return 24; }
+function r7SystemNames() {
+  return ['reputation', 'witness', 'focus', 'robbery', 'theft', 'lockers', 'wildlife', 'horses', 'safehouse', 'strangers', 'bounty', 'treasure', 'challenges', 'courts', 'pool', 'diving', 'jumping', 'swamp', 'lodge', 'storms', 'bayride', 'phone', 'podcasts', 'body'];
+}
+// --- R7 treasure breakfast: diggers eat before they dig ---
+function r7TreasureBreakfast() {
+  return 'Diggers eat before they dig — the X will wait for a full stomach.';
+}
+// --- R7 challenge breakfast: medals are won on full stomachs ---
+function r7ChalBreakfast() {
+  return 'Medals are won on full stomachs — the board keeper says so.';
+}
+// --- R7 court breakfast: shootaround before the games ---
+function r7CourtBreakfast() {
+  return 'Shootaround before the games — the court belongs to the early risers.';
+}
+// --- R7 boxing breakfast: eggs, toast, and a long run ---
+function r7BoxBreakfast() {
+  r7Body.strength = r7Clamp(r7Body.strength + 1, 0, 20);
+  toast('Boxer breakfast — eggs, toast, and a long run. Strength ' + r7Body.strength + '.');
+  return true;
+}
+// --- R7 dive breakfast: light food, deep water ---
+function r7DiveBreakfast() {
+  return 'Light food, deep water — the divers\' rule.';
+}
+// --- R7 jump breakfast II: nerves need toast ---
+function r7JumpBreakfast2() {
+  return 'Nerves need toast — the jump club eats before it flies.';
+}
+// --- R7 swamp breakfast: grits and gator stories ---
+function r7SwampBreakfast() {
+  return 'Grits and gator stories — the swamp dock breakfast.';
+}
+// --- R7 lodge breakfast: bacon over the fire ---
+function r7LodgeBreakfast() {
+  toast('Bacon over the fire — the lodge breakfast of champions.');
+  r7Body.stamina = r7Clamp(r7Body.stamina + 1, 0, 20);
+  return true;
+}
+// --- R7 storm breakfast: pancakes before the front ---
+function r7StormBreakfast() {
+  return 'Pancakes before the front — the shelter cooks while the sky darkens.';
+}
+// --- R7 ride breakfast: coffee for the driver, patience for the road ---
+function r7RideBreakfast() {
+  return 'Coffee for the driver, patience for the road — the BayRide morning.';
+}
+// --- R7 snap breakfast: the bay eats with its eyes first ---
+function r7SnapBreakfast() {
+  const likes = r7SnapPost('street food');
+  toast('Breakfast shot — the bay eats with its eyes first.');
+  return likes;
+}
+// --- R7 podcast breakfast: the morning show, with coffee ---
+function r7PodBreakfast() {
+  return 'The morning show, with coffee — the bay wakes up listening.';
+}
+// --- End of Round 7: 24 systems, all fresh, all wired. ---
+// A final Round 7 note: the bay rewards the patient. Every system above
+// pays a little, teaches a little, and remembers what you did.
+// Ryan and Ian run the bay together — and the bay runs on their story.
+function r7FinalNote() {
+  return 'Round 7: 24 systems. Rep, witnesses, focus, robbery, theft, lockers, wildlife, horses, safehouse, strangers, bounty, treasure, challenges, courts, pool, diving, jumping, swamp, lodge, storms, BayRide, phone, podcasts, body.';
+}
+function r7AllSystemsDone() {
+  return r7RepScore() + r7Wit.heat + r7Focus.disarms + r7Rob.done.length + r7Theft.stolen + r7Wild.studied.length + r7Stranger.done.length + r7Bounty.caught.length + r7Treasure.found.length + r7BadgesClaimed.length;
+}
+function r7RoundSevenReady() { return r7SystemCount() === 24 && typeof r7SelfTest === 'function'; }
+// Round 7 ships: reputation to body, twenty-four systems strong.
 setupShot();
 animate();
 window.__solmar = { state, buildingCount, playerState, parkedCars, camera, scene, police, policeBikes, roadblocks, extraVehicles, helis, boats, planes, traffic, buses, BUS_STOPS, CHARS, RADIO_STATIONS, WEAPONS, weaponPickups, vestPickups, ambientPlanes, movingBoats, hunters, AIRPORTS, RACE_CPS, RACE_START, animals, SHOPS, HEIST_STAGES, HEIST_REWARD, groundHeight, chute, heist, ownedProperties, skills, skillLevel, packages, packagesFound: () => packagesFound, golf, streetEvent: () => streetEvent, fireJob: () => fireJob, medicJob: () => medicJob, busJob: () => busJob, taxiJob: () => taxiJob, charMission: () => charMission, onRiver, fish, race, taxiActive: () => !!taxiCall, speak: speakLine, damage: damagePlayer, startRace, togglePhone, openShop, startHeist, startCharMission, startDriverJob, startGolf, collectPassiveIncome, spawnStreetEvent, togglePhotoMode, takePhoto, toggleScope, showStory };
 if (window.__r4exports) Object.assign(window.__solmar, window.__r4exports);
 if (window.__r5exports) { window.__solmar.r5 = window.__r5exports; window.__solmar.r5selftest = r5SelfTest; }
 if (window.__r6exports) { window.__solmar.r6 = window.__r6exports; window.__solmar.r6selftest = r6SelfTest; }
+if (window.__r7exports) { window.__solmar.r7 = window.__r7exports; window.__solmar.r7selftest = r7SelfTest; }

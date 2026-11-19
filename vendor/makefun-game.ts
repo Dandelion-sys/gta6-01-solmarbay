@@ -1202,29 +1202,34 @@ export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length);
 }
 
-// Solmar Bay feature list (added for this entry): the game's systems with
-// the most money each one can pay out, and the total of those maxima.
-export interface SolmarFeature { name: string; maxPayout: number }
-export function solmarFeatures(): SolmarFeature[] {
+// Solmar Bay feature list (round 12 addition): the game's systems, each
+// with its name and the most money that system can pay out, plus a helper
+// that adds those maximum payouts into a single total. The entry's root
+// program calls these at build time and logs the count and the total.
+export interface SolmarFeature {
+  name: string;
+  maxPayout: number;
+}
+
+export function solmarBayFeatures(): SolmarFeature[] {
   return [
-    { name: 'Ryan mission chain (6 missions)', maxPayout: 8300 },
-    { name: 'Ian mission chain (6 missions)', maxPayout: 8300 },
-    { name: 'Marina Vault finale (dearest jet + dearest property)', maxPayout: 720000 },
-    { name: 'Taxi fares', maxPayout: 200 },
-    { name: 'Deliveries', maxPayout: 250 },
-    { name: 'Fishing', maxPayout: 130 },
-    { name: 'Busking and pool', maxPayout: 80 },
-    { name: 'Airboat swamp tours', maxPayout: 300 },
-    { name: 'Kayaking', maxPayout: 130 },
-    { name: 'Stranger missions (8)', maxPayout: 1620 },
-    { name: 'Bounty hunting (alive)', maxPayout: 5700 },
-    { name: 'Treasure hunts (3 chains)', maxPayout: 25000 },
-    { name: 'Challenges (9 categories, gold)', maxPayout: 13500 },
-    { name: 'Casino slots', maxPayout: 260 },
-    { name: 'Wildlife field guide', maxPayout: 0 },
-    { name: 'Reputation and bond bonuses', maxPayout: 150 },
+    { name: 'Open world city', maxPayout: 0 },
+    { name: 'Missions (Ryan 6 + Ian 6)', maxPayout: 6800 },
+    { name: 'Finale vault heist', maxPayout: 1410000 },
+    { name: 'Taxi and courier work', maxPayout: 140 },
+    { name: 'Fishing and busking', maxPayout: 70 },
+    { name: 'Stranger missions', maxPayout: 250 },
+    { name: 'Bounty hunting', maxPayout: 1900 },
+    { name: 'Treasure hunts', maxPayout: 5000 },
+    { name: 'Challenges', maxPayout: 1600 },
+    { name: 'Property income', maxPayout: 3400 },
+    { name: 'Wildlife field guide', maxPayout: 400 },
+    { name: 'Touch controls', maxPayout: 0 },
   ];
 }
-export function solmarMaxPayoutTotal(): number {
-  return solmarFeatures().reduce((sum, f) => sum + f.maxPayout, 0);
+
+export function solmarBayFeaturesTotal(features: readonly SolmarFeature[]): number {
+  let total = 0;
+  for (const feature of features) total += feature.maxPayout || 0;
+  return total;
 }

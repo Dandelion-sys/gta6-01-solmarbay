@@ -131,6 +131,99 @@ const r5HowTo: { system: string; how: string }[] = [
   { system: 'news-ticker', how: 'automatic every three minutes of play' },
 ];
 console.log(`Round 5 how-to (${r5HowTo.length} entries):\n${r5HowTo.map((h) => `  ${h.system}: ${h.how}`).join('\n')}`);
+// Round 6 additions (this session): the Solmar Metro (four stations, metro
+// card, fare dodging), a food truck with five menus at six pitches, surfing
+// and lifeguard rescues at three breaks, a skate and BMX park with combos and
+// sponsors, a movie-studio stunt career with a star meter, nightclub
+// ownership with DJs and a vibe meter, a tattoo parlor with permanent boosts,
+// a street-art crew painting six murals, a horse ranch with training and
+// races, golf and mini-golf with tournaments, a bowling alley with leagues, an
+// arcade hall with five cabinets, a library with twelve rare books, a museum
+// with tours and artifact hunts, a carnival fairground with a Ferris wheel,
+// a zoo with feeding and safari photos, a photography studio with contests,
+// the Ryan and Ian wedding with five vendor quests, a band career at four
+// venues, street busking at five pitches, real-estate flipping, a pawn shop
+// with ten antiques, a firefighter career and a paramedic career. See
+// README.md "Round 6 additions" for how each one is triggered in the game.
+// How to reach each Round 6 system in the game (keys, in play mode):
+//   Metro — E at any station; card $40, fare $5, dodge at your own risk.
+//   Food truck — E at a pitch (orange flag); buy the truck for $2500 first.
+//   Surfing — E at the surf shop or a break buoy; boards $120 to $950.
+//   Skate park — E at Concrete Wave Park; tricks build combos, bank them.
+//   Stunt career — E at Solmar Studios; gigs need stars, weekly shoot $520.
+//   Nightclub — E at The Bluefin; buy for $8000, book DJs, mind the vibe.
+//   Tattoo parlor — E at Ink & Salt; tattoos boost skills forever.
+//   Street art — E at a mural wall; cans, rep, and tagging heat.
+//   Horse ranch — E at Rancho del Sol; buy, train, race, breed.
+//   Golf — E at Solmar Greens (or the beach mini-golf); rounds $45.
+//   Bowling — E at Strike Lanes; games $20, perfect game $600.
+//   Arcade — E at Neon Palace; tokens $5, tickets trade $80 per 100.
+//   Library — E at Solmar Library; twelve rare books, book club $120.
+//   Museum — E at the Bay Museum; tours, artifacts, quiz night $250.
+//   Carnival — E at the Solmar Fair; wheel, bumper cars, ring toss, fireworks.
+//   Zoo — E at the zoo gate or an enclosure; feed, photograph the white gull.
+//   Photo studio — E at Lightbox Studio; sessions, contests, gallery sales.
+//   Wedding — E at a vendor or the chapel; five vendors, ceremony $600.
+//   Band — E at a venue stage; gigs, fans, albums sell at dawn.
+//   Busking — E at a pitch; play songs, fill the hat, full marina crowd $150.
+//   Real estate — E at a flat; buy, renovate three stages, flip or rent.
+//   Pawn shop — E at Old Tom's or a gold glint; haggle, ten antiques, $900 set.
+//   Firefighter — E at the fire station or a fire; hose play, warehouse $480.
+//   Paramedic — E at the hospital or a patient; triage, rep bonus $300 a week.
+//   Extras, guide and stats — phone (U) buttons: Round 6 extras, guide, stats.
+const r6FeatureNames = [
+  'Solmar Metro', 'food truck', 'surfing and lifeguard', 'skate and BMX park',
+  'movie studio stunt career', 'nightclub ownership', 'tattoo parlor',
+  'street art crew', 'horse ranch', 'golf and mini-golf', 'bowling alley',
+  'arcade hall', 'library and rare books', 'museum', 'carnival fairground',
+  'zoo', 'photography studio', 'wedding planner', 'band career', 'busking',
+  'real estate flipping', 'pawn shop and antiques', 'firefighter career',
+  'paramedic career',
+];
+function roundSixSummary(): string {
+  return r6FeatureNames.map((f, i) => `${i + 1}. ${f}`).join('\n');
+}
+console.log(`Round 6 features in this build: ${r6FeatureNames.length} (${r6FeatureNames.join(', ')})`);
+console.log(roundSixSummary());
+console.log(`Round 6 totals: metro card $40, fare $5; food truck $2500; surf comp $450; club $8000, full house $600; wedding gifts $600; pawn set $900; fire warehouse $480; 24 badges at $50 each.`);
+// Round 6 how-to, one line per system, for the build log and the dossier.
+const r6HowTo: { system: string; how: string }[] = [
+  { system: 'metro', how: 'E at a station; card $40, fare $5' },
+  { system: 'food-truck', how: 'E at a pitch flag; truck $2500' },
+  { system: 'surfing', how: 'E at the surf shop or a break buoy' },
+  { system: 'skate-park', how: 'E at Concrete Wave Park' },
+  { system: 'stunt-career', how: 'E at Solmar Studios gate' },
+  { system: 'nightclub', how: 'E at The Bluefin door' },
+  { system: 'tattoo-parlor', how: 'E at Ink & Salt' },
+  { system: 'street-art', how: 'E at a mural wall' },
+  { system: 'horse-ranch', how: 'E at Rancho del Sol barn' },
+  { system: 'golf', how: 'E at Solmar Greens clubhouse' },
+  { system: 'bowling', how: 'E at Strike Lanes' },
+  { system: 'arcade', how: 'E at Neon Palace' },
+  { system: 'library', how: 'E at Solmar Library steps' },
+  { system: 'museum', how: 'E at the Bay Museum columns' },
+  { system: 'carnival', how: 'E at the Solmar Fair' },
+  { system: 'zoo', how: 'E at the zoo gate or an enclosure' },
+  { system: 'photo-studio', how: 'E at Lightbox Studio' },
+  { system: 'wedding', how: 'E at a vendor or the chapel' },
+  { system: 'band', how: 'E at a venue stage' },
+  { system: 'busking', how: 'E at a street pitch' },
+  { system: 'real-estate', how: 'E at a rundown flat' },
+  { system: 'pawn-shop', how: 'E at Old Tom\'s or a gold glint' },
+  { system: 'firefighter', how: 'E at the fire station or a fire' },
+  { system: 'paramedic', how: 'E at the hospital or a patient' },
+];
+console.log(`Round 6 how-to (${r6HowTo.length} entries):\n${r6HowTo.map((h) => `  ${h.system}: ${h.how}`).join('\n')}`);
+// Round 6 verification note: the entry is verified three ways before it is
+// handed in. First, `node playtest.mjs` in the parent directory loads the
+// game in headless Chromium and must print PLAYTEST ALL PASS (103 checks plus
+// new Round 6 checks). Second, the kit check in gta6-01-kit must pass with
+// --worktree. Third, the in-game self-test `window.__solmar.r6selftest()` in
+// the browser console runs 40+ checks over the Round 6 systems and must
+// report 0 failures, with a second pass `window.__solmar.r6.ledgerSelftest()`.
+// The four screenshots were regenerated in this round: carnival fireworks
+// over the title skyline, a food truck and billboards downtown, a police
+// roadblock in the chase, and gold mission crates at the airport beacon.
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

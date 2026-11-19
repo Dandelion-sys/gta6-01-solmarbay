@@ -1,81 +1,129 @@
-// Economy and phase-two systems: shops, reputation, jobs, strangers, bounties,
-// treasure, challenges, sports, kayaking, base jumping, tours, radio, body stats.
-import { CAR_MODELS, PLANE_MODELS, PROPERTY_LIST, WEAPONS } from './config.js';
-export class Economy {
-  constructor() {
-    this.money = 2500; this.reputation = 0; this.bond = 20;
-    this.ownedCars = ['Bayrunner Sedan']; this.ownedWeapons = ['Fists'];
-    this.ownedProps = ['Bay Mart Flat']; this.ownedClothes = ['Street Tee'];
-    this.strength = 50; this.stamina = 50; this.weight = 78;
-    this.fish = 0; this.pelts = 0; this.photos = 0; this.followers = 12;
-    this.bountiesDone = 0; this.treasureFound = 0; this.challenges = {};
-    this.strangers = [
-      { name: 'Lost tourist', done: false, pay: 150, text: 'Find my camera at the pier.' },
-      { name: 'Fisherman', done: false, pay: 200, text: 'My lucky rod is in the mangroves.' },
-      { name: 'Street musician', done: false, pay: 120, text: 'Play a duet with me at the boardwalk.' },
-      { name: 'Retired sailor', done: false, pay: 250, text: 'Fetch my charts from the ferry office.' },
-      { name: 'Runaway bride', done: false, pay: 300, text: 'Drive me to Gull Point, fast.' },
-      { name: 'Birdwatcher', done: false, pay: 180, text: 'Photograph a pelican for my book.' },
-      { name: 'Night nurse', done: false, pay: 220, text: 'Bring medicine to the hospital.' },
-      { name: 'Young fan', done: false, pay: 100, text: 'Take a photo with the lookalike at the cinema.' },
-    ];
-    this.bounties = [
-      { name: 'Smuggler Sam', alive: 2400, dead: 900 },
-      { name: 'Dock Thief', alive: 1500, dead: 600 },
-      { name: 'Swamp Poacher', alive: 1800, dead: 700 },
-    ];
-    this.treasures = [
-      { clue: 'Where the lighthouse watches the dawn, look beneath the third bench.', found: false, pay: 5000 },
-      { clue: 'The old ferry bell rings for no one; dig where its shadow falls at noon.', found: false, pay: 8000 },
-      { clue: 'Beneath the palm that leans over the swamp pool, the captain hid his chest.', found: false, pay: 12000 },
-    ];
-    this.radioStation = 0; this.radioNames = ['Bay FM — music', 'Talk of the Bay', 'Harbor Podcasts'];
-  }
-  canAfford(n) { return this.money >= n; }
-  spend(n) { if (!this.canAfford(n)) return false; this.money -= n; return true; }
-  earn(n, why) { this.money += n; return n; }
-  shopPrice(base) { return Math.round(base * (1 - this.reputation * 0.002)); }
-  buyCar(name) {
-    const c = CAR_MODELS.find(m => m.name === name); if (!c || this.ownedCars.includes(name)) return false;
-    if (!this.spend(c.price)) return false; this.ownedCars.push(name); return true;
-  }
-  buyWeapon(name) {
-    const w = WEAPONS.find(m => m.name === name); if (!w || this.ownedWeapons.includes(name)) return false;
-    if (!this.spend(w.price)) return false; this.ownedWeapons.push(name); return true;
-  }
-  buyProperty(name) {
-    const p = PROPERTY_LIST.find(m => m.name === name); if (!p || this.ownedProps.includes(name)) return false;
-    if (!this.spend(p.price)) return false; this.ownedProps.push(name); return true;
-  }
-  doTaxi() { const f = 60 + Math.floor(Math.random() * 140); this.earn(f, 'taxi'); return f; }
-  doDelivery() { const f = 90 + Math.floor(Math.random() * 160); this.earn(f, 'delivery'); return f; }
-  doFishing() { const f = 40 + Math.floor(Math.random() * 90); this.fish++; this.earn(f, 'fishing'); return f; }
-  doBusking() { const f = 20 + Math.floor(Math.random() * 60); this.earn(f, 'busking'); return f; }
-  doTour() { const f = 150 + Math.floor(Math.random() * 150); this.earn(f, 'airboat tour'); return f; }
-  doKayak() { const f = 50 + Math.floor(Math.random() * 80); this.earn(f, 'kayak'); return f; }
-  helpStranger(i) { const s = this.strangers[i]; if (!s || s.done) return 0; s.done = true; this.reputation += 8; this.bond += 2; this.earn(s.pay, 'stranger'); return s.pay; }
-  catchBounty(i, alive) { const b = this.bounties[i]; if (!b) return 0; this.bountiesDone++; const p = alive ? b.alive : b.dead; this.earn(p, 'bounty'); return p; }
-  findTreasure(i) { const t = this.treasures[i]; if (!t || t.found) return 0; t.found = true; this.treasureFound++; this.earn(t.pay, 'treasure'); return t.pay; }
-  setChallenge(cat, rank) { this.challenges[cat] = rank; const pay = { bronze: 200, silver: 600, gold: 1500 }[rank] || 0; this.earn(pay, 'challenge'); return pay; }
-  eat() { this.strength += 1; this.weight += 0.4; this.spend(25); }
-  gym() { this.strength += 3; this.stamina += 2; this.weight -= 0.3; this.spend(40); }
-  sleep() { this.stamina = Math.min(100, this.stamina + 30); this.bond += 1; }
-  studyAnimal(kind) { this.photos++; this.followers += 3; return kind; }
-  // Shop stock lists, priced with the reputation discount applied.
-  shopStock(kind) {
-    const stock = {
-      store: [{ name: 'Bay Sandwich', price: 25 }, { name: 'Energy Drink', price: 12 }, { name: 'Fishing Bait', price: 30 }],
-      weapons: [{ name: 'Harbor Pistol', price: 900 }, { name: 'Tide Rifle', price: 3400 }, { name: 'Cleaning Kit', price: 120 }],
-      clothes: [{ name: 'Bay Linen Shirt', price: 180 }, { name: 'Marina Jacket', price: 420 }, { name: 'Sunset Dress', price: 380 }],
-      cars: CAR_MODELS.map(c => ({ name: c.name, price: c.price })),
-    };
-    return (stock[kind] || []).map(i => ({ ...i, price: this.shopPrice(i.price) }));
-  }
-  buyStock(kind, name) {
-    const item = this.shopStock(kind).find(i => i.name === name);
-    if (!item || !this.spend(item.price)) return false;
-    if (kind === 'weapons') this.ownedWeapons.push(name);
-    if (kind === 'clothes') this.ownedClothes.push(name);
-    return true;
-  }
+// Solmar Bay economy: shops, cars, properties and jets for sale, plus the
+// repeatable side work that pays between missions. The most expensive jet
+// and the most expensive property set the finale payout (computed, never
+// a fixed number).
+export const SHOP_STOCK = {
+  store: [
+    { name: 'Bay Burger', price: 12, heal: 25, energy: 20, kind: 'food' },
+    { name: 'Fish Tacos', price: 15, heal: 30, energy: 25, kind: 'food' },
+    { name: 'Energy Drink', price: 8, heal: 5, energy: 35, kind: 'food' },
+    { name: 'First Aid Kit', price: 60, heal: 60, energy: 0, kind: 'food' },
+  ],
+  gunshop: [
+    { name: 'Pistol', price: 450, kind: 'weapon', damage: 22 },
+    { name: 'Shotgun', price: 900, kind: 'weapon', damage: 55 },
+    { name: 'Rifle', price: 1600, kind: 'weapon', damage: 40 },
+    { name: 'Armour Vest', price: 300, kind: 'armour', armour: 50 },
+    { name: 'Weapon Cleaning Kit', price: 90, kind: 'clean', clean: 100 },
+  ],
+  clothes: [
+    { name: 'Street Outfit', price: 120, kind: 'outfit', outfit: 'street' },
+    { name: 'Smart Suit', price: 480, kind: 'outfit', outfit: 'suit' },
+    { name: 'Beach Set', price: 90, kind: 'outfit', outfit: 'beach' },
+    { name: 'Work Coveralls', price: 150, kind: 'outfit', outfit: 'work' },
+  ],
+};
+export const CARS_FOR_SALE = [
+  { name: 'Bay Runner', price: 4200, speed: 22, colour: 0xd93a2b },
+  { name: 'Coral Cruiser', price: 9800, speed: 28, colour: 0x2b6fd9 },
+  { name: 'Sunset GT', price: 24000, speed: 36, colour: 0xf2c14e },
+  { name: 'Marina Phantom', price: 61000, speed: 44, colour: 0x1f1f24 },
+];
+export const PROPERTIES = [
+  { name: 'Dockside Flat', price: 18000, income: 120 },
+  { name: 'Coral Row Loft', price: 65000, income: 420 },
+  { name: 'Gull Point Villa', price: 240000, income: 1500 },
+  { name: 'Tern Isle Estate', price: 520000, income: 3400 },
+];
+export const JETS = [
+  { name: 'Bay Hopper', price: 95000, seats: 4 },
+  { name: 'Coral Jet', price: 310000, seats: 8 },
+  { name: 'Solmar Sovereign', price: 890000, seats: 14 },
+];
+export const SIDE_JOBS = [
+  { id: 'taxi', name: 'Taxi Fare', pay: 90, text: 'Drive a fare across town.' },
+  { id: 'delivery', name: 'Courier Run', pay: 140, text: 'Deliver a parcel, beat the clock.' },
+  { id: 'fishing', name: 'Fishing', pay: 70, text: 'Catch fish off the pier and sell them.' },
+  { id: 'busking', name: 'Busking', pay: 45, text: 'Play for the boardwalk crowd.' },
+];
+export const STRANGERS = [
+  { name: 'Lost Tourist', place: 'Palm Quay', pay: 150, text: 'Show the tourist the lighthouse.' },
+  { name: 'Old Fisherman', place: 'Pier', pay: 200, text: 'Find his lucky rod under the pier.' },
+  { name: 'Street Musician', place: 'Coral Row', pay: 120, text: 'Bring her a spare guitar string.' },
+  { name: 'Retired Sailor', place: 'Marina', pay: 180, text: 'Fetch his logbook from the ferry.' },
+  { name: 'Runaway Bride', place: 'Sunset Fields', pay: 250, text: 'Drive her to the airport, fast.' },
+  { name: 'Birdwatcher', place: 'Mangrove Flats', pay: 160, text: 'Spot the rare crested pelican.' },
+  { name: 'Night Nurse', place: 'Hospital', pay: 140, text: 'Walk her home after her shift.' },
+  { name: 'Photo Kid', place: 'Downtown', pay: 100, text: 'Take his photo with the mayor lookalike.' },
+];
+export const BOUNTIES = [
+  { name: 'Skipper Dan', pay: 800, alive: 1200, place: 'North Docks' },
+  { name: 'Two-Time Tess', pay: 950, alive: 1400, place: 'Coral Row' },
+  { name: 'Silent Marco', pay: 1300, alive: 1900, place: 'Mangrove Flats' },
+];
+export const TREASURES = [
+  { clue: 'Where the gulls sleep above the bay, the light turns twice a day.', place: 'Gull Point Lighthouse', pay: 2500 },
+  { clue: 'Under the pier where the boats dream, the tide keeps what it means.', place: 'Palm Quay Pier', pay: 3200 },
+  { clue: 'The isle that the ferry forgets holds the gold the old smugglers set.', place: 'Tern Isle', pay: 5000 },
+];
+export const CHALLENGES = [
+  { cat: 'Driving', bronze: 200, silver: 500, gold: 1200 },
+  { cat: 'Shooting', bronze: 200, silver: 500, gold: 1200 },
+  { cat: 'Flying', bronze: 300, silver: 700, gold: 1500 },
+  { cat: 'Swimming', bronze: 150, silver: 400, gold: 900 },
+  { cat: 'Hunting', bronze: 250, silver: 600, gold: 1400 },
+  { cat: 'Racing', bronze: 300, silver: 700, gold: 1600 },
+  { cat: 'Stealth', bronze: 250, silver: 600, gold: 1400 },
+  { cat: 'Stamina', bronze: 200, silver: 500, gold: 1100 },
+  { cat: 'Style', bronze: 150, silver: 400, gold: 1000 },
+];
+
+// A shop visit: buy one item by index. Returns a message for the HUD.
+export function buyFrom(couple, hero, kind, index) {
+  const stock = SHOP_STOCK[kind];
+  if (!stock || !stock[index]) return 'Nothing on that shelf.';
+  const item = stock[index];
+  const price = Math.round(item.price * couple.outfitPriceFactor());
+  if (!couple.spend(price)) return `Need $${price} for ${item.name}. You have $${couple.wallet}.`;
+  if (item.kind === 'food') hero.eat(item);
+  if (item.kind === 'armour') hero.armour = Math.min(100, hero.armour + item.armour);
+  if (item.kind === 'outfit') hero.outfit = item.outfit;
+  if (item.kind === 'weapon') hero.weapons = hero.weapons || [], hero.weapons.push(item.name);
+  return `Bought ${item.name} for $${price}.`;
+}
+export function buyCar(couple, index) {
+  const car = CARS_FOR_SALE[index];
+  if (!car) return 'No such car.';
+  if (!couple.spend(car.price)) return `Need $${car.price} for the ${car.name}.`;
+  couple.ownedCars = couple.ownedCars || [];
+  couple.ownedCars.push(car.name);
+  return `You own the ${car.name} now. It waits at Harbor Motors.`;
+}
+export function buyProperty(couple, index) {
+  const p = PROPERTIES[index];
+  if (!p) return 'No such property.';
+  if (!couple.spend(p.price)) return `Need $${p.price} for ${p.name}.`;
+  couple.ownedProps = couple.ownedProps || [];
+  couple.ownedProps.push(p.name);
+  return `${p.name} is yours. It pays $${p.income} a day.`;
+}
+// Features list used by the dossier helper and the README systems list.
+export function gameFeatures() {
+  return [
+    { name: 'Open world city', maxPayout: 0 },
+    { name: 'Missions (Ryan 6 + Ian 6)', maxPayout: 3200 + 3600 },
+    { name: 'Finale vault heist', maxPayout: 890000 + 520000 },
+    { name: 'Taxi and courier work', maxPayout: 140 },
+    { name: 'Fishing and busking', maxPayout: 70 },
+    { name: 'Stranger missions', maxPayout: 250 },
+    { name: 'Bounty hunting', maxPayout: 1900 },
+    { name: 'Treasure hunts', maxPayout: 5000 },
+    { name: 'Challenges', maxPayout: 1600 },
+    { name: 'Property income', maxPayout: 3400 },
+    { name: 'Wildlife field guide', maxPayout: 400 },
+    { name: 'Touch controls', maxPayout: 0 },
+  ];
+}
+export function featuresTotal(list) {
+  return list.reduce((sum, f) => sum + (f.maxPayout || 0), 0);
 }

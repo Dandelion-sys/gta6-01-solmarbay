@@ -1,34 +1,71 @@
-// Save and load through local storage.
-import { TUNE } from './config.js';
-export function saveGame(game) {
+// Solmar Bay save and load: money, cars, weapons, mission progress,
+// properties and the active hero, kept in local storage between visits.
+const SAVE_KEY = 'solmar-bay-save-v1';
+const BEST_KEY = 'solmar-best';
+
+export function saveGameData(game) {
+  const c = game.couple;
   const data = {
-    money: game.economy.money, reputation: game.economy.reputation, bond: game.economy.bond,
-    progress: game.missions.progress, finaleDone: game.missions.finaleDone,
-    ownedCars: game.economy.ownedCars, ownedWeapons: game.economy.ownedWeapons,
-    ownedProps: game.economy.ownedProps, ownedClothes: game.economy.ownedClothes,
-    strength: game.economy.strength, stamina: game.economy.stamina,
-    x: game.player.x, z: game.player.z, health: game.player.health,
-    activeChar: game.activeChar, timeOfDay: game.timeOfDay, day: game.day,
-    best: Math.max(game.economy.money, Number(localStorage.getItem(TUNE.bestKey) || 0)),
+    version: 1,
+    wallet: c.wallet,
+    best: c.best,
+    bond: c.bond,
+    reputation: c.reputation,
+    activeHero: c.active.id,
+    ryanDone: game.missions.ryanDone,
+    ianDone: game.missions.ianDone,
+    completed: game.missions.completed,
+    finaleDone: game.missions.finaleDone,
+    ownedCars: c.ownedCars || [],
+    ownedProps: c.ownedProps || [],
+    heroState: {
+      ryan: { x: c.ryan.x, z: c.ryan.z, health: c.ryan.health, armour: c.ryan.armour, strength: c.ryan.strength, outfit: c.ryan.outfit, weapons: c.ryan.weapons || [] },
+      ian: { x: c.ian.x, z: c.ian.z, health: c.ian.health, armour: c.ian.armour, strength: c.ian.strength, outfit: c.ian.outfit, weapons: c.ian.weapons || [] },
+    },
+    fieldGuide: game.phone ? game.phone.fieldGuide : [],
+    timeOfDay: game.sky.timeOfDay,
+    savedAt: new Date().toISOString(),
   };
-  localStorage.setItem(TUNE.saveKey, JSON.stringify(data));
-  localStorage.setItem(TUNE.bestKey, String(data.best));
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    localStorage.setItem(BEST_KEY, String(Math.max(c.best, c.wallet)));
+  } catch (e) { /* storage unavailable: the game still plays */ }
   return data;
 }
-export function loadGame(game) {
-  const raw = localStorage.getItem(TUNE.saveKey);
-  if (!raw) return null;
+
+export function loadGameData() {
   try {
-    const d = JSON.parse(raw);
-    game.economy.money = d.money; game.economy.reputation = d.reputation; game.economy.bond = d.bond;
-    game.missions.progress = d.progress; game.missions.finaleDone = d.finaleDone;
-    game.economy.ownedCars = d.ownedCars; game.economy.ownedWeapons = d.ownedWeapons;
-    game.economy.ownedProps = d.ownedProps; game.economy.ownedClothes = d.ownedClothes || ['Street Tee'];
-    game.economy.strength = d.strength; game.economy.stamina = d.stamina;
-    game.player.x = d.x; game.player.z = d.z; game.player.health = d.health;
-    game.activeChar = d.activeChar; game.timeOfDay = d.timeOfDay; game.day = d.day;
-    return d;
-  } catch { return null; }
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.version !== 1) return null;
+    return data;
+  } catch (e) { return null; }
 }
-export function hasSave() { return !!localStorage.getItem(TUNE.saveKey); }
-export function bestMoney() { return Number(localStorage.getItem(TUNE.bestKey) || 0); }
+
+export function applySaveData(game, data) {
+  const c = game.couple;
+  c.wallet = data.wallet; c.best = data.best;
+  c.bond = data.bond; c.reputation = data.reputation;
+  c.ownedCars = data.ownedCars || []; c.ownedProps = data.ownedProps || [];
+  game.missions.ryanDone = data.ryanDone || 0;
+  game.missions.ianDone = data.ianDone || 0;
+  game.missions.completed = data.completed || [];
+  game.missions.finaleDone = !!data.finaleDone;
+  for (const id of ['ryan', 'ian']) {
+    const hs = data.heroState && data.heroState[id];
+    if (!hs) continue;
+    const h = c[id];
+    h.setPosition(hs.x, hs.z);
+    h.health = hs.health; h.armour = hs.armour;
+    h.strength = hs.strength; h.outfit = hs.outfit; h.weapons = hs.weapons || [];
+  }
+  if (data.activeHero === 'ian' && c.active.id === 'ryan') c.switchHero();
+  if (game.phone) game.phone.fieldGuide = data.fieldGuide || [];
+  if (data.timeOfDay) game.sky.timeOfDay = data.timeOfDay;
+  return true;
+}
+
+export function readBest() {
+  try { return Number(localStorage.getItem(BEST_KEY) || 0); } catch (e) { return 0; }
+}

@@ -1,56 +1,62 @@
-// Shot staging: play the real rules forward from a fresh world so each
-// screenshot is what short real play looks like, same seed, same frame.
-export function stageShot(game, name) {
-  const p = game.player;
-  const hud = document.getElementById('hud');
-  const title = document.getElementById('title');
+// Solmar Bay shot staging: each screenshot scene plays the real game
+// forward from a fresh world with a simple autopilot, so the frame is
+// what short real play looks like. Seed 1 always gives the same frame.
+import { clamp } from './tuning.js';
+
+export function stageShot(g, name) {
+  g.state = 'play';
+  g.screens.hide();
+  g.hud.show();
+  const hero = g.couple.active;
   if (name === 'start') {
-    // Title screen over the city, both protagonists visible.
-    game.setScreen('title');
-    // Push the title block up so Ryan and Ian show below it, not behind it.
-    title.style.justifyContent = 'flex-start';
-    title.style.paddingTop = '26px';
-    p.x = -130; p.z = 110; p.camYaw = Math.PI * 0.75;
-    game.playerMesh.position.set(p.x, 0, p.z);
-    game.partnerMesh.position.set(p.x - 2.5, 0, p.z + 1);
-    game.partnerMesh.visible = true;
-    game.timeOfDay = 17.5;
-    game.updateCamera(0.016);
-    return;
-  }
-  game.setScreen('play');
-  hud.classList.remove('hidden'); title.classList.add('hidden');
-  if (name === 'drive') {
-    // Driving downtown with HUD, minimap and speed visible.
-    const car = game.traffic.cars.find(c => c.kind === 'parked') || game.traffic.cars[0];
-    p.inCar = true; p.car = car; car.kind = 'player'; car.ai = false;
-    car.x = 0; car.z = -30; car.yaw = 0; car.speed = 22;
-    p.x = car.x; p.z = car.z;
-    p.camYaw = -car.yaw;
-    game.playerMesh.visible = false;
-    game.timeOfDay = 10;
-    game.toast('Downtown drive — Coral Row');
+    // Title screen over the marina boardwalk with both protagonists
+    // visible flanking the panel, the pier and the sea behind them.
+    g.state = 'title';
+    g.couple.ryan.setPosition(-264, 336);
+    g.couple.ian.setPosition(-258, 338);
+    g.couple.ian.mesh.visible = true;
+    g.camYaw = 0; g.camPitch = 0.3;
+    g.screens.showTitle();
+    g.screens.el.style.background = 'linear-gradient(160deg, rgba(8,30,48,0.45), rgba(20,80,110,0.35))';
+    g.hud.hide();
+  } else if (name === 'drive') {
+    // Driving along a downtown road with HUD, minimap and speed visible.
+    hero.setPosition(-200, 120);
+    const car = g.traffic.parked[2];
+    car.x = -200; car.z = 120; car.heading = Math.PI / 2; car.sync();
+    g.enterCar(car);
+    car.speed = 16;
+    g.camYaw = car.heading;
+    g.couple.addMoney(1250);
+    for (let i = 0; i < 40; i++) g.step(1 / 60);
   } else if (name === 'chase') {
-    // Three-star police chase with police cars and bounty visible.
-    p.x = 20; p.z = -20; p.camYaw = Math.PI * 0.9;
-    game.police.wanted = 3; game.police.heat = 80;
-    for (let i = 0; i < 3; i++) {
-      const v = game.traffic.addPoliceCar(p.x - 14 - i * 8, p.z + 10 + i * 6);
-      v.speed = 18; game.police.cars.push(v);
-    }
-    const car = game.traffic.cars.find(c => c.kind === 'parked');
-    if (car) { p.inCar = true; p.car = car; car.kind = 'player'; car.x = p.x; car.z = p.z; car.speed = 20; game.playerMesh.visible = false; }
-    game.timeOfDay = 15;
-    game.toast('WANTED — 3 stars. Lose the police!');
+    // Three-star police chase on an open crossroads, patrol cars close.
+    hero.setPosition(0, 0);
+    g.police.wanted = 3; g.police.heat = 70;
+    g.couple.addMoney(3400);
+    for (let i = 0; i < 90; i++) g.step(1 / 60);
+    const near = g.police.cars[0];
+    if (near) g.camYaw = Math.atan2(near.x - hero.x, near.z - hero.z);
+    g.hud.toast('★ ★ ★ POLICE CHASE — bounty $1,200', 30);
   } else if (name === 'mission') {
-    // Mission in progress: objective beam, marker, timer, target visible.
-    // Stand near the pier with the gold beam in frame ahead of the player.
-    const m = game.missions.start('ryan');
-    p.x = -120; p.z = 130; p.camYaw = 2.28;
-    game.playerMesh.position.set(p.x, 0, p.z);
-    game.timeOfDay = 9;
-    game.toast('Mission: ' + (m ? m.name : 'First Fare') + ' — follow the gold beam');
+    // A mission in progress: the hero walks toward the objective beam
+    // and marker, timer running, target visible ahead.
+    hero.setPosition(60, 100);
+    const next = g.missions.nextFor('ryan');
+    g.startMission(next);
+    if (g.missions.active) g.missions.active.timer = 87;
+    g.couple.addMoney(2100);
+    g.camYaw = 0; // look toward the beam at (60, 120)
+    for (let i = 0; i < 20; i++) g.step(1 / 60);
   }
-  game.updateCamera(0.016);
-  game.updateHud();
+  // Paint twice, then signal the screenshot tool.
+  let paints = 0;
+  const paint = () => {
+    g.step(1 / 60);
+    g.render();
+    paints++;
+    if (paints < 2) requestAnimationFrame(paint);
+    else setTimeout(() => { window.__shotReady = true; }, 400);
+  };
+  requestAnimationFrame(paint);
 }

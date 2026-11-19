@@ -1,77 +1,118 @@
-// Missions: Vera's story chains for Ryan and Ian, plus the computed finale.
-import { finalePayout, mostExpensiveJet, mostExpensiveProperty } from './config.js';
-function mkMissions() {
-  return {
-    ryan: [
-      { id: 'r1', name: 'First Fare', brief: 'Drive the taxi to the pier and pick up Vera\'s friend. Steady driving, no damage.', target: { x: -160, z: 165 }, pay: 400, timed: 0 },
-      { id: 'r2', name: 'Clockwork Delivery', brief: 'Deliver the parcel to Coral Row before the timer runs out.', target: { x: 45, z: -35 }, pay: 700, timed: 90 },
-      { id: 'r3', name: 'Quiet Tail', brief: 'Follow the courier on foot. Stay close, stay unseen. Use Focus (Q) to slow time.', target: { x: 120, z: -60 }, pay: 1000, timed: 0 },
-      { id: 'r4', name: 'Repo Man', brief: 'Steal the parked Coral Coupe by the dealer and bring it to the docks.', target: { x: -30, z: 55 }, pay: 1400, timed: 0 },
-      { id: 'r5', name: 'Getaway Driver', brief: 'Pick up the crew at the casino and lose the police. Two stars are already on you.', target: { x: 45, z: -35 }, pay: 2000, timed: 0 },
-      { id: 'r6', name: 'Bay Chase', brief: 'Chase the smuggler boat along the bay road and ram it off the causeway.', target: { x: -215, z: -40 }, pay: 2800, timed: 120 },
-    ],
-    ian: [
-      { id: 'i1', name: 'Eyes on the Vault', brief: 'Photograph the casino vault door from the plaza. Do not get spotted.', target: { x: 45, z: -35 }, pay: 500, timed: 0 },
-      { id: 'i2', name: 'Scout the Shop', brief: 'Case Bay Mart: find the back entrance and note the camera positions.', target: { x: -10, z: 75 }, pay: 800, timed: 0 },
-      { id: 'i3', name: 'Drop-Off Run', brief: 'Three drop-offs across town. Follow the markers in order.', target: { x: 150, z: 120 }, pay: 1200, timed: 150 },
-      { id: 'i4', name: 'Decoy Drive', brief: 'Draw the police away from Coral Row. Lose them, then come home.', target: { x: 0, z: 0 }, pay: 1600, timed: 0 },
-      { id: 'i5', name: 'Lights Out', brief: 'Disable the cameras at Gull and Gun so the crew can work unseen.', target: { x: 25, z: 40 }, pay: 2200, timed: 0 },
-      { id: 'i6', name: 'Break the Cordon', brief: 'Ryan is trapped by a police cordon at the docks. Get him out.', target: { x: -40, z: -190 }, pay: 3000, timed: 0 },
-    ],
-  };
-}
-export class Missions {
-  constructor() {
-    this.chains = mkMissions();
-    this.progress = { ryan: 0, ian: 0 };
-    this.active = null; this.activeChar = 'ryan';
-    this.finaleDone = false; this.finaleActive = false;
-    this.timer = 0; this.stage = 0;
+// Solmar Bay missions: Vera the fixer hands out the story jobs, one at
+// a time, in order. Ryan has six, Ian has six, then the finale unlocks.
+// The finale payout is computed from the most expensive jet and property.
+import * as THREE from 'three';
+
+export const RYAN_MISSIONS = [
+  { id: 'r1', name: 'First Fare', hero: 'ryan', pay: 400, x: 60, z: 120, timed: 0,
+    brief: 'Taxi shift: pick up the fare at Coral Row and drop them at the pier.',
+    debrief: 'Clean driving. Vera noticed.' },
+  { id: 'r2', name: 'Against the Clock', hero: 'ryan', pay: 750, x: -300, z: -180, timed: 90,
+    brief: 'Deliver the package to Sunset Stables before the timer runs out.',
+    debrief: 'Right on time. The client pays double next time.' },
+  { id: 'r3', name: 'Quiet Tail', hero: 'ryan', pay: 1100, x: 180, z: 90, timed: 0,
+    brief: 'Tail the courier through Coral Row. Stay close, stay unseen. Q is Focus.',
+    debrief: 'You ghosted him the whole way. Textbook.' },
+  { id: 'r4', name: 'Repo Man', hero: 'ryan', pay: 1600, x: 170, z: 0, timed: 0,
+    brief: 'Repossess the red coupe parked outside Harbor Motors. E to take it.',
+    debrief: 'The car is ours now. Vera is impressed.' },
+  { id: 'r5', name: 'The Getaway', hero: 'ryan', pay: 2400, x: -120, z: -330, timed: 120,
+    brief: 'Drive the crew out of North Docks and lose the police. Two stars and counting.',
+    debrief: 'You shook them. Nobody drives like you do.' },
+  { id: 'r6', name: 'Bay Run', hero: 'ryan', pay: 3200, x: -262, z: 390, timed: 150,
+    brief: 'Boat chase across the bay: reach the pier boat and outrun the patrol.',
+    debrief: 'The bay is yours. One chain left: Ian’s.' },
+];
+export const IAN_MISSIONS = [
+  { id: 'i1', name: 'Long Lens', hero: 'ian', pay: 500, x: 96, z: 10, timed: 0,
+    brief: 'Photo recon: photograph the Marina Royale vault door from the plaza.',
+    debrief: 'The vault door, the cameras, the guard rotation. All noted.' },
+  { id: 'i2', name: 'Scout the Shop', hero: 'ian', pay: 900, x: 30, z: 150, timed: 0,
+    brief: 'Scout Gull and Gun: find the back entrance and the safe code.',
+    debrief: 'Back door, safe code, blind spot. Ready when you are.' },
+  { id: 'i3', name: 'Drop-offs', hero: 'ian', pay: 1300, x: 300, z: 280, timed: 120,
+    brief: 'Three drop-offs across Mangrove Flats. Keep moving, don’t linger.',
+    debrief: 'Three drops, zero witnesses. Beautiful.' },
+  { id: 'i4', name: 'Decoy Drive', hero: 'ian', pay: 1900, x: 120, z: 130, timed: 0,
+    brief: 'Decoy drive: pull two stars of police away from the station, then lose them.',
+    debrief: 'They chased you for an hour. Vera owes you a drink.' },
+  { id: 'i5', name: 'Dark Cameras', hero: 'ian', pay: 2600, x: 96, z: 10, timed: 90,
+    brief: 'Disable the casino cameras before the guard round ends.',
+    debrief: 'Blind as a bat. The vault is next.' },
+  { id: 'i6', name: 'Break the Cordon', hero: 'ian', pay: 3600, x: 120, z: 130, timed: 120,
+    brief: 'Rescue Ryan from the police cordon at the station. Bring a car.',
+    debrief: 'You pulled him out clean. Both chains are done.' },
+];
+export const FINALE = {
+  id: 'finale', name: 'The Marina Royale Vault', hero: 'both', pay: 0,
+  x: 96, z: 10, timed: 300,
+  brief: 'Rob the casino vault together, switch between Ryan and Ian, escape by boat and car.',
+  debrief: 'The vault is empty and the bay is yours. Legends of Solmar Bay.',
+};
+
+export class MissionBook {
+  constructor(scene) {
+    this.scene = scene;
+    this.ryanDone = 0; this.ianDone = 0;
+    this.active = null; // {def, timer, startedAt}
+    this.completed = [];
+    this.finaleDone = false;
+    // Objective beam: a tall glowing cylinder marking the target.
+    const beamMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.35, side: THREE.DoubleSide });
+    this.beam = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 60, 16, 1, true), beamMat);
+    this.beam.position.y = 30; this.beam.visible = false;
+    scene.add(this.beam);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.6 });
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(2.6, 3.4, 24), ringMat);
+    this.ring.rotation.x = -Math.PI / 2; this.ring.position.y = 0.1; this.ring.visible = false;
+    scene.add(this.ring);
   }
-  current(char) { return this.chains[char][this.progress[char]] || null; }
-  bothDone() { return this.progress.ryan >= 6 && this.progress.ian >= 6; }
-  start(char) {
-    if (this.finaleActive) return { name: 'The Marina Vault', brief: 'Rob the casino vault together, then escape by boat and car.', target: { x: 45, z: -35 }, pay: finalePayout() };
-    const m = this.current(char);
-    if (!m) return null;
-    this.active = m; this.activeChar = char; this.timer = m.timed; this.stage = 0;
-    return m;
+  nextFor(heroId) {
+    const list = heroId === 'ryan' ? RYAN_MISSIONS : IAN_MISSIONS;
+    const done = heroId === 'ryan' ? this.ryanDone : this.ianDone;
+    return done < list.length ? list[done] : null;
   }
-  startFinale() {
-    this.finaleActive = true; this.timer = 300;
-    this.active = { id: 'finale', name: 'The Marina Vault', brief: 'Crack the vault, grab the take, escape by boat. Payout is the dearest jet plus the dearest property in Solmar Bay.', target: { x: 45, z: -35 }, pay: finalePayout() };
+  finaleReady() { return this.ryanDone >= RYAN_MISSIONS.length && this.ianDone >= IAN_MISSIONS.length; }
+  start(def) {
+    this.active = { def, timer: def.timed || 0, elapsed: 0 };
+    this.beam.position.set(def.x, 30, def.z);
+    this.ring.position.set(def.x, 0.1, def.z);
+    this.beam.visible = true; this.ring.visible = true;
     return this.active;
   }
-  atTarget(x, z) {
-    if (!this.active) return false;
-    return Math.hypot(x - this.active.target.x, z - this.active.target.z) < 10;
-  }
-  complete() {
-    if (!this.active) return 0;
-    const pay = this.active.pay;
-    if (this.active.id === 'finale') { this.finaleDone = true; this.finaleActive = false; }
-    else if (this.activeChar === 'ryan') this.progress.ryan++;
-    else this.progress.ian++;
-    this.active = null; this.timer = 0;
-    return pay;
-  }
-  update(dt) {
-    if (this.active && this.timer > 0) {
-      this.timer -= dt;
-      if (this.timer <= 0) { this.active = null; this.timer = 0; return 'failed'; }
+  // Returns 'done' | 'failed' | null.
+  update(dt, px, pz) {
+    if (!this.active) return null;
+    const a = this.active;
+    a.elapsed += dt;
+    if (a.timer > 0) {
+      a.timer -= dt;
+      if (a.timer <= 0) { this.abandon(); return 'failed'; }
+    }
+    const d = Math.hypot(px - a.def.x, pz - a.def.z);
+    if (d < 5) {
+      const def = a.def;
+      this.active = null;
+      this.beam.visible = false; this.ring.visible = false;
+      this.completed.push(def.id);
+      if (def.id === 'finale') this.finaleDone = true;
+      else if (def.hero === 'ryan') this.ryanDone++;
+      else this.ianDone++;
+      return 'done';
     }
     return null;
   }
-  statusText() {
-    if (this.finaleActive) return 'FINALE: The Marina Vault — crack it, escape by boat';
-    if (this.active) return `Mission: ${this.active.name} — ${this.active.brief}`;
-    if (this.bothDone()) return 'Both chains done! Start the Marina Vault heist at the casino.';
-    const r = this.current('ryan'); const i = this.current('ian');
-    const next = this.activeChar === 'ryan' ? r : i;
-    return next ? `Next: ${next.name} — talk to Vera at The Brass Anchor (E)` : 'All missions done!';
+  abandon() {
+    this.active = null;
+    this.beam.visible = false; this.ring.visible = false;
   }
-}
-export function finaleBreakdown() {
-  const jet = mostExpensiveJet(); const prop = mostExpensiveProperty();
-  return `${jet.name} $${jet.price.toLocaleString()} + ${prop.name} $${prop.price.toLocaleString()} = $${finalePayout().toLocaleString()}`;
+  progressText() {
+    return `Ryan ${this.ryanDone}/6 · Ian ${this.ianDone}/6` + (this.finaleReady() ? ' · FINALE READY' : '');
+  }
+  // The finale payout is computed, never written as a fixed number.
+  finalePayout(jets, properties) {
+    const bestJet = Math.max(...jets.map((j) => j.price));
+    const bestProp = Math.max(...properties.map((p) => p.price));
+    return bestJet + bestProp;
+  }
 }

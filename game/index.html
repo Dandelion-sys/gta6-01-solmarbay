@@ -1,84 +1,41 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Solmar Bay — Open World</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1e2e; font-family: Trebuchet MS, Verdana, sans-serif; }
-  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  #hud { position: fixed; inset: 0; pointer-events: none; color: #fff; }
-  #hud .panel { position: absolute; background: rgba(8, 24, 38, .72); border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 8px 12px; }
-  #money { top: 12px; right: 12px; font-size: 22px; font-weight: bold; color: #7dff9a; }
-  #stats { top: 12px; left: 12px; font-size: 15px; line-height: 1.5; }
-  #stars { position: absolute; top: 102px; left: 12px; font-size: 24px; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 2px 4px #000; }
-  #clock { top: 140px; left: 12px; font-size: 14px; }
-  #objective { top: 12px; left: 50%; transform: translateX(-50%); font-size: 15px; text-align: center; max-width: 44%; }
-  #context { position: absolute; bottom: 118px; left: 50%; transform: translateX(-50%); font-size: 15px; background: rgba(8,24,38,.72); padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
-  #toast { position: absolute; bottom: 158px; left: 50%; transform: translateX(-50%); font-size: 17px; font-weight: bold; color: #ffe27a; text-shadow: 0 2px 4px #000; text-align: center; white-space: nowrap; }
-  #minimap { position: absolute; right: 12px; bottom: 12px; width: 190px; height: 190px; border-radius: 50%; border: 3px solid rgba(255,255,255,.6); background: #12324a; overflow: hidden; }
-  #minimap canvas { width: 100%; height: 100%; display: block; }
-  #speed { position: absolute; right: 216px; bottom: 18px; font-size: 26px; font-weight: bold; color: #fff; text-shadow: 0 2px 4px #000; }
-  #hitflash { position: fixed; inset: 0; background: radial-gradient(circle, transparent 40%, rgba(255,0,0,.55)); opacity: 0; pointer-events: none; }
-  #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(circle, transparent 62%, rgba(0,0,0,.35)); }
-  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; color: #fff; background: linear-gradient(160deg, rgba(6,32,52,.62), rgba(10,60,80,.55)); z-index: 5; text-align: center; padding: 20px; }
-  .screen h1 { font-size: 56px; margin: 0; color: #ffd23e; letter-spacing: 2px; text-shadow: 0 4px 0 #b3541e, 0 8px 18px #000; }
-  .screen h2 { font-size: 22px; margin: 6px 0 18px; color: #9fe8ff; font-weight: normal; }
-  .screen .keys { font-size: 14px; line-height: 1.9; background: rgba(0,0,0,.35); border-radius: 10px; padding: 12px 22px; text-align: left; }
-  .screen button { pointer-events: auto; margin-top: 18px; font-size: 20px; padding: 12px 34px; border-radius: 10px; border: none; background: #ffd23e; color: #233; font-weight: bold; cursor: pointer; }
-  .screen button:hover { background: #ffe27a; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1c2c;
+    font-family: "Trebuchet MS", Verdana, sans-serif; touch-action: none;
+    -webkit-user-select: none; user-select: none; }
+  #app { position: fixed; inset: 0; }
+  canvas.game { display: block; width: 100%; height: 100%; }
   .hidden { display: none !important; }
-  #phone { position: fixed; right: 24px; top: 90px; width: 250px; background: #101418; border: 3px solid #444; border-radius: 18px; color: #fff; padding: 12px; z-index: 6; font-size: 14px; }
-  #phone h3 { margin: 0 0 8px; color: #7dff9a; }
-  #phone .app { padding: 7px; border-bottom: 1px solid #333; cursor: pointer; }
-  #phone .app:hover { background: #222; }
-  #mapscreen { position: fixed; inset: 0; background: rgba(4,20,32,.94); z-index: 6; color: #fff; display: flex; align-items: center; justify-content: center; }
-  #mapscreen canvas { border: 2px solid #ffd23e; border-radius: 8px; }
-  #focusbar { position: absolute; left: 12px; bottom: 12px; width: 170px; height: 12px; background: rgba(0,0,0,.5); border-radius: 6px; overflow: hidden; }
-  #focusfill { height: 100%; width: 100%; background: #4db8ff; }
-  #focuslabel { position: absolute; left: 12px; bottom: 30px; font-size: 12px; }
+  /* Small (phone) screens: keep the HUD, minimap and toasts clear of the
+     touch joystick and buttons, which live in the bottom corners. */
+  @media (max-width: 600px) {
+    #minimap { width: 108px !important; height: 108px !important; }
+    #hud-money { font-size: 20px !important; }
+    #hud-hero, #hud-clock { font-size: 12px !important; }
+    #hud-bars { width: 130px !important; }
+    #hud-stars { font-size: 16px !important; }
+    #hud-objective { bottom: 172px !important; max-width: 62vw !important;
+      font-size: 12px !important; padding: 6px 9px !important; }
+    #hud-context { bottom: 236px !important; font-size: 13px !important;
+      max-width: 56vw; text-align: center; }
+    #hud-speed { bottom: 172px !important; font-size: 18px !important; }
+    #hud-toast { top: 22% !important; max-width: 82vw; font-size: 14px !important;
+      text-align: center; }
+    #phone { width: 320px !important; height: 480px !important; right: 8px !important; }
+  }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hitflash"></div><div id="vignette"></div>
-<div id="hud" class="hidden">
-  <div class="panel" id="money">$0</div>
-  <div class="panel" id="stats"></div>
-  <div id="stars"></div>
-  <div class="panel" id="clock"></div>
-  <div class="panel" id="objective"></div>
-  <div id="context"></div>
-  <div id="toast"></div>
-  <div id="minimap"><canvas id="minimapCanvas" width="190" height="190"></canvas></div>
-  <div id="speed"></div>
-  <div id="focuslabel">FOCUS</div><div id="focusbar"><div id="focusfill"></div></div>
-</div>
-<div id="title" class="screen">
-  <h1>SOLMAR BAY</h1>
-  <h2>A sun-soaked open-world crime story — Ryan &amp; Ian</h2>
-  <div class="keys" id="titleKeys"></div>
-  <button id="startBtn">Start New Game</button>
-  <button id="continueBtn" class="hidden">Continue Saved Game</button>
-  <p style="font-size:13px;opacity:.85">Vera at The Brass Anchor has work for you. Earn, spend, stay out of jail.</p>
-</div>
-<div id="pause" class="screen hidden">
-  <h1 style="font-size:40px">PAUSED</h1>
-  <div class="keys" id="pauseKeys"></div>
-  <button id="resumeBtn">Resume</button>
-  <button id="saveBtn">Save Game</button>
-  <button id="muteBtn">Sound: On</button>
-  <button id="quitBtn">Quit to Title</button>
-</div>
-<div id="gameover" class="screen hidden">
-  <h1 style="font-size:40px" id="overTitle">BUSTED</h1>
-  <p id="overText"></p>
-  <button id="retryBtn">Back to the Streets</button>
-</div>
-<div id="phone" class="hidden"></div>
-<div id="mapscreen" class="hidden"><canvas id="bigmap" width="640" height="640"></canvas></div>
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js"}}</script>
-<script type="module" src="./src/main.js"></script>
+<div id="app"></div>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module" src="./src/boot.js"></script>
 </body>
 </html>

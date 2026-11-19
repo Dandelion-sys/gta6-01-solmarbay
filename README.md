@@ -570,6 +570,173 @@ no coves). Every reward is modest and fits the existing economy.
 - The pursuit helicopter only appears at 3+ stars and leaves when the heat
   drops, so it never interferes with the opening missions.
 
+## Round 6 additions
+
+Round 6 adds twenty-four fresh systems on top of the Round 5 game. Nothing
+here repeats Round 4 or Round 5 (no island, no hovercraft, no darts, no
+garage, no casino, no fishing tournaments, no stocks, no bond gifts). Every
+reward is modest and fits the existing economy. All 24 open with **E** near
+the place, and the phone (U) has three new buttons: Round 6 stats, Round 6
+guide, and Round 6 extras.
+
+- **Solmar Metro** — **E** at any of the four stations (Marina, Old Town,
+  Casino Row, North Docks). A metro card costs $40 and makes every ride free;
+  without one the fare is $5. Riding takes 2 seconds and drops you at the
+  destination platform. Dodge the fare and inspectors catch you 30% of the
+  time (wanted +1). Three lines: Blue, Pink and Green.
+- **Food truck** — **E** at a pitch (orange flag). Buy the truck for $2,500,
+  then cook five menus ($12–$22) at six pitches around the bay. Customers
+  arrive on their own and pay the menu price plus tips; a five-star health
+  rating doubles every tip. A hygiene check costs $60. Catering gigs pay
+  $210–$480 (phone → Round 6 extras).
+- **Surfing + lifeguard** — **E** at the surf shop on the beach or at a break
+  buoy. Four boards ($120–$950), three breaks (Sunset Point, Coral Barrel,
+  North Swell). Every ride scores points and pays by the point; rescues pay
+  $90; the surf comp pays $450 to the best ride of 70+ points.
+- **Skate / BMX park** — **E** at Concrete Wave Park. Eight tricks (Kickflip
+  to Backflip Drop, +30 to +120 points) chain into combos; bailing wipes the
+  combo. Bank a combo for 40% of its points in cash. A 500+ combo earns a
+  sponsor ($60 a day); the weekend comp pays $380.
+- **Movie studio stunt career** — **E** at Solmar Studios. Four gigs
+  ($160–$320) build the star meter to 100; bigger gigs need more stars.
+  Getting hurt costs 15 health. The weekly shoot pays $520 at 80+ stars.
+- **Nightclub ownership** — **E** at The Bluefin. Buy the club for $8,000,
+  book one of four DJs ($120–$500, +18 to +60 vibe), open the doors for the
+  night's take, and upgrade the lights, bar and sound ($900 each). A full
+  house at 90+ vibe pays $600 a night.
+- **Tattoo parlor** — **E** at Ink & Salt. Six tattoos ($90–$700) each grant
+  a permanent skill boost (+5 to +12 driving, shooting or stamina). Walk-in
+  clients pay $70; completing the 12-design flash book pays $350.
+- **Street art crew** — **E** at a mural wall. Six murals need crew rep (0
+  to 80) and spray cans (3 packs, $25–$110). Finishing a wall pays $80 plus
+  $60 per size and raises rep; all six pay $500 extra. Tagging heat fades
+  over time but at 3+ the police notice (wanted +1).
+- **Horse ranch** — **E** at Rancho del Sol. Four horses ($600–$2,800),
+  training ($40 a session), ranch races ($420 a win), stable income per
+  horse, and breeding: two horses plus $200 makes a foal.
+- **Golf + mini-golf** — **E** at Solmar Greens (9 holes, par 35) or the
+  beach mini-golf. A round costs $45; beating par pays $200. Caddying pays
+  $35 a round. Club tournaments pay $350; mini-golf costs $15, a hole-in-one
+  pays $60. The driving range (extras) is $20 for +1 driving.
+- **Bowling alley** — **E** at Strike Lanes. A game costs $20; 200+ pays
+  $120, a perfect game (280+) pays $600. League nights pay $300 to a 200+
+  bowler. Fries cost $8 and heal 5 health.
+- **Arcade hall** — **E** at Neon Palace. Five retro cabinets (Bay Blaster,
+  Turbo Taxi, Palm Fighter, Deep Dive, Disco Dance), tokens $5 each, beating
+  a cabinet's top score pays $150, and 100 tickets trade for $80 at the
+  prize shelf. Weekly tournaments pay $220.
+- **Library + rare books** — **E** at Solmar Library. Twelve rare books
+  hide in the stacks (shelves A1–D4); each one read grants a permanent skill
+  boost (+3 to +7). Reading all twelve pays $400. The book club pays $120
+  a session.
+- **Museum** — **E** at the Bay Museum. Four exhibits to tour for tips
+  ($25–$55 a tour), four lost artifacts to return ($110 each), and a night
+  at the museum quiz night ($250, needs 3 tours first). The gift shop sells
+  golden gull souvenirs.
+- **Carnival / fairground** — **E** at the Solmar Fair. Ride the Ferris
+  wheel ($12), play ring toss ($10 for 3 rings, 2+ hits pay $45), bumper
+  cars ($15, last car spinning wins $40), and watch the fireworks show from
+  the front row for $200. A season pass costs $180.
+- **Zoo** — **E** at the zoo gate or an enclosure. Entry is $30; feeding an
+  animal costs $15 and pays back $25. Feeding all six in one day pays a
+  $150 keeper bonus. Photographing the rare white gull pays $300.
+- **Photography studio** — **E** at Lightbox Studio. Four portrait themes
+  ($90–$150 a session), a weekly photo contest ($280), gallery prints that
+  sell for $95 while you are out, and a darkroom that develops one free
+  print per session.
+- **Wedding planner** — **E** at a vendor or the little white chapel. Ryan
+  and Ian are getting married: five vendor quests (florist $300, baker $350,
+  tailor $400, photographer $250, chapel keeper $500) lead to the ceremony
+  finale, which pays $600 in guest gifts. A honeymoon on Coral Cay costs
+  $900 (extras).
+- **Band career** — **E** at a venue stage. Form the band for $200 (Ryan on
+  guitar, Ian on vocals), play gigs at four venues ($120–$800, fans unlock
+  the bigger rooms), rehearse to grow fans, record albums ($500) that sell
+  at dawn, and sell merch at gigs.
+- **Busking** — **E** at a street pitch. Five pitches around the bay; play a
+  song to gather a crowd (crowd meter to 100) and the hat fills with tips.
+  A full crowd at the marina pitch pays a $150 street-star bonus.
+- **Real estate flipping** — **E** at a rundown flat. Four flats ($1,800–
+  $3,100), three renovation stages ($300, $600, $900), sell at stage three
+  for up to $5,100 plus $500 per stage, or keep a flat for $45 a day in
+  rent. An estate agent licence costs $400.
+- **Pawn shop + antiques** — **E** at Old Tom's Pawn or at a gold glint.
+  Ten antiques hide around the bay; Old Tom appraises free, sells at the
+  appraised price, or haggles (55% chance of +25%). Finding all ten pays a
+  $900 set bonus. Pawn loans of $300 are available (extras).
+- **Firefighter career** — **E** at the Bay Fire Station or at a fire.
+  Five callouts ($160–$480, the warehouse fire is the big one), hose play
+  with a tank that drains and refills, and three station upgrades ($700
+  each, +50 hose tank). The station cat rescue pays $60.
+- **Paramedic career** — **E** at Bay General Hospital or at a patient.
+  Five callouts ($150–$420); triage matters — severe cases must be
+  stabilised first, rushing one costs 5 hospital rep. At 80+ rep the
+  hospital pays $300 a week. A first-aid course costs $90 for +10 rep.
+- **Round 6 badges** — twenty-four badges, one per system, each paying $50
+  the first time it is earned (first metro ride, 25 dishes served, 80+ surf
+  ride, 500+ skate combo, 80 stars, 5 club nights, 3 tattoos, all 6 murals,
+  3 horses, a golf tournament win, 10 strikes, an arcade top score, all 12
+  books, all 4 artifacts, 10 wheel rides, all 6 animals fed, 10 photo
+  sessions, the wedding, 300 band fans, a 100 busking crowd, 2 flips, all
+  10 antiques, 5 fires out, 5 patients saved).
+- **Round 6 extras, guide and stats** — phone (U) → Round 6 extras opens
+  the second layer: catering, board wax, film rotation, VIP lists, crew
+  recruitment, horse breeding, driving range, bowling team, arcade
+  tournaments, gift shop, season pass, keeper talks, darkroom, honeymoon,
+  band merch, street album, estate licence, pawn loans, station cat and
+  first-aid course. The guide lists all 24 systems with locations; the
+  stats screen shows every count plus the earnings ledger.
+
+### Round 6 quick reference
+
+| Key | Round 6 action |
+| --- | --- |
+| E at a station | Ride the metro (card $40 / fare $5) |
+| E at a pitch flag | Food truck menus and serving |
+| E at surf shop / buoy | Buy a board, catch a wave |
+| E at the skate park | Tricks, combos, sponsor |
+| E at Solmar Studios | Stunt gigs and star meter |
+| E at The Bluefin | Nightclub: DJs, nights, upgrades |
+| E at Ink & Salt | Tattoos and walk-in clients |
+| E at a mural wall | Paint the wall (needs cans + rep) |
+| E at Rancho del Sol | Horses, training, races |
+| E at Solmar Greens | Golf round / tournament |
+| E at Strike Lanes | Bowl a game / league night |
+| E at Neon Palace | Arcade cabinets and tickets |
+| E at the library | Read rare books / book club |
+| E at the museum | Tours, artifacts, quiz night |
+| E at the fair | Wheel, ring toss, bumper cars |
+| E at the zoo | Feed animals / safari photos |
+| E at Lightbox Studio | Photo sessions / contests |
+| E at a vendor / chapel | Wedding quests / ceremony |
+| E at a venue stage | Band gigs and albums |
+| E at a street pitch | Busk for hat tips |
+| E at a flat | Buy, renovate, flip or rent |
+| E at Old Tom's / glint | Pawn antiques, haggle |
+| E at fire station / fire | Firefighter callouts |
+| E at hospital / patient | Paramedic callouts |
+| U → Round 6 extras | Second-layer actions |
+| U → Round 6 guide | All 24 systems + a daily tip |
+| U → Round 6 stats | Counts + earnings ledger |
+
+### Round 6 design notes
+
+- The metro, food truck, surf shop, skate park, studio, club, tattoo
+  parlor, ranch, golf course, bowling alley, arcade, library, museum, fair,
+  zoo, photo studio, chapel, arena, flats, pawn shop, fire station and
+  hospital are all new buildings placed on empty ground, so no Round 5 scene
+  changes except the four shot framings, which gained visible Round 6 props.
+- The four screenshots were regenerated in this round: carnival fireworks
+  over the title skyline, a food truck and two billboards downtown, a
+  striped police roadblock in the chase, and gold mission crates with a tall
+  banner at the airport beacon.
+- All Round 6 money moves through one wallet (state.cash) and one ledger
+  (earned / spent / jobs), so the phone stats screen can show exact profit.
+- Round 6 badges pay $50 each and are checked in the daily routine, so a
+  badge earned mid-session pays the next time the routine runs.
+- The wedding is Ryan and Ian's story: five vendors, one chapel, one
+  ceremony. No other couple is named anywhere in the game.
+
 ## License
 
 MIT — see `LICENSE`.

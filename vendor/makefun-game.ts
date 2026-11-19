@@ -1181,6 +1181,88 @@ export function roundFivePayingSystems(): { system: string; max: number }[] {
     .filter((p) => p.max > 0)
     .sort((a, b) => b.max - a.max);
 }
+/** How many new systems Round 6 added. */
+export function roundSixFeatureCount(): number {
+  return roundSixFeatures().length;
+}
+/** The most a player can earn from one full pass of this round's repeatable systems. */
+export function roundSixMaxPayouts(): { system: string; max: number }[] {
+  const list = [
+    { system: 'metro-card-saved-fares', max: 0 },
+    { system: 'food-truck-serving', max: 14 * 12 + 22 * 6 },
+    { system: 'surf-competition', max: 450 },
+    { system: 'skate-competition', max: 380 },
+    { system: 'stunt-weekly-shoot', max: 520 },
+    { system: 'nightclub-full-house', max: 600 },
+    { system: 'tattoo-flash-book', max: 350 },
+    { system: 'street-art-murals', max: 6 * 260 + 500 },
+    { system: 'ranch-race', max: 420 },
+    { system: 'golf-tournament', max: 350 },
+    { system: 'bowling-perfect-game', max: 600 },
+    { system: 'arcade-top-score', max: 150 },
+    { system: 'library-rare-books', max: 400 },
+    { system: 'museum-quiz-night', max: 250 },
+    { system: 'carnival-fireworks', max: 200 },
+    { system: 'zoo-white-gull', max: 300 },
+    { system: 'photo-contest', max: 280 },
+    { system: 'wedding-gifts', max: 600 },
+    { system: 'band-arena-gig', max: 800 },
+    { system: 'busking-street-star', max: 150 },
+    { system: 'real-estate-flip', max: 5100 + 1500 - 3100 - 1800 },
+    { system: 'pawn-antique-set', max: 900 },
+    { system: 'firefighter-warehouse', max: 480 },
+    { system: 'paramedic-weekly-bonus', max: 300 },
+    { system: 'round-six-badges', max: 24 * 50 },
+  ];
+  return list;
+}
+/** The new systems Round 6 added to the game, in the order a player meets them. */
+export function roundSixFeatures(): { id: string; where: string; reward: string }[] {
+  return [
+    { id: 'metro', where: 'four stations: Marina, Old Town, Casino Row, North Docks, press E', reward: 'card $40, fare $5, rides move you across the bay in 2 seconds' },
+    { id: 'food-truck', where: 'six pitches with orange flags, press E', reward: 'five menus $12 to $22, tips on top, five-star hygiene doubles tips' },
+    { id: 'surfing', where: 'surf shop at the beach and three break buoys offshore, press E', reward: 'boards $120 to $950, rescues $90, competitions pay $450' },
+    { id: 'skate-park', where: 'Concrete Wave Park, south-west, press E', reward: 'eight tricks, combos bank at 40%, sponsor at 500+, comps $380' },
+    { id: 'stunt-career', where: 'Solmar Studios, south-east, press E', reward: 'four gigs $160 to $320, star meter to 100, weekly shoot $520' },
+    { id: 'nightclub', where: 'The Bluefin, east side, press E', reward: 'club $8000, DJs $120 to $500, full house at 90+ vibe pays $600' },
+    { id: 'tattoo-parlor', where: 'Ink & Salt, west of the plaza, press E', reward: 'six tattoos $90 to $700, permanent skill boosts, walk-ins $70' },
+    { id: 'street-art', where: 'six mural walls around the bay, press E', reward: 'cans $25 to $110, rep opens bigger walls, all six pay $500 extra' },
+    { id: 'horse-ranch', where: 'Rancho del Sol, far west, press E', reward: 'four horses $600 to $2800, races $420, stable income per horse' },
+    { id: 'golf', where: 'Solmar Greens north, mini-golf at the beach, press E', reward: 'nine holes par 35, beat par $200, tournaments $350' },
+    { id: 'bowling', where: 'Strike Lanes, north-west, press E', reward: 'games $20, league nights $300, perfect game $600' },
+    { id: 'arcade', where: 'Neon Palace, east of the plaza, press E', reward: 'five cabinets, tokens $5, top scores $150, tickets trade $80 per 100' },
+    { id: 'library', where: 'Solmar Library, north of the plaza, press E', reward: 'twelve rare books with skill boosts, book club $120' },
+    { id: 'museum', where: 'Bay Museum, north-east, press E', reward: 'tours with tips, four lost artifacts $110 each, quiz night $250' },
+    { id: 'carnival', where: 'Solmar Fair, south field, press E', reward: 'Ferris wheel $12, ring toss, bumper cars, fireworks show $200' },
+    { id: 'zoo', where: 'Solmar Zoo, north-east, press E', reward: 'feeding pays back $25, white gull safari photo $300' },
+    { id: 'photo-studio', where: 'Lightbox Studio, Marina Row, press E', reward: 'four themes $90 to $150, contests $280, prints sell $95' },
+    { id: 'wedding', where: 'five vendors around the bay and the chapel, press E', reward: 'five vendor quests, ceremony finale pays $600 in gifts' },
+    { id: 'band', where: 'four venues from Marina Bar to Bay Arena, press E', reward: 'gigs $120 to $800, fans unlock venues, albums sell at dawn' },
+    { id: 'busking', where: 'five street pitches, press E', reward: 'hat tips per song, full marina crowd pays $150' },
+    { id: 'real-estate', where: 'four rundown flats around the bay, press E', reward: 'buy $1800 to $3100, three renov stages, flip or rent $45 a day' },
+    { id: 'pawn-shop', where: 'Old Tom\'s Pawn, Docks Lane, press E', reward: 'ten antiques, haggling, appraisal, full set bonus $900' },
+    { id: 'firefighter', where: 'Bay Fire Station, west side, press E', reward: 'five callouts $160 to $480, hose play, station upgrades' },
+    { id: 'paramedic', where: 'Bay General Hospital, east side, press E', reward: 'five callouts $150 to $420, triage, rep bonus $300 a week' },
+  ];
+}
+/** Every Round 6 system id, for the dossier's feature list. */
+export function roundSixFeatureIds(): string[] {
+  return roundSixFeatures().map((f) => f.id);
+}
+/** One line per Round 6 system, for logs and the dossier's summary. */
+export function roundSixSummary(): string {
+  return roundSixFeatures().map((f, i) => `${i + 1}. ${f.id} — ${f.where} — ${f.reward}`).join('\n');
+}
+/** The combined ceiling of every Round 6 repeatable payout, in game dollars. */
+export function roundSixTotalMaxPayout(): number {
+  return roundSixMaxPayouts().reduce((sum, p) => sum + p.max, 0);
+}
+/** Round 6 systems that pay cash, with their ceilings, sorted highest first. */
+export function roundSixPayingSystems(): { system: string; max: number }[] {
+  return roundSixMaxPayouts()
+    .filter((p) => p.max > 0)
+    .sort((a, b) => b.max - a.max);
+}
 export function buildDossier(dir: string, caps: DossierCaps): Uint8Array {
   const max = caps.text_max_bytes;
   if (!Number.isSafeInteger(max) || max <= 0) throw new DossierError(`buildDossier: caps.text_max_bytes must be a positive integer, not ${String(max)}`, 'text_max_bytes');

@@ -1,91 +1,119 @@
 # Solmar Bay
 
-A sun-soaked coastal open-world crime game for the browser. You are Ryan and
-Ian, a couple rebuilding their lives in a bay city — stealing cars, taking
-jobs from Vera at The Brass Anchor, dodging the Bay Precinct, and pulling off
-the Marina Royale vault heist together. The finale payout is computed in the
-game from the most expensive aircraft plus the most expensive property, so
-every run can pay out differently.
-
 [![Solmar Bay](https://make.fun/badge/gta6-01.svg)](https://make.fun/c/gta6-01?ref=9y382syd)
-[![Rank](https://make.fun/badge/gta6-01/Dandelion-sys/gta6-01-solmarbay/rank.svg)](https://make.fun/c/gta6-01/Dandelion-sys/gta6-01-solmarbay/rank?ref=9y382syd)
-[![Reward](https://make.fun/badge/gta6-01/Dandelion-sys/gta6-01-solmarbay/reward.svg)](https://make.fun/c/gta6-01/Dandelion-sys/gta6-01-solmarbay/reward?ref=9y382syd)
+[![Rank](https://make.fun/badge/gta6-01/Dandelion-sys/gta6-01-solmarbay/rank.svg)](https://make.fun/gta6-01/Dandelion-sys/gta6-01-solmarbay/rank?ref=9y382syd)
+[![Reward](https://make.fun/badge/gta6-01/Dandelion-sys/gta6-01-solmarbay/reward.svg)](https://make.fun/gta6-01/Dandelion-sys/gta6-01-solmarbay/reward?ref=9y382syd)
+
+A sun-soaked coastal open-world crime game in the spirit of GTA 6, played in
+a desktop web browser from its own files. Explore the bay island city of
+Solmar Bay on foot and by car, steal and drive cars, take missions, earn and
+spend money, deal with the police, and build a life of crime and side hustles.
+
+Two protagonists share the story: **Ryan**, a man in his late thirties, a
+former advertising man rebuilding his life with hustle and charm, and **Ian**,
+a woman in her late thirties, sharp, funny and fearless, his partner in life
+and in crime. Switch between them at the safehouse or through the phone. Each
+has their own mission chain, and they share one wallet. The finale is the
+Marina Royale vault heist, and its payout is computed from the prices of the
+most expensive aircraft and the most expensive property for sale in the game.
+
+The city is alive: seven districts, traffic that follows the roads,
+pedestrians who react to crime, wildlife, weather, a day and night cycle,
+radio stations, and a phone full of apps.
+
+Built by Fahrian Hidayat Azwar (Dandelion-sys) — hagio.ryan@gmail.com
 
 ## How to play
 
-Explore the island city of Solmar Bay on foot and by car. Take story missions
-from Vera, earn money from side jobs, buy cars, clothes, weapons and
-properties, and keep the police off your back. Switch between Ryan and Ian
-anytime — each has their own six-mission chain, and both must finish before
-the vault heist unlocks. Save at the safehouse or from the pause menu.
+Take a job from Vera at The Brass Anchor bar in Palm Quay, drive or walk
+there, do the thing, get paid, and spend the money on cars, clothes, weapons,
+properties and upgrades while staying out of jail. Money is the score, and
+your best wallet is kept between visits. Between missions, earn from taxi
+fares, deliveries, fishing, busking, bounty hunting, treasure hunts, airboat
+tours, hunting, sports and more.
 
 ### Key map
 
 | Key | Action |
-| --- | ------ |
-| W A S D | Walk / drive |
-| Shift | Run / boost |
-| E | Interact / enter & exit car |
-| F | Punch |
-| Mouse click | Shoot (when armed) |
-| Q | Focus (slow-motion aim) |
-| Space | Jump |
+| --- | --- |
+| W A S D | Walk / drive (W accelerate, S brake / reverse, A D steer) |
+| Shift | Run |
+| E | Interact with the nearest thing (car first, then shops and places) |
+| F | Enter / exit a car |
+| Q | Punch |
+| Mouse (right button / click) | Aim / shoot |
+| C | Focus — slow-motion aiming on a meter that refills |
 | P | Phone |
-| M | Big map |
-| C | Switch Ryan / Ian |
+| M | Map |
+| T | Switch between Ryan and Ian |
+| R | Radio on / off |
 | H | Horn |
-| R | Reload |
-| V | Camera view |
-| Esc | Pause |
-| N | Mute sound |
-| Drag mouse | Look around |
+| Space | Jump |
+| Esc | Pause (resume, save, key map, mute, quit to title) |
+
+The HUD always says what E will do right now, so it never hijacks another
+action: it opens a car before a shop next door, for example.
 
 ## Systems
 
-- Open world: seven districts, a causeway to Tern Isle, beaches, piers,
-  a lighthouse, an airfield and a working day/night cycle with weather.
-- Two protagonists: Ryan and Ian, shared wallet, shared wanted level,
-  a bond meter that pays a bonus at dawn.
-- Missions: six per hero plus the shared Marina Royale vault heist,
-  with objective beams, timers and debriefs.
-- Wanted system: six stars, patrol cars, roadblocks, helicopters and a
-  city lockdown at six stars; witnesses, disguises and car swaps shed heat.
-- Focus: slow-motion aiming that refills over time.
-- Robbery preparation: scouting, back entrances, safe codes, camera disabling.
-- Car-theft play: steal parked cars, change outfits to cool off.
-- Weapons locker: pistols and rifles with wear, jams and cleaning.
-- Wildlife compendium: photograph gulls, deer, alligators, herons and more.
-- Safehouse upgrades and crew hiring: driver, lookout, hacker, muscle.
-- Stranger missions: eight quirky passers-by with small paid quests.
-- Bounty hunting: posters at the Bay Precinct board.
-- Treasure hunts: three riddle chains across the map.
-- Challenges: nine categories with bronze, silver and gold ranks.
-- Sports: basketball, pool and boxing.
-- Kayaking, scuba, base jumping, airboat swamp tours, hurricanes.
-- BayRide and public transport: ride-share, bus and ferry.
-- Phone 2.0: SnapShot social, car scanner, wildlife camera, radio.
-- Radio and podcasts: three stations of synthesised music and talk.
-- Body and stats: food, gym and sleep change strength, stamina and build.
+- **Open world** — seven districts (Palm Quay, Coral Row, Sunset Fields,
+  Gull Point, Mangrove Flats, North Docks, Tern Isle), a causeway and a ferry,
+  beaches, piers, a lighthouse, an airport strip and a swamp.
+- **Missions** — six jobs for Ryan, six for Ian, from Vera the fixer, then
+  the Marina Royale vault heist finale for both of them together.
+- **Driving and traffic** — arcade driving, traffic on the roads, parked
+  cars to steal, boats, planes on the strip and a ferry timetable.
+- **Police and wanted level** — one to six stars, patrol cars, roadblocks,
+  helicopters at four stars and up, and a full lockdown at six.
+- **Combat** — punch, aim and shoot with owned weapons; weapons wear and jam
+  unless cleaned.
+- **Focus** — slow-motion aiming with limb and vital targeting.
+- **Reputation** — good deeds and brutality move shop prices and how
+  pedestrians treat you.
+- **Witness and disguise** — witnesses and cameras note your outfit and
+  vehicle; changing clothes and switching cars sheds heat faster.
+- **Robbery preparation** — scout a shop, find its back entrance, learn the
+  safe code and disable its cameras before the job.
+- **Car-theft minigames** — slim jim timing, smashed windows, key cloners
+  and a phone scanner that values nearby cars.
+- **Weapons locker** — carry at most two rifles and two pistols; the rest
+  lives in the locker.
+- **Wildlife compendium** — photograph animals with the phone camera to log
+  them in the field guide; hunt for pelts with the right weapon.
+- **Safehouse upgrades and crew** — bed, workshop, armoury, decorations,
+  and hired crew (driver, lookout) with morale.
+- **Stranger missions** — eight quirky passers-by with small side quests.
+- **Bounty hunting** — posters from the police station board; alive pays more.
+- **Treasure hunts** — three riddle clue chains leading to buried loot.
+- **Challenges** — nine categories with bronze, silver and gold ranks.
+- **Sports** — three-on-three basketball, pool, boxing and wrestling.
+- **Kayaking and scuba diving** — paddle the bay and dive the reef sites.
+- **Base jumping** — cliff and rooftop jumps with a parachute.
+- **Airboat swamp tours** — drive tourists through Mangrove Flats.
+- **Hunting lodge and trophy room** — pelts crafted into gear that sells.
+- **Hurricanes** — storm fronts with wind, surge and flying debris.
+- **BayRide and public transport** — ride-share on the phone, buses and the
+  island ferry.
+- **Phone 2.0** — photo social app with followers, car scanner, map, radio,
+  camera and travel.
+- **Radio and podcasts** — three stations, headphones on foot.
+- **Body and stats** — food, gym work and sleep change strength, stamina
+  and build, and a bond meter between Ryan and Ian that pays a dawn bonus.
 
 ## Run it locally
+
+Node 22 or later, no build step, no network:
 
 ```sh
 node serve.ts
 ```
 
-Then open http://localhost:8080 in desktop Chrome. The game runs fully
-offline — every script, image and sound is a local file or synthesised
-in the browser. No build step, no network, no payments.
+Then open http://localhost:8080 in desktop Chrome. The game is plain static
+files under `game/`; the front page is `game/index.html`. Sound is
+synthesised in the browser with the Web Audio interface (engine hum,
+footsteps, gunshots, cash chime, sirens, radio melodies, mission stings) —
+no audio files. Mute it from the pause menu.
 
-## Build the dossier
-
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-```
-
-## Tech
-
-Three.js 0.170.0, vendored under `game/vendor/`. Plain ES modules, fixed
-1/60s simulation steps, Web Audio synthesis for all sound.
-
-Built by Fahrian Hidayat Azwar (Dandelion-sys) — hagio.ryan@gmail.com
+Save at the safehouse bed or from the pause menu; the save keeps money,
+cars, weapons, mission progress and owned properties in the browser's local
+storage. Your best wallet is shown on the title screen.

@@ -6,6 +6,7 @@ import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { solmarBayFeatures, solmarBayMaxPayoutTotal } from './vendor/makefun-game.ts';
 
 const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
 const args = process.argv.slice(2);
@@ -38,24 +39,6 @@ const MIME: Record<string, string> = {
 };
 
 createServer((request, response) => {
-  // Solmar Bay features endpoint: a quick machine-readable list of what
-  // this entry includes, for the playtest and for curious players.
-  if ((request.url ?? '') === '/features') {
-    const features = [
-      'open-world bay city', 'ryan-and-ian duo', 'six-mission chains',
-      'vault heist with computed payout', 'wanted levels and police',
-      'focus slow motion', 'car theft', 'weapons locker',
-      'wildlife compendium', 'safehouse upgrades', 'stranger missions',
-      'bounty hunting', 'treasure hunts', 'challenges', 'sports',
-      'kayak and scuba', 'base jumping', 'airboat tours', 'hurricanes',
-      'bayride transport', 'phone apps', 'radio', 'body stats',
-      'day and night', 'weather', 'save and load',
-    ];
-    const body = JSON.stringify({ game: 'Solmar Bay', features });
-    response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) });
-    response.end(body);
-    return;
-  }
   const url = new URL(request.url ?? '/', 'http://localhost');
   let pathname: string;
   try {
@@ -65,6 +48,13 @@ createServer((request, response) => {
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
+  if (pathname === '/features') {
+    const features = solmarBayFeatures();
+    const body = JSON.stringify({ features, total: solmarBayMaxPayoutTotal(features) });
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body) });
+    response.end(body);
+    return;
+  }
   const file = resolve(join(root, normalize(pathname)));
   if (file !== root && !file.startsWith(root + sep)) {
     response.writeHead(403).end('forbidden');

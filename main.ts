@@ -15,7 +15,7 @@
 import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildDossier } from './vendor/makefun-game.ts';
+import { buildDossier, solmarBayFeatures, solmarBayMaxPayoutTotal } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
@@ -40,12 +40,8 @@ writeFileSync(
   }),
 );
 
-// Solmar Bay (round 9): features this entry hands in — open-world bay city
-// with seven districts; Ryan and Ian, a couple, each with a six-mission chain
-// plus a shared casino vault heist whose payout is computed from the dearest
-// aircraft and the dearest property; wanted levels, police chases, Focus,
-// robbery prep, car theft, weapons locker, wildlife guide, safehouse upgrades,
-// stranger quests, bounties, treasure hunts, challenges, sports, kayaking,
-// base jumping, airboat tours, hurricanes, BayRide, phone apps, radio,
-// body stats, day/night and weather; four staged screenshots; offline play.
-console.log('Solmar Bay dossier written to ' + out + ' (game + 4 screenshots)');
+// Solmar Bay (round 10): log the game's features and their max payouts.
+const features = solmarBayFeatures();
+const featureTotal = solmarBayMaxPayoutTotal(features);
+console.log(`Solmar Bay features: ${features.length} systems, max payouts total $${featureTotal.toLocaleString('en-US')}`);
+for (const f of features) console.log(`  - ${f.name}: up to $${f.maxPayout.toLocaleString('en-US')}`);

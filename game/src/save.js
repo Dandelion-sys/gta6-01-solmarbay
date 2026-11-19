@@ -1,47 +1,34 @@
-// Saving and loading. The save keeps money, cars, weapons, mission
-// progress, owned properties, reputation, bond and the clock.
-export const SAVE_KEY = 'solmar-bay-save-v1';
-export function saveGame(G) {
-  try {
-    const data = {
-      money: G.money, day: G.time.day, minutes: G.time.minutes,
-      wanted: G.wanted, reputation: G.reputation, bond: G.bond,
-      activeChar: G.activeChar,
-      missions: { ryan: G.missions.ryan, ian: G.missions.ian, finaleDone: G.missions.finaleDone },
-      inventory: G.inventory, properties: G.properties,
-      stats: G.stats, systems: G.systems,
-      player: {
-        x: G.player.mesh.position.x, z: G.player.mesh.position.z,
-        heading: G.player.heading, health: G.player.health,
-        armour: G.player.armour, strength: G.player.strength,
-        stamina: G.player.stamina, outfit: G.player.outfit,
-      },
-      best: G.stats.best,
-    };
-    localStorage.setItem(SAVE_KEY, JSON.stringify(data));
-    return true;
-  } catch (e) { return false; }
+// Save and load through local storage.
+import { TUNE } from './config.js';
+export function saveGame(game) {
+  const data = {
+    money: game.economy.money, reputation: game.economy.reputation, bond: game.economy.bond,
+    progress: game.missions.progress, finaleDone: game.missions.finaleDone,
+    ownedCars: game.economy.ownedCars, ownedWeapons: game.economy.ownedWeapons,
+    ownedProps: game.economy.ownedProps, ownedClothes: game.economy.ownedClothes,
+    strength: game.economy.strength, stamina: game.economy.stamina,
+    x: game.player.x, z: game.player.z, health: game.player.health,
+    activeChar: game.activeChar, timeOfDay: game.timeOfDay, day: game.day,
+    best: Math.max(game.economy.money, Number(localStorage.getItem(TUNE.bestKey) || 0)),
+  };
+  localStorage.setItem(TUNE.saveKey, JSON.stringify(data));
+  localStorage.setItem(TUNE.bestKey, String(data.best));
+  return data;
 }
-export function loadGame(G) {
+export function loadGame(game) {
+  const raw = localStorage.getItem(TUNE.saveKey);
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return false;
     const d = JSON.parse(raw);
-    G.money = d.money; G.time.day = d.day; G.time.minutes = d.minutes;
-    G.wanted = d.wanted || 0; G.reputation = d.reputation || 0;
-    G.bond = d.bond || 0; G.activeChar = d.activeChar || 'ryan';
-    G.missions.ryan = d.missions.ryan; G.missions.ian = d.missions.ian;
-    G.missions.finaleDone = d.missions.finaleDone;
-    G.inventory = d.inventory; G.properties = d.properties;
-    G.stats = d.stats; G.systems = Object.assign(G.systems, d.systems || {});
-    const p = d.player;
-    G.player.mesh.position.set(p.x, 1, p.z);
-    G.player.heading = p.heading; G.player.health = p.health;
-    G.player.armour = p.armour; G.player.strength = p.strength;
-    G.player.stamina = p.stamina; G.player.outfit = p.outfit;
-    return true;
-  } catch (e) { return false; }
+    game.economy.money = d.money; game.economy.reputation = d.reputation; game.economy.bond = d.bond;
+    game.missions.progress = d.progress; game.missions.finaleDone = d.finaleDone;
+    game.economy.ownedCars = d.ownedCars; game.economy.ownedWeapons = d.ownedWeapons;
+    game.economy.ownedProps = d.ownedProps; game.economy.ownedClothes = d.ownedClothes || ['Street Tee'];
+    game.economy.strength = d.strength; game.economy.stamina = d.stamina;
+    game.player.x = d.x; game.player.z = d.z; game.player.health = d.health;
+    game.activeChar = d.activeChar; game.timeOfDay = d.timeOfDay; game.day = d.day;
+    return d;
+  } catch { return null; }
 }
-export function hasSave() {
-  try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
-}
+export function hasSave() { return !!localStorage.getItem(TUNE.saveKey); }
+export function bestMoney() { return Number(localStorage.getItem(TUNE.bestKey) || 0); }

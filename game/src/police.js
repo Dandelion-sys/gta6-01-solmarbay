@@ -1,93 +1,80 @@
-// Police and the wanted level. One to six stars: patrol cars at low
-// levels, roadblocks and helicopters higher up, a full lockdown at six.
-// Breaking line of sight and staying hidden lets the heat fade.
-import * as THREE from 'three';
-import { clamp, dist2 } from './tuning.js';
-import { spawnVehicle } from './vehicles.js';
-export function addHeat(G, amount, reason) {
-  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
-  let witnesses = 0;
-  for (const p of G.peds) {
-    if (dist2(p.x, p.z, px, pz) < 30) witnesses++;
+// Police and the wanted level: patrols, chases, roadblocks, lockdown.
+import { TUNE } from './config.js';
+export class Police {
+  constructor(traffic, game) {
+    this.traffic = traffic;
+    this.game = game;
+    this.wanted = 0; this.heat = 0;
+    this.cars = []; this.heli = null; this.heliAngle = 0;
+    this.lockdown = false; this.lastSiren = 0;
   }
-  const mult = witnesses > 0 ? 1.5 : 1;
-  G.wanted = clamp(G.wanted + amount * mult, 0, 6);
-  G.heat = 100;
-  G.hiddenTimer = 0;
-  if (G.wanted > 0) G.sound.sirenStart();
-  return G.wanted;
-}
-export function updatePolice(G, dt) {
-  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
-  const want = G.wanted > 0 ? Math.min(G.wanted + 1, 5) : 0;
-  while (G.police.length < want) {
-    const a = Math.random() * Math.PI * 2;
-    const v = spawnVehicle(G, 'police', px + Math.cos(a) * 90, pz + Math.sin(a) * 90, a, 0x1A1A2E);
-    v.route = null;
-    G.police.push(v);
+  addWanted(n, reason) {
+    this.wanted = Math.min(6, this.wanted + n);
+    this.heat = Math.min(100, this.heat + n * 22);
+    return reason || 'crime';
   }
-  while (G.police.length > want) {
-    const v = G.police.pop();
-    G.scene.remove(v.mesh);
-    G.vehicles.splice(G.vehicles.indexOf(v), 1);
-  }
-  for (const v of G.police) {
-    const d = dist2(v.x, v.z, px, pz);
-    const dx = px - v.x, dz = pz - v.z;
-    const targetHeading = Math.atan2(dx, dz);
-    let dh = targetHeading - v.heading;
-    while (dh > Math.PI) dh -= Math.PI * 2;
-    while (dh < -Math.PI) dh += Math.PI * 2;
-    v.heading += clamp(dh, -2.4 * dt, 2.4 * dt);
-    const speed = d > 12 ? 26 : 18;
-    v.speed = speed;
-    v.x += Math.sin(v.heading) * speed * dt;
-    v.z += Math.cos(v.heading) * speed * dt;
-    v.mesh.position.set(v.x, 0, v.z);
-    v.mesh.rotation.y = v.heading;
-    if (d < 3.5) {
-      G.player.health = clamp(G.player.health - 12 * dt, 0, 100);
-      G.heat = 100;
+  spawnForLevel() {
+    const want = this.wanted >= 3 ? 3 : this.wanted >= 1 ? this.wanted : 0;
+    while (this.cars.length < want) {
+      const v = this.traffic.addPoliceCar(-100 + Math.random() * 200, -100 + Math.random() * 200);
+      this.cars.push(v);
     }
+    while (this.cars.length > want) { const v = this.cars.pop(); this.traffic.removeCar(v); }
+    this.lockdown = this.wanted >= 6;
   }
-}
-export function decayWanted(G, dt) {
-  if (G.wanted <= 0) { G.sound.sirenStop(); return; }
-  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
-  let nearest = 9999;
-  for (const v of G.police) nearest = Math.min(nearest, dist2(v.x, v.z, px, pz));
-  const hidden = nearest > 60;
-  if (hidden) {
-    G.hiddenTimer += dt;
-    if (G.hiddenTimer > TUNING_WANTED_DECAY) {
-      G.wanted -= 1;
-      G.hiddenTimer = 0;
-      if (G.wanted <= 0) { G.wanted = 0; G.sound.sirenStop(); }
+  update(dt, player, playerInCar, sound, timeNow) {
+    this.spawnForLevel();
+    if (this.wanted > 0) {
+      // Heat fades when hidden, faster when out of sight and slow.
+      const speed = playerInCar ? Math.abs(player.carSpeed || 0) : (player.moving ? 6 : 0);
+      const seen = speed > 2;
+      this.heat -= dt * (seen ? TUNE.wantedDecay * 10 : TUNE.wantedDecay * 60);
+      if (this.heat <= 0) { this.wanted = Math.max(0, this.wanted - 1); this.heat = this.wanted > 0 ? 60 : 0; }
+      if (timeNow - this.lastSiren > 2600) { this.lastSiren = timeNow; if (sound) sound.siren(); }
     }
-  } else {
-    G.hiddenTimer = 0;
+    for (const v of this.cars) {
+      // Chase the player: steer toward them, drive fast.
+      const dx = player.x - v.x; const dz = player.z - v.z;
+      const dist = Math.hypot(dx, dz) || 1;
+      const wantYaw = Math.atan2(dx, -dz);
+      let dy = wantYaw - v.yaw;
+      while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      v.yaw += Math.max(-2.4 * dt, Math.min(2.4 * dt, dy));
+      const throttle = dist > 6 ? 0.9 : 0.2;
+      v.drive(dt, throttle, 0);
+      if (v.mesh.userData.lightBar) v.mesh.userData.lightBar.material.color.setHex(Math.floor(timeNow / 300) % 2 ? 0xff2222 : 0x2244ff);
+      if (dist < 3.2 && !playerInCar && player.invuln <= 0) {
+        player.health -= 6 * dt * 10; this.game.knockFrom(v.x, v.z, 2);
+      }
+    }
+    if (this.wanted >= 4) {
+      this.heliAngle += dt * 0.5;
+      if (!this.heli) { this.heli = { x: player.x, z: player.z }; }
+      this.heli.x = player.x + Math.cos(this.heliAngle) * 24;
+      this.heli.z = player.z + Math.sin(this.heliAngle) * 24;
+    } else this.heli = null;
   }
-  G.heat = Math.max(0, G.heat - dt * 2);
-}
-const TUNING_WANTED_DECAY = 9;
-export function updateHelicopter(G, dt) {
-  if (G.wanted < 4 && !G.heli) return;
-  if (!G.heli) {
-    const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3, 1.6, 6),
-      new THREE.MeshLambertMaterial({ color: 0x1A1A2E }));
-    g.add(body);
-    const rotor = new THREE.Mesh(new THREE.BoxGeometry(9, 0.15, 0.6),
-      new THREE.MeshLambertMaterial({ color: 0x333333 }));
-    rotor.position.y = 1.1; g.add(rotor);
-    g.userData.rotor = rotor;
-    G.scene.add(g);
-    G.heli = g;
+  clear() {
+    for (const v of this.cars) this.traffic.removeCar(v);
+    this.cars = []; this.wanted = 0; this.heat = 0; this.lockdown = false; this.heli = null;
   }
-  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
-  G.heliAngle = (G.heliAngle || 0) + dt * 0.25;
-  G.heli.position.set(px + Math.cos(G.heliAngle) * 26, 42, pz + Math.sin(G.heliAngle) * 26);
-  G.heli.userData.rotor.rotation.y += dt * 22;
-  G.heli.lookAt(px, 0, pz);
-  if (G.wanted < 4) { G.scene.remove(G.heli); G.heli = null; }
+  // Roadblocks at six stars: police cars parked across the main roads.
+  roadblocks() {
+    if (!this.lockdown) return [];
+    return [
+      { x: 0, z: 60, road: 'Coral Row south' },
+      { x: 0, z: -60, road: 'Coral Row north' },
+      { x: 60, z: 0, road: 'Coral Row east' },
+      { x: -60, z: 0, road: 'Coral Row west' },
+      { x: -160, z: 60, road: 'Palm Quay bridge' },
+      { x: 120, z: -60, road: 'Gull Point road' },
+    ];
+  }
+  escapeAdvice() {
+    if (this.wanted >= 6) return 'LOCKDOWN: roadblocks on every main road. Change clothes, ditch the car, hide.';
+    if (this.wanted >= 4) return 'Helicopter overhead. Break line of sight and stay hidden.';
+    if (this.wanted >= 2) return 'Patrol cars are closing in. Lose them, then hide until the heat fades.';
+    if (this.wanted === 1) return 'One star. Walk away calmly and the patrol will lose interest.';
+    return 'No heat. The bay is yours.';
+  }
 }

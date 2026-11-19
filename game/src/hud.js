@@ -1,106 +1,60 @@
-// The HUD: money, health, armour, wanted stars, clock, objective,
-// active character, a context line for the E key, and a minimap canvas.
-// All DOM, drawn over the 3D view.
-import { PLACES } from './tuning.js';
-export function buildHud(G) {
-  const root = document.getElementById('hud');
-  root.innerHTML = '';
-  const el = (tag, id, cls) => {
-    const e = document.createElement(tag);
-    if (id) e.id = id;
-    if (cls) e.className = cls;
-    root.appendChild(e);
-    return e;
-  };
-  G.hudEls = {
-    money: el('div', 'hud-money'),
-    health: el('div', 'hud-health'),
-    stars: el('div', 'hud-stars'),
-    clock: el('div', 'hud-clock'),
-    objective: el('div', 'hud-objective'),
-    context: el('div', 'hud-context'),
-    charBadge: el('div', 'hud-char'),
-    focus: el('div', 'hud-focus'),
-    toast: el('div', 'hud-toast'),
-    radio: el('div', 'hud-radio'),
-  };
-  const mapWrap = document.createElement('div');
-  mapWrap.id = 'minimap-wrap';
-  const canvas = document.createElement('canvas');
-  canvas.id = 'minimap'; canvas.width = 180; canvas.height = 180;
-  mapWrap.appendChild(canvas);
-  root.appendChild(mapWrap);
-  G.minimap = canvas.getContext('2d');
-  const brief = document.createElement('div');
-  brief.id = 'briefing'; brief.style.display = 'none';
-  root.appendChild(brief);
-  G.briefEl = brief;
+// Phone apps, HUD, minimap, save/load, and shot staging.
+import { finaleBreakdown } from './missions.js';
+export function phoneHtml(game) {
+  const e = game.economy;
+  return `<h3>Solmar Phone — ${game.activeChar === 'ryan' ? 'Ryan' : 'Ian'}</h3>
+  <div class="app" data-app="contacts">Contacts — Vera (fixer), switch to ${game.activeChar === 'ryan' ? 'Ian' : 'Ryan'}</div>
+  <div class="app" data-app="bayride">BayRide — call a car ($35)</div>
+  <div class="app" data-app="camera">Camera — study wildlife (${e.photos} logged)</div>
+  <div class="app" data-app="social">SnapBay — ${e.followers} followers</div>
+  <div class="app" data-app="scanner">Car Scanner — values nearby cars</div>
+  <div class="app" data-app="jobs">Jobs — taxi, delivery, fishing, tours</div>
+  <div class="app" data-app="radio">Radio — ${e.radioNames[e.radioStation]}</div>
+  <div class="app" data-app="finale">Finale payout — ${finaleBreakdown()}</div>
+  <div class="app" data-app="close">Close phone (P)</div>`;
 }
-export function updateHud(G) {
-  const e = G.hudEls;
-  const p = G.player;
-  e.money.textContent = `$${Math.floor(G.money).toLocaleString('en-US')}`;
-  e.health.textContent = `♥ ${Math.round(p.health)}  ⛨ ${Math.round(p.armour)}`;
-  e.stars.textContent = '★'.repeat(G.wanted) + '☆'.repeat(6 - G.wanted);
-  e.stars.style.color = G.wanted >= 4 ? '#ff4444' : '#ffd94d';
-  const h = Math.floor(G.time.minutes / 60), m = Math.floor(G.time.minutes % 60);
-  e.clock.textContent = `Day ${G.time.day}  ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}  ${G.weather}`;
-  const mAct = G.missions.active;
-  e.objective.textContent = mAct
-    ? `${mAct.def.name}: ${mAct.target.label}${mAct.timer > 0 ? '  ⏱ ' + Math.ceil(mAct.timer) + 's' : ''}`
-    : (G.missions.ryan >= 6 && G.missions.ian >= 6 ? 'Talk to Vera — the vault heist is ready' : 'Talk to Vera at The Brass Anchor for work');
-  e.charBadge.textContent = G.activeChar === 'ryan' ? 'RYAN' : 'IAN';
-  e.focus.textContent = `Focus ${Math.round(G.focus)}%  •  Rep ${Math.round(G.reputation)}  •  Bond ${Math.round(G.bond)}`;
-  e.radio.textContent = G.radioOn ? `♪ ${['Bay FM', 'Quay Talk', 'Tide Podcasts'][G.radioStation]}` : '';
-  drawMinimap(G);
-}
-function drawMinimap(G) {
-  const c = G.minimap;
-  if (!c) return;
-  const S = 180, scale = S / 760;
-  c.clearRect(0, 0, S, S);
-  c.fillStyle = '#12333f';
-  c.fillRect(0, 0, S, S);
-  c.fillStyle = '#3f7d5a';
-  c.fillRect(0, 0, S, S);
-  c.fillStyle = '#2c2f33';
-  for (const x of [-300, -180, -60, 60, 180, 300]) c.fillRect((x + 380) * scale, 0, 3, S);
-  for (const z of [-280, -160, -40, 80, 200, 300]) c.fillRect(0, (z + 380) * scale, S, 3);
-  c.fillStyle = '#e8d9a0';
-  c.fillRect(0, (330 + 380) * scale, S, 4);
-  const dot = (x, z, color, r) => {
-    c.fillStyle = color;
-    c.beginPath(); c.arc((x + 380) * scale, (z + 380) * scale, r || 3, 0, 7); c.fill();
-  };
-  for (const k of ['bar', 'casino', 'dealer', 'mart', 'safehouse']) {
-    const p = PLACES[k]; dot(p.x, p.z, '#f1c40f', 2.5);
+export function drawMinimap(canvas, game) {
+  const ctx = canvas.getContext('2d'); const S = canvas.width;
+  ctx.clearRect(0, 0, S, S);
+  ctx.fillStyle = '#12324a'; ctx.fillRect(0, 0, S, S);
+  const toMap = (x, z) => [S / 2 + x / 520 * S, S / 2 + z / 520 * S];
+  ctx.strokeStyle = '#5a6a78'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(0, S / 2); ctx.lineTo(S, S / 2); ctx.moveTo(S / 2, 0); ctx.lineTo(S / 2, S); ctx.stroke();
+  ctx.fillStyle = '#1e7fa8';
+  ctx.beginPath(); ctx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); ctx.stroke();
+  // sea ring
+  ctx.strokeStyle = '#1e7fa8'; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.arc(S / 2, S / 2, S * 0.46, 0, Math.PI * 2); ctx.stroke();
+  for (const s of game.world.shops) {
+    const [mx, my] = toMap(s.x, s.z);
+    ctx.fillStyle = s.kind === 'safehouse' ? '#ffd23e' : '#9fe8ff';
+    ctx.fillRect(mx - 2, my - 2, 4, 4);
   }
-  const m = G.missions.active;
-  if (m) dot(m.target.x, m.target.z, '#ff4444', 5);
-  for (const v of G.police) dot(v.x, v.z, '#4488ff', 3);
-  const px = G.player.mesh.position.x, pz = G.player.mesh.position.z;
-  dot(px, pz, '#ffffff', 4);
-  c.fillStyle = '#ffffff';
-  c.beginPath();
-  c.arc((px + 380) * scale, (pz + 380) * scale, 7, 0, 7);
-  c.stroke();
+  if (game.missions.active) {
+    const [mx, my] = toMap(game.missions.active.target.x, game.missions.active.target.z);
+    ctx.fillStyle = '#ffd23e'; ctx.beginPath(); ctx.arc(mx, my, 6, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const c of game.police.cars) {
+    const [mx, my] = toMap(c.x, c.z);
+    ctx.fillStyle = '#ff3333'; ctx.fillRect(mx - 3, my - 3, 6, 6);
+  }
+  const [px, py] = toMap(game.player.x, game.player.z);
+  ctx.fillStyle = '#7dff9a'; ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2); ctx.stroke();
 }
-export function hudToast(G, msg) {
-  const e = G.hudEls.toast;
-  e.textContent = msg;
-  e.style.opacity = '1';
-  clearTimeout(G.toastTimer);
-  G.toastTimer = setTimeout(() => { e.style.opacity = '0'; }, 3500);
-}
-export function showBriefing(G, title, text) {
-  const b = G.briefEl;
-  b.innerHTML = `<h2>${title}</h2><p>${text}</p><button id="brief-ok">OK</button>`;
-  b.style.display = 'block';
-  const ok = document.getElementById('brief-ok');
-  if (ok) ok.addEventListener('click', () => { b.style.display = 'none'; });
-  clearTimeout(G.briefTimer);
-  G.briefTimer = setTimeout(() => { b.style.display = 'none'; }, 9000);
-}
-export function setContext(G, text) {
-  if (G.hudEls) G.hudEls.context.textContent = text;
+export function drawBigMap(canvas, game) {
+  const ctx = canvas.getContext('2d'); const S = canvas.width;
+  ctx.fillStyle = '#12324a'; ctx.fillRect(0, 0, S, S);
+  const toMap = (x, z) => [S / 2 + x / 520 * S, S / 2 + z / 520 * S];
+  ctx.fillStyle = '#e8d9a0'; ctx.beginPath(); ctx.arc(S / 2, S / 2, S * 0.44, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#6fae4e'; ctx.beginPath(); ctx.arc(S / 2, S / 2, S * 0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#3c4148'; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.moveTo(0, S / 2); ctx.lineTo(S, S / 2); ctx.moveTo(S / 2, 0); ctx.lineTo(S / 2, S); ctx.stroke();
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#fff';
+  for (const d of game.world.districts || []) {}
+  const names = [['Palm Quay', -140, 130], ['Coral Row', 0, 0], ['Sunset Fields', 150, 120], ['Gull Point', 170, -150], ['Mangrove Flats', -160, -140], ['North Docks', -40, -190], ['Tern Isle', -260, -40]];
+  for (const [n, x, z] of names) { const [mx, my] = toMap(x, z); ctx.fillText(n, mx - 30, my); }
+  for (const s of game.world.shops) { const [mx, my] = toMap(s.x, s.z); ctx.fillStyle = '#ffd23e'; ctx.fillRect(mx - 3, my - 3, 6, 6); ctx.fillStyle = '#fff'; ctx.fillText(s.name, mx + 6, my + 4); }
+  const [px, py] = toMap(game.player.x, game.player.z);
+  ctx.fillStyle = '#7dff9a'; ctx.beginPath(); ctx.arc(px, py, 7, 0, Math.PI * 2); ctx.fill();
 }
